@@ -1,0 +1,59 @@
+[project]
+name = "llm-grounding"
+version = "0.1.0"
+description = "Configurable scientific document grounding experiments"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "openai>=2,<4",
+    "pydantic>=2.11,<3",
+    "pydantic-ai-slim[openai]>=1.0,<2",
+    "pymupdf>=1.24,<2",
+    "pyyaml>=6,<7",
+]
+
+[project.scripts]
+llm-grounding = "llm_grounding.application.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_grounding"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"configs/architectures/baseline_v0.yaml" = "llm_grounding/infrastructure/config/baseline_v0.yaml"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.12",
+    "mypy>=1.17",
+    "types-PyYAML>=6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+exclude = ["AGENTS.md"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pymupdf", "pymupdf.*"]
+ignore_missing_imports = true

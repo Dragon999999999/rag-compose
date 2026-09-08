@@ -1,0 +1,25 @@
+name: baseline_v0
+version: 0
+
+parser:
+  type: pymupdf
+knowledge_builder:
+  type: basic
+retriever:
+  type: full_document
+reranker:
+  type: identity
+reasoner:
+  type: basic_summary
+  model:
+    provider: aqueduct
+    name: qwen-3.5-397b
+    base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
+    timeout_seconds: 120
+    retries: 2
+assessors:
+  - type: noop
+decision_policy:
+  type: accept_all
+renderer:
+  type: basic_summary
