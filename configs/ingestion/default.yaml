@@ -1,0 +1,17 @@
+parser: pymupdf
+parser_version: '1'
+knowledge_builder: basic
+knowledge_version: '1'
+chunker:
+  type: block_aware
+  version: '1'
+  target_chars: 800
+  overlap_chars: 120
+embedding:
+  type: sentence_transformers
+  model: sentence-transformers/all-MiniLM-L6-v2
+  dimension: 384
+  normalize: true
+  batch_size: 32
+vector_backend: pgvector
+index_version: '1'

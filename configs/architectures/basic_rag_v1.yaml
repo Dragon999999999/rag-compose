@@ -1,0 +1,30 @@
+name: basic_rag_v1
+version: 1
+parser:
+  type: pymupdf
+knowledge_builder:
+  type: basic
+retriever:
+  type: vector
+  top_k: 8
+  context_chars: 12000
+  summary_per_facet: 3
+reranker:
+  type: identity
+reasoner:
+  type: basic_grounded
+  model:
+    provider: aqueduct
+    name: qwen-3.5-397b
+    base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
+    timeout_seconds: 120
+    retries: 2
+assessors:
+  - type: source_reference
+decision_policy:
+  type: basic_grounding
+renderer:
+  type: grounded_answer
+chat_history:
+  mode: recent_messages
+  max_messages: 10

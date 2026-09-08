@@ -5,12 +5,19 @@ description = "Configurable scientific document grounding experiments"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.15,<2",
+    "pgvector>=0.4,<1",
     "openai>=2,<4",
     "pydantic>=2.11,<3",
     "pydantic-ai-slim[openai]>=1.0,<2",
     "pymupdf>=1.24,<2",
     "pyyaml>=6,<7",
 ]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=5,<6"]
 
 [project.scripts]
 llm-grounding = "llm_grounding.application.cli:main"
@@ -24,6 +31,8 @@ packages = ["src/llm_grounding"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "configs/architectures/baseline_v0.yaml" = "llm_grounding/infrastructure/config/baseline_v0.yaml"
+"configs/architectures/basic_rag_v1.yaml" = "llm_grounding/infrastructure/config/basic_rag_v1.yaml"
+"configs/ingestion/default.yaml" = "llm_grounding/infrastructure/config/ingestion_default.yaml"
 
 [dependency-groups]
 dev = [
@@ -38,6 +47,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["database: isolated PostgreSQL/pgvector integration tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "D"]
@@ -56,4 +66,8 @@ files = ["src"]
 
 [[tool.mypy.overrides]]
 module = ["pymupdf", "pymupdf.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "sentence_transformers"]
 ignore_missing_imports = true

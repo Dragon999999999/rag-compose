@@ -70,6 +70,10 @@ messages and nonzero exits. Library clients can inspect the chained cause.
 See [`docs/architecture.md`](docs/architecture.md) for contracts, a complete file
 map, prompt semantics, migration notes, and extension boundaries.
 
+Persistent project corpora and Basic RAG v1 are documented in
+[`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md). Baseline 0
+continues to use its original single-PDF CLI syntax.
+
 ## Development checks
 
 ```bash
