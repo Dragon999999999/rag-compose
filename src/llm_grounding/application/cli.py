@@ -38,6 +38,8 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
     create = project_commands.add_parser("create", help="Create a project")
     create.add_argument("name")
     project_commands.add_parser("list", help="List projects")
+    delete = project_commands.add_parser("delete", help="Delete a project")
+    delete.add_argument("project_id")
     add = project_commands.add_parser("add-document", help="Attach and ingest a PDF")
     add.add_argument("project_id")
     add.add_argument("pdf_file", type=Path)
@@ -71,8 +73,6 @@ def main(argv: list[str] | None = None) -> int:
         config = load_architecture_config(args.architecture)
         service = RagService(config)
         run = asyncio.run(service.process_pdf(path))
-    except (OSError, ValueError) as exc:
-        parser.exit(2, f"error: {exc}\n")
     except RunFailedError as exc:
         parser.exit(
             1,
@@ -80,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
             "AQUEDUCT_API_KEY or AQUEDUCT_API_KEY_FILE; model requests require "
             "a reachable endpoint and valid structured output.\n",
         )
+    except (OSError, RuntimeError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
     except KeyboardInterrupt:
         parser.exit(130, "Interrupted.\n")
     if run.answer is None:
@@ -103,6 +105,9 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
         elif args.command == "project" and args.project_command == "list":
             for project in await application.projects.list_projects():
                 print(f"{project.id}\t{project.name}")
+        elif args.command == "project" and args.project_command == "delete":
+            await application.projects.delete_project(args.project_id)
+            print(f"Deleted project {args.project_id}")
         elif args.command == "project" and args.project_command == "add-document":
             document, representation = await application.projects.add_document(
                 args.project_id,

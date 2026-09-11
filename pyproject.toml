@@ -8,12 +8,13 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0,<2.1",
     "asyncpg>=0.30,<1",
     "alembic>=1.15,<2",
-    "pgvector>=0.4,<1",
     "openai>=2,<4",
     "pydantic>=2.11,<3",
     "pydantic-ai-slim[openai]>=1.0,<2",
     "pymupdf>=1.24,<2",
     "pyyaml>=6,<7",
+    "qdrant-client>=1.16,<2",
+    "minio>=7.2,<8",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["database: isolated PostgreSQL/pgvector integration tests"]
+markers = ["database: isolated PostgreSQL integration tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "D"]
@@ -69,5 +70,5 @@ module = ["pymupdf", "pymupdf.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "sentence_transformers"]
+module = ["sentence_transformers"]
 ignore_missing_imports = true

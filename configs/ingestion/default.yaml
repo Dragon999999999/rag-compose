@@ -13,5 +13,5 @@ embedding:
   dimension: 384
   normalize: true
   batch_size: 32
-vector_backend: pgvector
+vector_backend: qdrant
 index_version: '1'

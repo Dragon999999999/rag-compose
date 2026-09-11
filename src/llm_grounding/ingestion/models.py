@@ -50,7 +50,7 @@ class IngestionConfig(BaseModel):
     knowledge_version: Literal["1"] = "1"
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
-    vector_backend: Literal["pgvector"] = "pgvector"
+    vector_backend: Literal["qdrant"] = "qdrant"
     index_version: Literal["1"] = "1"
 
     def identity(self) -> str:

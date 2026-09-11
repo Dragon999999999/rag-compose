@@ -3,24 +3,34 @@
 Phase 1 adds a project-scoped corpus without changing the Baseline 0 PDF-summary
 command. PostgreSQL is the canonical store for projects, content-addressed document
 metadata, project/document associations, immutable ingestion representations,
-evidence, chunks, chats, messages, and RAG run metadata. PDFs are copied to artifact
-storage. The `retrieval_embeddings` pgvector table is derived state and can be rebuilt
-from canonical chunks and the configured embedding model.
+evidence, chunks, chats, messages, and RAG run metadata. Original PDFs are canonical
+MinIO artifacts. Qdrant holds only a derived vector index and can be rebuilt from
+ready PostgreSQL retrieval units and their configured embedding representation.
 
 ## Setup and migration
 
-Set `DATABASE_URL` to an asyncpg PostgreSQL URL. The database user needs permission to
-create the `vector` extension. Install the optional local embedder, make the configured
-Sentence Transformers model available in the local cache, and run the migration:
+Copy the safe development defaults, start the three local services, install the
+optional local embedder, make the configured Sentence Transformers model available in
+the local cache, and run the migration:
 
 ```bash
+cp .env.example .env
+docker compose up -d
 uv sync --extra embeddings
-export DATABASE_URL=postgresql+asyncpg://user:password@localhost/llm_grounding
 uv run alembic upgrade head
 ```
 
-`ARTIFACT_STORAGE_PATH` defaults to `.artifacts`. It is intended for local development;
-the `ArtifactStore` protocol is the boundary for an S3-compatible implementation.
+The host CLI reads `DATABASE_URL`, `QDRANT_URL`, and `MINIO_*` from its environment.
+The checked-in `.env.example` provides Compose-compatible local values; load those into
+your shell or use another environment/configuration mechanism. `MinioArtifactStore` is
+the S3-compatible artifact implementation; the `ArtifactStore` protocol preserves the
+option of a local or cloud adapter.
+
+Qdrant points contain vector data plus retrieval-unit and project-filtering identifiers,
+not canonical chunk text or evidence provenance. Project filtering happens within the
+Qdrant query. Search results are hydrated from PostgreSQL. Removing Qdrant data therefore
+does not delete the corpus: a rebuild can re-embed ready retrieval units using their
+stored ingestion configuration and re-index the resulting vectors.
 
 ## Commands
 

@@ -35,6 +35,35 @@ in the wheel, so installed usage does not depend on the working directory.
 Output contains numbered keywords, the summary, and an extraction-success line.
 Success means the pipeline completed; it does not establish factual correctness.
 
+## Persistent Basic RAG v1 development
+
+Basic RAG keeps PostgreSQL as canonical structured state, MinIO as canonical PDF
+storage, and Qdrant as a rebuildable vector index. Start the services and apply the
+canonical schema before using project/chat commands:
+
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose ps
+set -a; source .env; set +a
+uv sync --extra embeddings
+uv run alembic upgrade head
+```
+
+Then create a project, ingest a PDF, and ask a project-scoped question:
+
+```bash
+uv run python -m llm_grounding project create "Quantum Key Distribution"
+uv run python -m llm_grounding project add-document PROJECT_ID paper.pdf
+uv run python -m llm_grounding chat create PROJECT_ID "Protocol comparison"
+uv run python -m llm_grounding chat ask CHAT_ID "What are the main differences?"
+uv run python -m llm_grounding project delete PROJECT_ID
+```
+
+MinIO creates `MINIO_BUCKET` lazily and idempotently when a document is first added.
+Stop services with `docker compose down`. `docker compose down -v` also deletes all
+local PostgreSQL, Qdrant, and MinIO data and is intentionally destructive.
+
 ## Architecture
 
 ```text

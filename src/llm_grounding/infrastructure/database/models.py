@@ -1,14 +1,13 @@
 """SQLAlchemy persistence models; domain objects are mapped at repository boundaries.
 
 PostgreSQL is canonical for projects, document metadata, evidence/chunks, chats,
-messages, and run metadata. Original PDFs remain in artifact storage; embeddings
-are derived and held by pgvector. The schema intentionally omits advanced claims.
+messages, and run metadata. Original PDFs remain in artifact storage; Qdrant holds
+only rebuildable vector-index entries. The schema intentionally omits advanced claims.
 """
 
 from datetime import datetime
 from uuid import uuid4
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -92,6 +91,11 @@ class IngestionRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class EvidenceRow(Base):
@@ -145,24 +149,6 @@ class RetrievalUnitMemberRow(Base):
     )
     start: Mapped[int] = mapped_column(Integer, primary_key=True)
     end: Mapped[int] = mapped_column(Integer, nullable=False)
-
-
-class RetrievalEmbeddingRow(Base):
-    """Persist pgvector's rebuildable derived vector for one indexed project chunk."""
-
-    __tablename__ = "retrieval_embeddings"
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
-    )
-    chunk_id: Mapped[str] = mapped_column(
-        ForeignKey("retrieval_units.id", ondelete="CASCADE"), primary_key=True
-    )
-    ingestion_id: Mapped[str] = mapped_column(
-        ForeignKey("document_ingestions.id", ondelete="CASCADE"), nullable=False
-    )
-    model_identity: Mapped[str] = mapped_column(String(128), nullable=False)
-    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
 
 
 class ChatRow(Base):

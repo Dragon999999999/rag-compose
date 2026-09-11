@@ -46,6 +46,16 @@ class InMemoryVectorStore:
         for key in keys:
             del self._items[key]
 
+    async def delete_document(self, document_id: str) -> None:
+        """Remove derived entries belonging to one deleted canonical document."""
+        keys = [
+            key
+            for key, item in self._items.items()
+            if item.chunk.document_id == document_id
+        ]
+        for key in keys:
+            del self._items[key]
+
     async def associate_ingestion(self, project_id: str, ingestion_id: str) -> None:
         """Copy existing derived-vector associations without re-embedding content."""
         matches = [
@@ -61,6 +71,12 @@ class InMemoryVectorStore:
                 item.chunk,
                 item.vector,
             )
+
+    async def remove_project(self, project_id: str) -> None:
+        """Remove only one project's derived entries, preserving shared ingestions."""
+        keys = [key for key in self._items if key[0] == project_id]
+        for key in keys:
+            del self._items[key]
 
     async def search(
         self,

@@ -314,6 +314,38 @@ class PostgresRepository:
                 chunks.append(await self._chunk(session, row))
             return tuple(chunks)
 
+    async def chunks_by_ids(
+        self, chunk_ids: tuple[str, ...]
+    ) -> dict[str, RetrievalUnit]:
+        """Hydrate canonical chunks returned by a derived vector index.
+
+        The index supplies identifiers and scores only. This method deliberately
+        reconstructs text and evidence provenance from PostgreSQL, keeping Qdrant
+        disposable and preventing payload data from becoming a second authority.
+        """
+        if not chunk_ids:
+            return {}
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(RetrievalUnitRow).where(RetrievalUnitRow.id.in_(chunk_ids))
+                )
+            ).all()
+            chunks = [await self._chunk(session, row) for row in rows]
+            return {chunk.chunk_id: chunk for chunk in chunks}
+
+    async def project_ids_for_ingestion(self, ingestion_id: str) -> tuple[str, ...]:
+        """Return every project selecting an ingestion for index-membership repair."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(ProjectDocumentRow.project_id).where(
+                        ProjectDocumentRow.ingestion_id == ingestion_id
+                    )
+                )
+            ).all()
+            return tuple(rows)
+
     async def _chunk(
         self, session: AsyncSession, row: RetrievalUnitRow
     ) -> RetrievalUnit:

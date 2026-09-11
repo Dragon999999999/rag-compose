@@ -1,4 +1,4 @@
-"""Create Phase 1 canonical corpus schema and derived pgvector index.
+"""Create Phase 1 canonical corpus schema.
 
 Revision ID: 0001_phase_one
 Revises:
@@ -15,8 +15,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """Create canonical metadata tables, provenance mappings, and rebuildable vector rows."""
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    """Create canonical metadata tables and provenance mappings.
+
+    Qdrant is intentionally not represented here: its vectors are derived from
+    these canonical rows and may be independently deleted and rebuilt.
+    """
     op.create_table(
         "projects",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -58,6 +61,12 @@ def upgrade() -> None:
         sa.Column("error", sa.Text()),
         sa.Column(
             "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
@@ -158,19 +167,6 @@ def upgrade() -> None:
         sa.Column("start", sa.Integer(), primary_key=True),
         sa.Column("end", sa.Integer(), nullable=False),
     )
-    op.execute(
-        "CREATE TABLE retrieval_embeddings ("
-        "project_id varchar(36) REFERENCES projects(id) ON DELETE CASCADE, "
-        "chunk_id varchar(255) REFERENCES retrieval_units(id) ON DELETE CASCADE, "
-        "ingestion_id varchar(36) REFERENCES document_ingestions(id) ON DELETE CASCADE NOT NULL, "
-        "model_identity varchar(128) NOT NULL, dimension integer NOT NULL, "
-        "embedding vector NOT NULL, PRIMARY KEY (project_id, chunk_id))"
-    )
-    op.create_index(
-        "ix_retrieval_embeddings_project_model",
-        "retrieval_embeddings",
-        ["project_id", "model_identity"],
-    )
     op.create_table(
         "chats",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -243,7 +239,6 @@ def downgrade() -> None:
         "messages",
         "rag_runs",
         "chats",
-        "retrieval_embeddings",
         "retrieval_unit_members",
         "retrieval_units",
         "evidence_units",

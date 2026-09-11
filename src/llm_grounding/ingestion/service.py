@@ -135,6 +135,15 @@ class DocumentIngestionService:
                 ingestion.id, IngestionStatus.INDEXING
             )
             await self._vectors.upsert(project_id, chunks, vectors)
+            # Re-indexing one shared representation must restore every project's
+            # payload association without parsing or embedding its chunks again.
+            for (
+                associated_project_id
+            ) in await self._repository.project_ids_for_ingestion(ingestion.id):
+                if associated_project_id != project_id:
+                    await self._vectors.associate_ingestion(
+                        associated_project_id, ingestion.id
+                    )
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.READY
             )

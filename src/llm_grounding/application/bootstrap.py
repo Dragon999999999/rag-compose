@@ -1,7 +1,6 @@
 """Construct Phase 1 application services from environment-backed infrastructure."""
 
-import os
-from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
 from llm_grounding.application.project_service import ProjectService
@@ -9,11 +8,15 @@ from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
 from llm_grounding.embedding.sentence_transformers import SentenceTransformersEmbedder
 from llm_grounding.infrastructure.config.models import ArchitectureConfig
+from llm_grounding.infrastructure.config.settings import (
+    MinioSettings,
+    QdrantSettings,
+)
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.database.session import create_session_factory
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
-from llm_grounding.infrastructure.storage.local import LocalArtifactStore
-from llm_grounding.infrastructure.vector.pgvector import PgVectorStore
+from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
+from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
@@ -27,23 +30,33 @@ from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
 
 
 class PhaseOneApplication:
-    """Hold thin project/chat services and the database engine that owns their lifecycle."""
+    """Hold Phase 1 services and infrastructure clients that require shutdown."""
 
     def __init__(
-        self, projects: ProjectService, chats: ChatService, engine: object
+        self,
+        projects: ProjectService,
+        chats: ChatService,
+        engine: AsyncEngine,
+        vectors: QdrantVectorStore,
     ) -> None:
         """Expose application use cases while retaining engine ownership for shutdown."""
-        self.projects, self.chats, self._engine = projects, chats, engine
+        self.projects, self.chats, self._engine, self._vectors = (
+            projects,
+            chats,
+            engine,
+            vectors,
+        )
 
     async def close(self) -> None:
-        """Dispose database connections after a CLI invocation or application shutdown."""
-        await self._engine.dispose()  # type: ignore[attr-defined]
+        """Dispose database and Qdrant client resources after application shutdown."""
+        await self._vectors.close()
+        await self._engine.dispose()
 
 
 def create_phase_one_application(
     architecture: ArchitectureConfig, ingestion_config: IngestionConfig
 ) -> PhaseOneApplication:
-    """Construct PostgreSQL/pgvector Basic RAG services from typed configuration.
+    """Construct PostgreSQL/MinIO/Qdrant Basic RAG services from typed configuration.
 
     Raises:
         RuntimeError: If configuration selects unsupported Phase 1 components.
@@ -52,21 +65,22 @@ def create_phase_one_application(
         raise RuntimeError(
             "Phase 1 application requires the basic_rag_v1 vector architecture"
         )
-    if ingestion_config.vector_backend != "pgvector":
-        raise RuntimeError("Phase 1 application currently supports only pgvector")
+    if ingestion_config.vector_backend != "qdrant":
+        raise RuntimeError("Phase 1 application currently supports only qdrant")
+    minio_settings = MinioSettings.from_environment()
+    qdrant_settings = QdrantSettings.from_environment()
     engine, sessions = create_session_factory()
     repository = PostgresRepository(sessions)
-    vectors = PgVectorStore(sessions)
+    vectors = QdrantVectorStore(qdrant_settings, repository)
     embedder = SentenceTransformersEmbedder(ingestion_config.embedding)
     chunker = (
         BlockAwareChunker(ingestion_config.chunker)
         if ingestion_config.chunker.type == "block_aware"
         else FixedWindowChunker(ingestion_config.chunker)
     )
-    root = Path(os.environ.get("ARTIFACT_STORAGE_PATH", "./.artifacts"))
     ingestion = DocumentIngestionService(
         repository,
-        LocalArtifactStore(root),
+        MinioArtifactStore(minio_settings),
         PyMuPDFDocumentParser(),
         BasicKnowledgeBuilder(),
         chunker,
@@ -94,7 +108,8 @@ def create_phase_one_application(
         architecture.chat_history.max_messages if architecture.chat_history else 10
     )
     return PhaseOneApplication(
-        ProjectService(repository, ingestion),
+        ProjectService(repository, ingestion, vectors),
         ChatService(repository, runner, max_history),
         engine,
+        vectors,
     )
