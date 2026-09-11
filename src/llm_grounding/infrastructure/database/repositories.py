@@ -273,6 +273,13 @@ class PostgresRepository:
                         metadata_json=chunk.metadata,
                     )
                 )
+
+            # These mappings intentionally use IDs instead of ORM relationships.
+            # Flush parents explicitly so SQLAlchemy cannot batch member inserts
+            # ahead of retrieval_units and violate the database foreign key.
+            await session.flush()
+
+            for chunk in chunks:
                 for reference in chunk.evidence_refs:
                     session.add(
                         RetrievalUnitMemberRow(
