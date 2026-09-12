@@ -79,6 +79,18 @@ class PostgresRepository:
                 raise KeyError(f"Unknown project: {project_id}")
             return Project(row.id, row.name, row.created_at)
 
+    async def rename_project(self, project_id: str, name: str) -> Project:
+        """Rename one project while preserving its canonical corpus identity."""
+        if not name.strip():
+            raise ValueError("Project name must not be blank")
+        async with self._sessions.begin() as session:
+            row = await session.get(ProjectRow, project_id)
+            if row is None:
+                raise KeyError(f"Unknown project: {project_id}")
+            row.name = name.strip()
+            await session.flush()
+            return Project(row.id, row.name, row.created_at or _now())
+
     async def delete_project(self, project_id: str) -> None:
         """Delete project associations/chats while preserving reusable documents."""
         async with self._sessions.begin() as session:

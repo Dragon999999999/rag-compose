@@ -29,6 +29,10 @@ class ProjectService:
         """Create an empty reusable project corpus."""
         return await self._repository.create_project(name)
 
+    async def rename_project(self, project_id: str, name: str) -> Project:
+        """Rename a project through the canonical persistence boundary."""
+        return await self._repository.rename_project(project_id, name)
+
     async def list_projects(self) -> tuple[Project, ...]:
         """List available project corpora."""
         return await self._repository.list_projects()

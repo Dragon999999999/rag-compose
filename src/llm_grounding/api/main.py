@@ -219,7 +219,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -232,6 +232,14 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     @app.post("/api/projects")
     async def create_project(request: NameRequest) -> dict[str, object]:
         return _item(await application.projects.create_project(request.name))
+
+    @app.patch("/api/projects/{project_id}")
+    async def rename_project(
+        project_id: str, request: NameRequest
+    ) -> dict[str, object]:
+        return _item(
+            await application.projects.rename_project(project_id, request.name)
+        )
 
     @app.delete("/api/projects/{project_id}", status_code=204)
     async def delete_project(project_id: str) -> None:
