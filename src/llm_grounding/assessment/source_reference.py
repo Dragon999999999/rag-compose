@@ -17,7 +17,12 @@ class SourceReferenceAssessor:
         referenced = {
             chunk_id for claim in payload.claims for chunk_id in claim.source_chunk_ids
         }
-        unknown = sorted(referenced - known)
+        unresolved = result.metadata.get("unresolved_source_refs", [])
+        unresolved_values = unresolved if isinstance(unresolved, list) else []
+        unresolved_refs = [
+            value for value in unresolved_values if isinstance(value, str)
+        ]
+        unknown = sorted((referenced - known) | set(unresolved_refs))
         uncited_claims = [
             index
             for index, claim in enumerate(payload.claims)
@@ -27,6 +32,7 @@ class SourceReferenceAssessor:
         uncited_claim_values: list[JsonValue] = list(uncited_claims)
         metadata: dict[str, JsonValue] = {
             "unknown_chunk_ids": [str(chunk_id) for chunk_id in unknown],
+            "unresolved_source_refs": list(unresolved_refs),
             "uncited_claim_indexes": uncited_claim_values,
             "project_id": context.request.project_id,
         }

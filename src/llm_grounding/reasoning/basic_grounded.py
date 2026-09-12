@@ -1,47 +1,75 @@
-"""Structured Basic RAG reasoning with source-tagged retrieved chunks.
+"""Grounded QA reasoning using request-local source references.
 
-Prompt ID `basic-grounded` version 1.1 asks a model only to nominate identifiers
-already present in the supplied context. This is a basic reference check, not an
-entailment guarantee; deterministic assessment/policy validate identifiers later.
-Conversation is clearly separated from authoritative source chunks.
+The model receives prompt-library-selected `chunk_N` references rather than
+canonical corpus identifiers. This module resolves those aliases back to canonical
+chunk IDs before the existing deterministic source-reference assessment runs.
 """
 
+from dataclasses import dataclass
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from llm_grounding.domain.answers import JsonValue, ReasoningResult
 from llm_grounding.domain.corpus import GroundingContext
 from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
-
-PROMPT_ID = "basic-grounded"
-PROMPT_VERSION = "1.1"
+from llm_grounding.infrastructure.prompts import PromptLibrary, RenderedPrompt
 
 
-class GroundedClaimPayload(BaseModel):
-    """One answer statement and the retrieved chunk IDs the model nominates for it."""
+class ModelClaimPayload(BaseModel):
+    """One model-facing factual claim supported by request-local references."""
 
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=3000)
-    source_chunk_ids: list[str] = Field(
-        default_factory=list,
+    source_refs: list[str] = Field(
+        min_length=1,
         description=(
-            "Complete canonical SOURCE chunk IDs copied exactly from the prompt; "
-            "never shortened or reformatted."
+            "Exact request-local references of retrieved evidence chunks that "
+            "directly support this claim. Values must be copied from the "
+            "supplied chunk references."
         ),
     )
 
-    @field_validator("source_chunk_ids")
+    @field_validator("source_refs")
     @classmethod
-    def reject_blank_ids(cls, values: list[str]) -> list[str]:
-        """Reject blank citation identifiers before assessment checks membership."""
+    def reject_blank_refs(cls, values: list[str]) -> list[str]:
+        """Reject blank source references before deterministic resolution."""
         if any(not value.strip() for value in values):
-            raise ValueError("source_chunk_ids must not contain blank values")
+            raise ValueError("source_refs must not contain blank values")
         return values
 
 
+class ModelGroundedResponsePayload(BaseModel):
+    """Structured LLM response using only request-local source references."""
+
+    model_config = ConfigDict(extra="forbid")
+    answer_text: str = Field(min_length=1, max_length=8000)
+    claims: list[ModelClaimPayload] = Field(default_factory=list)
+    insufficient_evidence: bool
+    limitations: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_claims_when_evidence_is_sufficient(
+        self,
+    ) -> "ModelGroundedResponsePayload":
+        """Require source-backed claims unless the model explicitly abstains."""
+        if not self.insufficient_evidence and not self.claims:
+            raise ValueError(
+                "claims must not be empty when insufficient_evidence is false"
+            )
+        return self
+
+
+class GroundedClaimPayload(BaseModel):
+    """One canonical internal claim whose support uses persistent chunk IDs."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=3000)
+    source_chunk_ids: list[str] = Field(default_factory=list)
+
+
 class GroundedResponsePayload(BaseModel):
-    """Propose grounded claims or an explicit insufficient-evidence response."""
+    """Canonicalized response consumed by assessment, policy, and rendering."""
 
     model_config = ConfigDict(extra="forbid")
     answer_text: str = Field(min_length=1, max_length=8000)
@@ -50,86 +78,109 @@ class GroundedResponsePayload(BaseModel):
     limitations: str | None = Field(default=None, max_length=2000)
 
 
-def build_prompt(context: GroundingContext) -> str:
-    """Render machine-readable source tags and untrusted conversation context."""
-    valid_source_ids = "\n".join(
-        f'- "{result.chunk.chunk_id}"' for result in context.chunks
-    )
-    source_blocks = "\n\n".join(
-        f"[SOURCE {result.chunk.chunk_id}]\n"
-        f"Document: {result.chunk.document_name}\n"
-        f"Pages: {result.chunk.page_start or 'unknown'}–"
-        f"{result.chunk.page_end or 'unknown'}\n"
-        f"Text:\n{result.chunk.text}"
-        for result in context.chunks
-    )
+@dataclass(frozen=True)
+class PromptChunk:
+    """Minimal LLM-facing representation of one selected retrieval chunk."""
+
+    ref: str
+    document_name: str
+    page_start: str
+    page_end: str
+    text: str
+
+
+@dataclass(frozen=True)
+class GroundedPromptContext:
+    """Bind request-local model references to canonical selected chunk IDs."""
+
+    chunks: tuple[PromptChunk, ...]
+    alias_to_chunk_id: dict[str, str]
+
+
+def build_grounded_prompt_context(context: GroundingContext) -> GroundedPromptContext:
+    """Assign deterministic `chunk_N` references in final retrieval order."""
+    chunks: list[PromptChunk] = []
+    alias_to_chunk_id: dict[str, str] = {}
+    for position, result in enumerate(context.chunks, start=1):
+        ref = f"chunk_{position}"
+        chunk = result.chunk
+        alias_to_chunk_id[ref] = chunk.chunk_id
+        chunks.append(
+            PromptChunk(
+                ref,
+                chunk.document_name,
+                str(chunk.page_start) if chunk.page_start is not None else "unknown",
+                str(chunk.page_end) if chunk.page_end is not None else "unknown",
+                chunk.text,
+            )
+        )
+    return GroundedPromptContext(tuple(chunks), alias_to_chunk_id)
+
+
+def _history_text(context: GroundingContext) -> str:
+    """Render conversation context without treating it as evidence."""
     history = "\n".join(
         f"{message.role}: {message.content}" for message in context.history
     )
-    return f"""Answer using only the SOURCE blocks below.
-
-TASK: {context.request.task}
-
-SOURCES:
-{source_blocks}
-
-VALID SOURCE CHUNK IDS (copy the complete quoted value exactly):
-{valid_source_ids}
-
-CONVERSATION CONTEXT (untrusted; never use it as documentary evidence):
-{history or "(none)"}
-
-Return structured output. Every factual claim must list one or more supporting
-source_chunk_ids copied exactly from VALID SOURCE CHUNK IDS. Never shorten an ID
-to only its suffix (for example, c000016). Put citations only in source_chunk_ids,
-not in answer_text or claim text. Do not invent facts or source IDs. If sources do
-not establish an answer, set insufficient_evidence true, explain the limitation,
-and return no claims. Preserve source-stated uncertainty and distinguish inference
-when appropriate."""
+    return history or "(none)"
 
 
-def _canonicalize_source_ids(
-    payload: GroundedResponsePayload, context: GroundingContext
-) -> tuple[GroundedResponsePayload, dict[str, str]]:
-    """Resolve only unambiguous chunk suffixes to retrieved canonical IDs.
-
-    Some structured-output models shorten `INGESTION_ID:CHUNK_ID` to `CHUNK_ID`
-    despite the prompt contract. A suffix is accepted only when it identifies
-    exactly one retrieved chunk. Unknown or ambiguous values remain unchanged so
-    the source-reference assessor rejects them.
-    """
-    known_ids = {result.chunk.chunk_id for result in context.chunks}
-    suffix_matches: dict[str, list[str]] = {}
-    for source_id in known_ids:
-        suffix_matches.setdefault(source_id.rpartition(":")[2], []).append(source_id)
-
-    replacements: dict[str, str] = {}
+def _canonicalize_model_payload(
+    payload: ModelGroundedResponsePayload,
+    prompt_context: GroundedPromptContext,
+) -> tuple[GroundedResponsePayload, list[dict[str, str | None]], list[str]]:
+    """Resolve model aliases to canonical IDs without guessing unknown values."""
     claims: list[GroundedClaimPayload] = []
+    resolutions: list[dict[str, str | None]] = []
+    unresolved_refs: list[str] = []
     for claim in payload.claims:
         canonical_ids: list[str] = []
-        for source_id in claim.source_chunk_ids:
-            matches = suffix_matches.get(source_id, [])
-            canonical_id = (
-                matches[0]
-                if source_id not in known_ids and len(matches) == 1
-                else source_id
+        for source_ref in claim.source_refs:
+            canonical_id = prompt_context.alias_to_chunk_id.get(source_ref)
+            resolutions.append(
+                {
+                    "source_ref": source_ref,
+                    "canonical_chunk_id": canonical_id,
+                }
             )
-            if canonical_id != source_id:
-                replacements[source_id] = canonical_id
-            canonical_ids.append(canonical_id)
-        claims.append(claim.model_copy(update={"source_chunk_ids": canonical_ids}))
-    return payload.model_copy(update={"claims": claims}), replacements
+            if canonical_id is None:
+                unresolved_refs.append(source_ref)
+            else:
+                canonical_ids.append(canonical_id)
+        claims.append(
+            GroundedClaimPayload(
+                text=claim.text,
+                source_chunk_ids=canonical_ids,
+            )
+        )
+    return (
+        GroundedResponsePayload(
+            answer_text=payload.answer_text,
+            claims=claims,
+            insufficient_evidence=payload.insufficient_evidence,
+            limitations=payload.limitations,
+        ),
+        resolutions,
+        unresolved_refs,
+    )
 
 
 class BasicGroundedReasoner:
-    """Generate a source-nominating proposal from selected project chunks only."""
+    """Generate claims against aliases and return canonical internal evidence IDs."""
 
-    def __init__(self, model_client: StructuredModelClient) -> None:
-        """Inject the external structured-generation boundary."""
+    def __init__(
+        self,
+        model_client: StructuredModelClient,
+        prompts: PromptLibrary,
+        prompt_id: str,
+    ) -> None:
+        """Inject structured generation and a configuration-selected prompt library."""
         self._model_client = model_client
+        self._prompts = prompts
+        self._prompt_id = prompt_id
 
     async def reason(self, context: GroundingContext) -> ReasoningResult:
-        """Request a schema-validated grounded proposal.
+        """Render the selected prompt, call the model, and canonicalize source refs.
 
         Raises:
             ValueError: If no retrieved chunks are supplied.
@@ -137,24 +188,54 @@ class BasicGroundedReasoner:
         """
         if not context.chunks:
             raise ValueError("Grounded reasoning requires at least one retrieved chunk")
-        payload = await self._model_client.generate(
-            build_prompt(context), GroundedResponsePayload
+        prompt_context = build_grounded_prompt_context(context)
+        prompt = self._render_prompt(context, prompt_context)
+        model_payload = await self._model_client.generate(
+            prompt.text, ModelGroundedResponsePayload
         )
-        raw_model_payload: dict[str, JsonValue] = payload.model_dump(mode="json")
-        payload, canonicalized_ids = _canonicalize_source_ids(payload, context)
-        canonicalized_metadata: dict[str, JsonValue] = {
-            source_id: canonical_id
-            for source_id, canonical_id in canonicalized_ids.items()
+        raw_model_payload: dict[str, JsonValue] = model_payload.model_dump(mode="json")
+        canonical_payload, resolutions, unresolved_refs = _canonicalize_model_payload(
+            model_payload, prompt_context
+        )
+        alias_metadata: dict[str, JsonValue] = {
+            source_ref: canonical_id
+            for source_ref, canonical_id in prompt_context.alias_to_chunk_id.items()
         }
+        resolution_metadata: list[JsonValue] = []
+        for resolution in resolutions:
+            resolution_metadata.append(
+                {
+                    "source_ref": resolution["source_ref"],
+                    "canonical_chunk_id": resolution["canonical_chunk_id"],
+                }
+            )
+        unresolved_metadata: list[JsonValue] = list(unresolved_refs)
         metadata: dict[str, JsonValue] = {
-            "prompt_id": PROMPT_ID,
-            "prompt_version": PROMPT_VERSION,
-            "output_schema": "GroundedResponsePayload",
+            "prompt_id": prompt.metadata.prompt_id,
+            "prompt_version": prompt.metadata.version,
+            "output_schema": "ModelGroundedResponsePayload",
             "raw_model_payload": raw_model_payload,
-            "canonicalized_source_ids": canonicalized_metadata,
+            "source_ref_aliases": alias_metadata,
+            "source_ref_resolutions": resolution_metadata,
+            "unresolved_source_refs": unresolved_metadata,
         }
         return ReasoningResult(
             result_id=str(uuid4()),
-            payload=payload.model_dump(mode="json"),
+            payload=canonical_payload.model_dump(mode="json"),
             metadata=metadata,
+        )
+
+    def _render_prompt(
+        self,
+        context: GroundingContext,
+        prompt_context: GroundedPromptContext,
+    ) -> RenderedPrompt:
+        """Render the configured template with only model-facing source data."""
+        return self._prompts.render(
+            self._prompt_id,
+            {
+                "task": context.request.task,
+                "history": _history_text(context),
+                "chunks": prompt_context.chunks,
+            },
         )

@@ -15,6 +15,7 @@ from llm_grounding.infrastructure.config.settings import (
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.database.session import create_session_factory
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
+from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
 from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
 from llm_grounding.ingestion.models import IngestionConfig
@@ -70,6 +71,8 @@ def create_phase_one_application(
         )
     if ingestion_config.vector_backend != "qdrant":
         raise RuntimeError("Phase 1 application currently supports only qdrant")
+    if architecture.reasoner.prompt_id is None:
+        raise RuntimeError("Phase 1 grounded reasoning requires a configured prompt_id")
     minio_settings = MinioSettings.from_environment()
     qdrant_settings = QdrantSettings.from_environment()
     engine, sessions = create_session_factory()
@@ -98,7 +101,11 @@ def create_phase_one_application(
         architecture.retriever.context_chars or 12000,
         architecture.retriever.summary_per_facet or 3,
     )
-    reasoner = BasicGroundedReasoner(AqueductModelClient(architecture.reasoner.model))
+    reasoner = BasicGroundedReasoner(
+        AqueductModelClient(architecture.reasoner.model),
+        PromptLibrary.default(),
+        architecture.reasoner.prompt_id,
+    )
     runner = BasicRagRunner(
         vector,
         summary,

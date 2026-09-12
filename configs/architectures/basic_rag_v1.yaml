@@ -13,6 +13,7 @@ reranker:
   type: identity
 reasoner:
   type: basic_grounded
+  prompt_id: grounded_qa_v1
   model:
     provider: aqueduct
     name: qwen-3.5-397b

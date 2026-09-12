@@ -49,7 +49,7 @@ def _grounding_inputs() -> tuple[
         "claims": [
             {
                 "text": "The paper introduces a framework.",
-                "source_chunk_ids": ["c000016"],
+                "source_refs": ["chunk_1"],
             }
         ],
         "insufficient_evidence": False,
@@ -67,7 +67,16 @@ def _grounding_inputs() -> tuple[
     reasoning = ReasoningResult(
         "result",
         canonical_payload,
-        metadata={"raw_model_payload": raw_payload},
+        metadata={
+            "prompt_id": "grounded_qa_v1",
+            "prompt_version": "1.0",
+            "raw_model_payload": raw_payload,
+            "source_ref_aliases": {"chunk_1": chunk_id},
+            "source_ref_resolutions": [
+                {"source_ref": "chunk_1", "canonical_chunk_id": chunk_id}
+            ],
+            "unresolved_source_refs": [],
+        },
     )
     assessments = (
         Assessment(
@@ -124,6 +133,18 @@ def test_verbose_diagnostics_include_raw_response_and_grounding_inputs(
     }
     assert record["assessments"][0]["label"] == "pass"
     assert record["decision"]["action"] == "accept"
+    assert record["grounding_contract"] == {
+        "prompt_id": "grounded_qa_v1",
+        "prompt_version": "1.0",
+        "source_ref_aliases": {"chunk_1": "ingestion:c000016"},
+        "source_ref_resolutions": [
+            {
+                "source_ref": "chunk_1",
+                "canonical_chunk_id": "ingestion:c000016",
+            }
+        ],
+        "unresolved_source_refs": [],
+    }
 
 
 def test_summary_diagnostics_exclude_raw_response_and_document_text(

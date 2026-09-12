@@ -97,6 +97,17 @@ class GroundingDiagnostics:
                 "action": decision.action,
                 "metadata": decision.metadata,
             },
+            "grounding_contract": {
+                "prompt_id": reasoning.metadata.get("prompt_id"),
+                "prompt_version": reasoning.metadata.get("prompt_version"),
+                "source_ref_aliases": reasoning.metadata.get("source_ref_aliases", {}),
+                "source_ref_resolutions": reasoning.metadata.get(
+                    "source_ref_resolutions", []
+                ),
+                "unresolved_source_refs": reasoning.metadata.get(
+                    "unresolved_source_refs", []
+                ),
+            },
         }
         if self._level == GroundingDiagnosticsLevel.VERBOSE:
             record["context"] = {

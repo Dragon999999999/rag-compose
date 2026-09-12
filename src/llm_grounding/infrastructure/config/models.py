@@ -48,6 +48,11 @@ class ReasonerConfig(ComponentConfig):
     """Select a reasoning implementation and its model configuration."""
 
     model: ModelConfig
+    prompt_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Registered prompt ID selected for a prompt-driven reasoner.",
+    )
 
 
 class RetrieverConfig(ComponentConfig):
