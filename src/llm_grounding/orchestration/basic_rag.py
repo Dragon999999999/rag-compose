@@ -60,6 +60,8 @@ class BasicRagRunner:
                 {
                     "status": "completed",
                     "retrieved_chunk_ids": [],
+                    "answer_payload": {},
+                    "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
                 },
             )
@@ -82,6 +84,9 @@ class BasicRagRunner:
                 "retrieved_chunk_ids": [item.chunk.chunk_id for item in chunks],
                 "assessment_labels": [item.label for item in assessments],
                 "decision": decision.action,
+                "answer_payload": answer.payload,
+                "evidence_ids": list(answer.evidence_ids),
+                "answer_metadata": answer.metadata,
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )

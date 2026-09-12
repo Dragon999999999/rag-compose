@@ -122,6 +122,27 @@ uv run mypy src
 uv run pytest
 ```
 
+## Browser frontend
+
+The browser application is a separate React/TypeScript/Vite workspace. It uses the
+FastAPI adapter as another application interface; it never receives database,
+Qdrant, MinIO, embedding, or Aqueduct credentials. With the persistent services
+prepared as above, start the API and frontend in separate terminals:
+
+```bash
+uv run llm-grounding-api
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+`VITE_API_BASE_URL` is the only frontend environment setting and is intentionally
+non-secret. The API defaults to `http://127.0.0.1:8000/api`; change
+`LLM_GROUNDING_CORS_ORIGINS` when serving the Vite app from a different origin.
+The Evidence pane receives canonical, validated claim citations and source metadata
+from the API, and PDF binaries are streamed through the API rather than MinIO.
+
 Tests generate small PDFs locally and substitute either the generation client,
 PydanticAI's test model, or an in-memory HTTP transport. They block external socket
 connections and do not need Aqueduct credentials. The HTTP tests exercise the

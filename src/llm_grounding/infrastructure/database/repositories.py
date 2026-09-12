@@ -20,7 +20,7 @@ from llm_grounding.domain.corpus import (
     ProjectDocument,
     RetrievalUnit,
 )
-from llm_grounding.domain.evidence import EvidenceUnit
+from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
@@ -41,7 +41,7 @@ def _now() -> datetime:
 
 
 class PostgresRepository:
-    """Persist and load projects, corpus representations, chats, and RAG run metadata."""
+    """Persist and load projects, corpora, chats, and RAG-run metadata."""
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         """Inject a factory so each operation owns an isolated async session."""
@@ -116,7 +116,7 @@ class PostgresRepository:
     async def attach_document(
         self, project_id: str, document_id: str, ingestion_id: str | None = None
     ) -> ProjectDocument:
-        """Attach reusable content to a project and optionally select its ready ingestion."""
+        """Attach reusable content and optionally select its ready ingestion."""
         async with self._sessions.begin() as session:
             if await session.get(ProjectRow, project_id) is None:
                 raise KeyError(f"Unknown project: {project_id}")
@@ -154,6 +154,17 @@ class PostgresRepository:
                 for row in rows
             )
 
+    async def detach_document(self, project_id: str, document_id: str) -> None:
+        """Remove one document association without deleting reusable content."""
+        async with self._sessions.begin() as session:
+            row = await session.get(
+                ProjectDocumentRow,
+                {"project_id": project_id, "document_id": document_id},
+            )
+            if row is None:
+                raise KeyError(f"Document {document_id} is not in project {project_id}")
+            await session.delete(row)
+
     async def get_document(self, document_id: str) -> Document:
         """Load canonical document metadata or raise KeyError."""
         async with self._sessions() as session:
@@ -176,6 +187,18 @@ class PostgresRepository:
                 )
             )
             return None if row is None else self._ingestion(row)
+
+    async def list_ingestions(self, document_id: str) -> tuple[DocumentIngestion, ...]:
+        """List immutable representations for document-detail views."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(IngestionRow)
+                    .where(IngestionRow.document_id == document_id)
+                    .order_by(IngestionRow.created_at.desc())
+                )
+            ).all()
+            return tuple(self._ingestion(row) for row in rows)
 
     async def create_ingestion(
         self,
@@ -239,13 +262,18 @@ class PostgresRepository:
                         ordering=item.order,
                         page_number=item.page_number,
                         block_index=item.block_index,
+                        bounding_box=(
+                            list(item.bounding_box)
+                            if item.bounding_box is not None
+                            else None
+                        ),
                         text=item.text,
                         metadata_json=dict(item.metadata),
                     )
                 )
 
     async def clear_ingestion_representation(self, ingestion_id: str) -> None:
-        """Clear partial canonical chunks/evidence before explicitly retrying an ingestion."""
+        """Clear partial chunks/evidence before explicitly retrying ingestion."""
         async with self._sessions.begin() as session:
             await session.execute(
                 delete(RetrievalUnitRow).where(
@@ -341,6 +369,43 @@ class PostgresRepository:
             chunks = [await self._chunk(session, row) for row in rows]
             return {chunk.chunk_id: chunk for chunk in chunks}
 
+    async def evidence_by_ids(
+        self, evidence_ids: tuple[str, ...]
+    ) -> dict[str, EvidenceUnit]:
+        """Hydrate canonical evidence for browser PDF location rendering."""
+        if not evidence_ids:
+            return {}
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(EvidenceRow).where(EvidenceRow.id.in_(evidence_ids))
+                )
+            ).all()
+            return {
+                row.id: EvidenceUnit(
+                    row.id,
+                    row.document_id,
+                    EvidenceType(row.evidence_type),
+                    row.source_uri,
+                    row.ordering,
+                    row.page_number,
+                    row.block_index,
+                    (
+                        (
+                            row.bounding_box[0],
+                            row.bounding_box[1],
+                            row.bounding_box[2],
+                            row.bounding_box[3],
+                        )
+                        if row.bounding_box is not None and len(row.bounding_box) == 4
+                        else None
+                    ),
+                    row.text,
+                    dict(row.metadata_json),
+                )
+                for row in rows
+            }
+
     async def project_ids_for_ingestion(self, ingestion_id: str) -> tuple[str, ...]:
         """Return every project selecting an ingestion for index-membership repair."""
         async with self._sessions() as session:
@@ -406,6 +471,14 @@ class PostgresRepository:
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
             return Chat(row.id, row.project_id, row.name, row.created_at)
+
+    async def delete_chat(self, chat_id: str) -> None:
+        """Delete a chat and its messages without changing project documents."""
+        async with self._sessions.begin() as session:
+            row = await session.get(ChatRow, chat_id)
+            if row is None:
+                raise KeyError(f"Unknown chat: {chat_id}")
+            await session.delete(row)
 
     async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
         """List project conversations in creation order."""
@@ -488,3 +561,11 @@ class PostgresRepository:
                     metadata_json=metadata,
                 )
             )
+
+    async def run_metadata(self, run_id: str) -> dict[str, object]:
+        """Load persisted run metadata for structured browser provenance views."""
+        async with self._sessions() as session:
+            row = await session.get(RagRunRow, run_id)
+            if row is None:
+                raise KeyError(f"Unknown RAG run: {run_id}")
+            return dict(row.metadata_json)

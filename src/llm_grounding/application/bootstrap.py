@@ -17,6 +17,7 @@ from llm_grounding.infrastructure.database.session import create_session_factory
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
+from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
@@ -40,6 +41,8 @@ class PhaseOneApplication:
         chats: ChatService,
         engine: AsyncEngine,
         vectors: QdrantVectorStore,
+        repository: PostgresRepository,
+        artifacts: ArtifactStore,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -48,6 +51,7 @@ class PhaseOneApplication:
             engine,
             vectors,
         )
+        self.repository, self.artifacts = repository, artifacts
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
@@ -84,9 +88,10 @@ def create_phase_one_application(
         if ingestion_config.chunker.type == "block_aware"
         else FixedWindowChunker(ingestion_config.chunker)
     )
+    artifacts = MinioArtifactStore(minio_settings)
     ingestion = DocumentIngestionService(
         repository,
-        MinioArtifactStore(minio_settings),
+        artifacts,
         PyMuPDFDocumentParser(),
         BasicKnowledgeBuilder(),
         chunker,
@@ -123,4 +128,6 @@ def create_phase_one_application(
         ChatService(repository, runner, max_history),
         engine,
         vectors,
+        repository,
+        artifacts,
     )

@@ -16,6 +16,9 @@ dependencies = [
     "jinja2>=3.1,<4",
     "qdrant-client>=1.16,<2",
     "minio>=7.2,<8",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "python-multipart>=0.0.20,<1",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +26,7 @@ embeddings = ["sentence-transformers>=5,<6"]
 
 [project.scripts]
 llm-grounding = "llm_grounding.application.cli:main"
+llm-grounding-api = "llm_grounding.api.main:main"
 
 [build-system]
 requires = ["hatchling"]

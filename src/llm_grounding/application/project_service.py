@@ -10,7 +10,7 @@ from llm_grounding.ingestion.service import DocumentIngestionService
 
 
 class ProjectService:
-    """Expose simple corpus lifecycle operations without low-level pipeline choreography."""
+    """Expose corpus lifecycle operations without pipeline choreography."""
 
     def __init__(
         self,
@@ -38,10 +38,38 @@ class ProjectService:
         await self._vectors.remove_project(project_id)
         await self._repository.delete_project(project_id)
 
+    async def list_documents(
+        self, project_id: str
+    ) -> tuple[tuple[Document, DocumentIngestion | None], ...]:
+        """List project sources with the selected ingestion lifecycle state."""
+        associations = await self._repository.list_project_documents(project_id)
+        documents: list[tuple[Document, DocumentIngestion | None]] = []
+        for association in associations:
+            document = await self._repository.get_document(association.document_id)
+            ingestion = None
+            if association.ingestion_id is not None:
+                # The configuration hash is not available at this boundary, so the
+                # selected representation is loaded through its document list below.
+                candidates = await self._repository.list_ingestions(document.id)
+                ingestion = next(
+                    (
+                        item
+                        for item in candidates
+                        if item.id == association.ingestion_id
+                    ),
+                    None,
+                )
+            documents.append((document, ingestion))
+        return tuple(documents)
+
+    async def remove_document(self, project_id: str, document_id: str) -> None:
+        """Detach a source from a project without deleting canonical content."""
+        await self._repository.detach_document(project_id, document_id)
+
     async def add_document(
         self, project_id: str, file: Path, config: IngestionConfig
     ) -> tuple[Document, DocumentIngestion]:
-        """Attach and index a PDF using defaults or an explicit ingestion configuration."""
+        """Attach and index a PDF with the supplied ingestion configuration."""
         document, _, ingestion = await self._ingestion.add_document(
             project_id, file, config
         )

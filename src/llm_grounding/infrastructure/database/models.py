@@ -114,6 +114,7 @@ class EvidenceRow(Base):
     ordering: Mapped[int] = mapped_column(Integer, nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer)
     block_index: Mapped[int | None] = mapped_column(Integer)
+    bounding_box: Mapped[list[float] | None] = mapped_column(JSON)
     text: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
 
@@ -166,7 +167,7 @@ class ChatRow(Base):
 
 
 class RagRunRow(Base):
-    """Persist run identity/status/metadata while detailed trace remains application-owned."""
+    """Persist run metadata while the detailed trace remains application-owned."""
 
     __tablename__ = "rag_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
