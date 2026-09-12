@@ -12,6 +12,7 @@ from llm_grounding.domain.corpus import (
     Message,
     TaskType,
 )
+from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
@@ -28,10 +29,12 @@ class BasicRagRunner:
         assessor: SourceReferenceAssessor,
         policy: BasicGroundingPolicy,
         renderer: GroundedAnswerRenderer,
+        diagnostics: GroundingDiagnostics | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
         self._assessor, self._policy, self._renderer = assessor, policy, renderer
+        self._diagnostics = diagnostics or GroundingDiagnostics()
 
     async def run(
         self, request: CorpusRequest, history: tuple[Message, ...] = ()
@@ -43,6 +46,9 @@ class BasicRagRunner:
             else self._vector.retrieve(request)
         )
         if not chunks:
+            self._diagnostics.report_empty_retrieval(
+                GroundingContext(request, (), history)
+            )
             answer = Answer(
                 "Insufficient evidence: no indexed project chunks matched "
                 "this request.",
@@ -61,6 +67,7 @@ class BasicRagRunner:
         reasoning = await self._reasoner.reason(context)
         assessments = await self._assessor.assess_context(reasoning, context)
         decision = await self._policy.decide(reasoning, assessments)
+        self._diagnostics.report(context, reasoning, assessments, decision)
         rejected = decision.action == DecisionAction.REJECT
         answer = (
             self._rejected_answer(decision)

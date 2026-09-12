@@ -47,6 +47,11 @@ llm-grounding chat ask CHAT_ID "What method did the paper evaluate?"
 llm-grounding chat ask CHAT_ID "Summarize the corpus" --summary
 ```
 
+Add `--grounding-diagnostics summary` to `chat ask` to emit retrieved IDs,
+assessments, and the decision to stderr. `--grounding-diagnostics verbose` also
+emits document text, chat history, and raw LLM output, so use it only for local
+debugging with data that is appropriate to log.
+
 `configs/ingestion/default.yaml` controls parsing, knowledge building, chunking, and
 embedding identity. The identity includes parser, knowledge, chunker, embedding model,
 revision, dimension, normalization, and index versions. Adding the same PDF with the

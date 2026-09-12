@@ -65,6 +65,11 @@ uv run python -m llm_grounding chat ask CHAT_ID "What are the main differences?"
 uv run python -m llm_grounding project delete PROJECT_ID
 ```
 
+For grounding investigations, add `--grounding-diagnostics summary` to a chat
+query to log retrieved IDs, assessments, and the policy decision to stderr. Use
+`--grounding-diagnostics verbose` only for local debugging: it additionally logs
+retrieved text, conversation history, and the raw structured LLM response.
+
 MinIO creates `MINIO_BUCKET` lazily and idempotently when a document is first added.
 Stop services with `docker compose down`. `docker compose down -v` also deletes all
 local PostgreSQL, Qdrant, and MinIO data and is intentionally destructive.

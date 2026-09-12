@@ -12,6 +12,11 @@ from llm_grounding.infrastructure.config.loader import (
     load_architecture_config,
     load_ingestion_config,
 )
+from llm_grounding.orchestration.grounding_diagnostics import (
+    GroundingDiagnostics,
+    GroundingDiagnosticsLevel,
+    configure_console_grounding_diagnostics,
+)
 from llm_grounding.orchestration.runner import RunFailedError
 
 
@@ -57,6 +62,12 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
     ask.add_argument(
         "--summary", action="store_true", help="Use summary retrieval planning"
     )
+    ask.add_argument(
+        "--grounding-diagnostics",
+        choices=tuple(level.value for level in GroundingDiagnosticsLevel),
+        default=GroundingDiagnosticsLevel.OFF.value,
+        help="Emit grounding diagnostics to stderr (default: off)",
+    )
     return parser
 
 
@@ -97,7 +108,16 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
         Path("configs/architectures/basic_rag_v1.yaml")
     )
     ingestion = load_ingestion_config(getattr(args, "ingestion", None))
-    application = create_phase_one_application(architecture, ingestion)
+    diagnostics_level = GroundingDiagnosticsLevel(
+        getattr(args, "grounding_diagnostics", GroundingDiagnosticsLevel.OFF.value)
+    )
+    if diagnostics_level != GroundingDiagnosticsLevel.OFF:
+        configure_console_grounding_diagnostics()
+    application = create_phase_one_application(
+        architecture,
+        ingestion,
+        GroundingDiagnostics(diagnostics_level),
+    )
     try:
         if args.command == "project" and args.project_command == "create":
             project = await application.projects.create_project(args.name)
@@ -116,7 +136,8 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
             )
             print(
                 "Document "
-                f"{document.id} ingested as {representation.id} ({representation.status})."
+                f"{document.id} ingested as {representation.id} "
+                f"({representation.status})."
             )
         elif args.command == "chat" and args.chat_command == "create":
             chat = await application.chats.create_chat(args.project_id, args.name)

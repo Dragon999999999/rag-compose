@@ -140,6 +140,7 @@ class BasicGroundedReasoner:
         payload = await self._model_client.generate(
             build_prompt(context), GroundedResponsePayload
         )
+        raw_model_payload: dict[str, JsonValue] = payload.model_dump(mode="json")
         payload, canonicalized_ids = _canonicalize_source_ids(payload, context)
         canonicalized_metadata: dict[str, JsonValue] = {
             source_id: canonical_id
@@ -149,6 +150,7 @@ class BasicGroundedReasoner:
             "prompt_id": PROMPT_ID,
             "prompt_version": PROMPT_VERSION,
             "output_schema": "GroundedResponsePayload",
+            "raw_model_payload": raw_model_payload,
             "canonicalized_source_ids": canonicalized_metadata,
         }
         return ReasoningResult(

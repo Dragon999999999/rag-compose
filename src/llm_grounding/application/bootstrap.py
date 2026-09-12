@@ -23,6 +23,7 @@ from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
+from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
@@ -39,7 +40,7 @@ class PhaseOneApplication:
         engine: AsyncEngine,
         vectors: QdrantVectorStore,
     ) -> None:
-        """Expose application use cases while retaining engine ownership for shutdown."""
+        """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
             projects,
             chats,
@@ -54,7 +55,9 @@ class PhaseOneApplication:
 
 
 def create_phase_one_application(
-    architecture: ArchitectureConfig, ingestion_config: IngestionConfig
+    architecture: ArchitectureConfig,
+    ingestion_config: IngestionConfig,
+    diagnostics: GroundingDiagnostics | None = None,
 ) -> PhaseOneApplication:
     """Construct PostgreSQL/MinIO/Qdrant Basic RAG services from typed configuration.
 
@@ -103,6 +106,7 @@ def create_phase_one_application(
         SourceReferenceAssessor(),
         BasicGroundingPolicy(),
         GroundedAnswerRenderer(),
+        diagnostics,
     )
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10

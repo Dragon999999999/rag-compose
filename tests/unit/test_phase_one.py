@@ -234,6 +234,17 @@ async def test_unique_short_source_id_is_canonicalized_before_assessment() -> No
     assessments = await SourceReferenceAssessor().assess_context(reasoning, context)
 
     assert payload.claims[0].source_chunk_ids == [canonical_id]
+    assert reasoning.metadata["raw_model_payload"] == {
+        "answer_text": "The paper introduces a framework.",
+        "claims": [
+            {
+                "text": "The paper introduces a framework.",
+                "source_chunk_ids": ["c000016"],
+            }
+        ],
+        "insufficient_evidence": False,
+        "limitations": None,
+    }
     assert reasoning.metadata["canonicalized_source_ids"] == {"c000016": canonical_id}
     assert assessments[0].label == "pass"
     assert assessments[0].evidence_ids == (canonical_id,)
