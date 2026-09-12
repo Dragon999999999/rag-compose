@@ -6,7 +6,7 @@ from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 
 
 class SourceReferenceAssessor:
-    """Check chunk IDs exist in selected context and belong to the active project request."""
+    """Check cited chunk IDs against the active project's retrieved context."""
 
     async def assess_context(
         self, result: ReasoningResult, context: GroundingContext
@@ -18,9 +18,16 @@ class SourceReferenceAssessor:
             chunk_id for claim in payload.claims for chunk_id in claim.source_chunk_ids
         }
         unknown = sorted(referenced - known)
-        label = "pass" if not unknown else "fail"
+        uncited_claims = [
+            index
+            for index, claim in enumerate(payload.claims)
+            if not claim.source_chunk_ids
+        ]
+        label = "pass" if not unknown and not uncited_claims else "fail"
+        uncited_claim_values: list[JsonValue] = list(uncited_claims)
         metadata: dict[str, JsonValue] = {
             "unknown_chunk_ids": [str(chunk_id) for chunk_id in unknown],
+            "uncited_claim_indexes": uncited_claim_values,
             "project_id": context.request.project_id,
         }
         return (

@@ -1,6 +1,7 @@
-"""Offline tests for Phase 1 chunks, vector isolation, and grounded source validation."""
+"""Test Phase 1 chunks, vector isolation, and source validation offline."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel
@@ -50,6 +51,31 @@ class FixedGroundedModel:
         return output_type.model_validate(self.payload.model_dump())
 
 
+class RecordingFakeEmbedder:
+    """Record which embedding operation a query pipeline requests."""
+
+    def __init__(self) -> None:
+        """Wrap the deterministic test embedder and initialize call records."""
+        self._delegate = DeterministicFakeEmbedder()
+        self.document_inputs: list[list[str]] = []
+        self.query_inputs: list[str] = []
+
+    @property
+    def model_identity(self) -> str:
+        """Expose the wrapped embedding-space identity."""
+        return self._delegate.model_identity
+
+    async def embed_documents(self, texts: list[str]) -> tuple[EmbeddingVector, ...]:
+        """Record and embed document chunks."""
+        self.document_inputs.append(texts)
+        return await self._delegate.embed_documents(texts)
+
+    async def embed_query(self, text: str) -> EmbeddingVector:
+        """Record and embed one query."""
+        self.query_inputs.append(text)
+        return await self._delegate.embed_query(text)
+
+
 def evidence() -> tuple[EvidenceUnit, ...]:
     """Create adjacent canonical evidence with page and ordering provenance."""
     return (
@@ -77,7 +103,7 @@ def evidence() -> tuple[EvidenceUnit, ...]:
 
 
 async def test_chunkers_preserve_evidence_provenance_and_overlap() -> None:
-    """Fixed/block-aware chunking retains source IDs and page spans without flattening identity."""
+    """Chunking retains source IDs and page spans without flattening identity."""
     config = ChunkerConfig(target_chars=32, overlap_chars=8)
     fixed = await FixedWindowChunker(config).chunk(evidence(), "ingestion", "paper.pdf")
     blocks = await BlockAwareChunker(config).chunk(evidence(), "ingestion", "paper.pdf")
@@ -94,9 +120,7 @@ async def test_chunkers_preserve_evidence_provenance_and_overlap() -> None:
     assert fixed[0].text[-8:] == fixed[1].text[:8]
 
 
-async def test_vector_store_enforces_project_isolation_and_embedding_compatibility() -> (
-    None
-):
+async def test_vector_store_enforces_isolation_and_embedding_compatibility() -> None:
     """Search predicates select only active project chunks before score ranking."""
     embedder = DeterministicFakeEmbedder()
     store = InMemoryVectorStore()
@@ -174,14 +198,90 @@ async def test_unknown_model_source_ids_are_rejected_before_rendering() -> None:
         await GroundedAnswerRenderer().render_context(decision, context)
 
 
-async def test_basic_rag_renders_real_source_listing_and_never_history_as_evidence() -> (
-    None
-):
-    """The query runner keeps history separate and renderer resolves known chunk provenance."""
-    embedder = DeterministicFakeEmbedder()
-    store = InMemoryVectorStore()
+async def test_unique_short_source_id_is_canonicalized_before_assessment() -> None:
+    """A unique model-shortened suffix resolves to its retrieved canonical ID."""
+    canonical_id = "709e24e2-fa17-44e8-bfab-3cf256e584f0:c000016"
     chunk = RetrievalUnit(
-        "known",
+        canonical_id,
+        "document",
+        "ingestion",
+        "paper.pdf",
+        "The framework is the paper's main contribution.",
+        0,
+        1,
+        1,
+        (EvidenceReference("e", 0, 47),),
+    )
+    context = GroundingContext(
+        CorpusRequest("project", "What is the main contribution?"),
+        (ChunkRetrievalResult(chunk, 1, "vector", 0.9),),
+    )
+    model = FixedGroundedModel(
+        GroundedResponsePayload(
+            answer_text="The paper introduces a framework.",
+            claims=[
+                {
+                    "text": "The paper introduces a framework.",
+                    "source_chunk_ids": ["c000016"],
+                }
+            ],
+            insufficient_evidence=False,
+        )
+    )
+
+    reasoning = await BasicGroundedReasoner(model).reason(context)
+    payload = GroundedResponsePayload.model_validate(reasoning.payload)
+    assessments = await SourceReferenceAssessor().assess_context(reasoning, context)
+
+    assert payload.claims[0].source_chunk_ids == [canonical_id]
+    assert reasoning.metadata["canonicalized_source_ids"] == {"c000016": canonical_id}
+    assert assessments[0].label == "pass"
+    assert assessments[0].evidence_ids == (canonical_id,)
+    assert canonical_id in model.prompts[0]
+    assert "Never shorten an ID" in model.prompts[0]
+
+
+async def test_claim_without_source_ids_fails_reference_assessment() -> None:
+    """A factual claim without a retrieved citation cannot reach rendering."""
+    chunk = RetrievalUnit(
+        "ingestion:c000001",
+        "document",
+        "ingestion",
+        "paper.pdf",
+        "Supported statement.",
+        0,
+        1,
+        1,
+        (EvidenceReference("e", 0, 20),),
+    )
+    context = GroundingContext(
+        CorpusRequest("project", "question"),
+        (ChunkRetrievalResult(chunk, 1, "vector", 0.9),),
+    )
+    model = FixedGroundedModel(
+        GroundedResponsePayload(
+            answer_text="Answer",
+            claims=[{"text": "Uncited claim", "source_chunk_ids": []}],
+            insufficient_evidence=False,
+        )
+    )
+
+    reasoning = await BasicGroundedReasoner(model).reason(context)
+    assessments = await SourceReferenceAssessor().assess_context(reasoning, context)
+    decision = await BasicGroundingPolicy().decide(reasoning, assessments)
+
+    assert assessments[0].label == "fail"
+    assert assessments[0].metadata["uncited_claim_indexes"] == [0]
+    assert decision.action == DecisionAction.REJECT
+
+
+async def test_basic_rag_renders_sources_and_excludes_history_as_evidence() -> None:
+    """The runner separates history while rendering known chunk provenance."""
+    embedder = RecordingFakeEmbedder()
+    store = InMemoryVectorStore()
+    canonical_id = "ingestion:c000007"
+    chunk = RetrievalUnit(
+        canonical_id,
         "document",
         "ingestion",
         "paper.pdf",
@@ -198,7 +298,10 @@ async def test_basic_rag_renders_real_source_listing_and_never_history_as_eviden
         GroundedResponsePayload(
             answer_text="It uses photons.",
             claims=[
-                {"text": "The protocol uses photons.", "source_chunk_ids": ["known"]}
+                {
+                    "text": "The protocol uses photons.",
+                    "source_chunk_ids": [canonical_id],
+                }
             ],
             insufficient_evidence=False,
         )
@@ -212,10 +315,105 @@ async def test_basic_rag_renders_real_source_listing_and_never_history_as_eviden
         GroundedAnswerRenderer(),
     )
     _, answer, _ = await runner.run(CorpusRequest("project", "What does it use?"))
-    assert "[known]" in answer.text
+    assert f"[{canonical_id}]" in answer.text
     assert "Document: paper.pdf" in answer.text
-    assert answer.evidence_ids == ("known",)
-    assert "[SOURCE known]" in model.prompts[0]
+    assert answer.evidence_ids == (canonical_id,)
+    assert f"[SOURCE {canonical_id}]" in model.prompts[0]
+    assert embedder.document_inputs == [["The protocol uses photons."]]
+    assert embedder.query_inputs == ["What does it use?"]
+
+
+async def test_basic_rag_renders_explicit_insufficient_evidence() -> None:
+    """A validated abstention renders as a normal insufficient-evidence answer."""
+    embedder = DeterministicFakeEmbedder()
+    store = InMemoryVectorStore()
+    chunk = RetrievalUnit(
+        "ingestion:c000001",
+        "document",
+        "ingestion",
+        "paper.pdf",
+        "The source discusses a different topic.",
+        0,
+        1,
+        1,
+        (EvidenceReference("e", 0, 38),),
+    )
+    await store.upsert(
+        "project", (chunk,), await embedder.embed_documents([chunk.text])
+    )
+    model = FixedGroundedModel(
+        GroundedResponsePayload(
+            answer_text="The retrieved source does not answer the question.",
+            claims=[],
+            insufficient_evidence=True,
+            limitations="No supporting passage was retrieved.",
+        )
+    )
+    runner = BasicRagRunner(
+        VectorRetriever(embedder, store, 3),
+        _UnusedSummaryRetriever(),
+        BasicGroundedReasoner(model),
+        SourceReferenceAssessor(),
+        BasicGroundingPolicy(),
+        GroundedAnswerRenderer(),
+    )
+
+    _, answer, metadata = await runner.run(
+        CorpusRequest("project", "What is not covered?")
+    )
+
+    assert answer.text.startswith("Insufficient evidence:")
+    assert answer.metadata["insufficient_evidence"] is True
+    assert metadata["decision"] == DecisionAction.ABSTAIN
+    assert metadata["status"] == "completed"
+
+
+async def test_rejected_decision_bypasses_grounded_renderer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsafe model output produces a controlled failure outside the renderer."""
+    embedder = DeterministicFakeEmbedder()
+    store = InMemoryVectorStore()
+    chunk = RetrievalUnit(
+        "ingestion:c000001",
+        "document",
+        "ingestion",
+        "paper.pdf",
+        "Supported statement.",
+        0,
+        1,
+        1,
+        (EvidenceReference("e", 0, 20),),
+    )
+    await store.upsert(
+        "project", (chunk,), await embedder.embed_documents([chunk.text])
+    )
+    model = FixedGroundedModel(
+        GroundedResponsePayload(
+            answer_text="Unsafe answer.",
+            claims=[{"text": "Unsafe claim.", "source_chunk_ids": []}],
+            insufficient_evidence=False,
+        )
+    )
+    renderer = GroundedAnswerRenderer()
+    render_context = AsyncMock(side_effect=AssertionError("renderer was called"))
+    monkeypatch.setattr(renderer, "render_context", render_context)
+    runner = BasicRagRunner(
+        VectorRetriever(embedder, store, 3),
+        _UnusedSummaryRetriever(),
+        BasicGroundedReasoner(model),
+        SourceReferenceAssessor(),
+        BasicGroundingPolicy(),
+        renderer,
+    )
+
+    _, answer, metadata = await runner.run(CorpusRequest("project", "Question"))
+
+    render_context.assert_not_awaited()
+    assert answer.text.startswith("Grounding failure:")
+    assert answer.metadata["grounding_rejected"] is True
+    assert metadata["decision"] == DecisionAction.REJECT
+    assert metadata["status"] == "rejected"
 
 
 class _UnusedSummaryRetriever:
@@ -228,9 +426,7 @@ class _UnusedSummaryRetriever:
         raise AssertionError("Summary retrieval was not expected")
 
 
-def test_configs_load_and_reingestion_identity_changes_with_chunking_or_embeddings() -> (
-    None
-):
+def test_configs_and_reingestion_identity_track_representation_changes() -> None:
     """Architecture/ingestion choices are typed, persisted, and identity-bearing."""
     architecture = load_architecture_config(
         Path("configs/architectures/basic_rag_v1.yaml")

@@ -50,9 +50,10 @@ uv sync --extra embeddings
 uv run alembic upgrade head
 ```
 
-The first command that embeds a document downloads the configured Sentence
-Transformers model into the Hugging Face cache. Later commands reuse the cached
-model; set `HF_HUB_OFFLINE=1` when cached-only operation is required.
+The first command that embeds a document may download the configured Sentence
+Transformers model into the Hugging Face cache. Query embedding is cache-only and
+does not contact the Hub. Each one-shot CLI process still loads the cached weights
+into memory; a long-running application would reuse the same in-memory embedder.
 
 Then create a project, ingest a PDF, and ask a project-scoped question:
 

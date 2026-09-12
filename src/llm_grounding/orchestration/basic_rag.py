@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
-from llm_grounding.domain.answers import Answer
+from llm_grounding.domain.answers import Answer, DecisionAction, DecisionResult
 from llm_grounding.domain.corpus import (
     CorpusRequest,
     GroundingContext,
@@ -18,7 +18,7 @@ from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
 
 
 class BasicRagRunner:
-    """Retrieve project-scoped chunks, reason, validate IDs, decide, and render an Answer."""
+    """Run project-scoped retrieval, reasoning, validation, and rendering."""
 
     def __init__(
         self,
@@ -29,14 +29,14 @@ class BasicRagRunner:
         policy: BasicGroundingPolicy,
         renderer: GroundedAnswerRenderer,
     ) -> None:
-        """Inject independently testable query stages without invoking ingestion work."""
+        """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
         self._assessor, self._policy, self._renderer = assessor, policy, renderer
 
     async def run(
         self, request: CorpusRequest, history: tuple[Message, ...] = ()
     ) -> tuple[str, Answer, dict[str, object]]:
-        """Execute Basic RAG v1 and retain source IDs/metadata suitable for run persistence."""
+        """Execute Basic RAG and retain metadata suitable for persistence."""
         chunks = await (
             self._summary.retrieve(request)
             if request.task_type == TaskType.SUMMARY
@@ -44,7 +44,8 @@ class BasicRagRunner:
         )
         if not chunks:
             answer = Answer(
-                "Insufficient evidence: no indexed project chunks matched this request.",
+                "Insufficient evidence: no indexed project chunks matched "
+                "this request.",
                 metadata={"insufficient_evidence": True},
             )
             return (
@@ -60,15 +61,29 @@ class BasicRagRunner:
         reasoning = await self._reasoner.reason(context)
         assessments = await self._assessor.assess_context(reasoning, context)
         decision = await self._policy.decide(reasoning, assessments)
-        answer = await self._renderer.render_context(decision, context)
+        rejected = decision.action == DecisionAction.REJECT
+        answer = (
+            self._rejected_answer(decision)
+            if rejected
+            else await self._renderer.render_context(decision, context)
+        )
         return (
             reasoning.result_id,
             answer,
             {
-                "status": "completed",
+                "status": "rejected" if rejected else "completed",
                 "retrieved_chunk_ids": [item.chunk.chunk_id for item in chunks],
                 "assessment_labels": [item.label for item in assessments],
                 "decision": decision.action,
                 "created_at": datetime.now(UTC).isoformat(),
             },
+        )
+
+    @staticmethod
+    def _rejected_answer(decision: DecisionResult) -> Answer:
+        """Return a safe response without rendering rejected model content."""
+        reason = str(decision.metadata.get("reason", "grounding_validation_failed"))
+        return Answer(
+            "Grounding failure: the generated response did not pass source validation.",
+            metadata={"grounding_rejected": True, "reason": reason},
         )

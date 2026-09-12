@@ -19,9 +19,11 @@ uv sync --extra embeddings
 uv run alembic upgrade head
 ```
 
-The first embedding operation downloads the configured Sentence Transformers model
-into the Hugging Face cache. Subsequent operations reuse that cache. Set
-`HF_HUB_OFFLINE=1` to prohibit network access once the model is cached.
+The first document embedding operation may download the configured Sentence
+Transformers model into the Hugging Face cache. Query embedding is explicitly
+cache-only and never requires Hub authentication. Each one-shot CLI invocation
+loads cached weights into memory; within a longer-lived application, ingestion and
+query services share one lazily initialized model instance.
 
 The host CLI reads `DATABASE_URL`, `QDRANT_URL`, and `MINIO_*` from its environment.
 The checked-in `.env.example` provides Compose-compatible local values; load those into
