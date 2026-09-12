@@ -50,6 +50,10 @@ uv sync --extra embeddings
 uv run alembic upgrade head
 ```
 
+The first command that embeds a document downloads the configured Sentence
+Transformers model into the Hugging Face cache. Later commands reuse the cached
+model; set `HF_HUB_OFFLINE=1` when cached-only operation is required.
+
 Then create a project, ingest a PDF, and ask a project-scoped question:
 
 ```bash

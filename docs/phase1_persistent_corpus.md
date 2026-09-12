@@ -10,8 +10,7 @@ ready PostgreSQL retrieval units and their configured embedding representation.
 ## Setup and migration
 
 Copy the safe development defaults, start the three local services, install the
-optional local embedder, make the configured Sentence Transformers model available in
-the local cache, and run the migration:
+optional local embedder, and run the migration:
 
 ```bash
 cp .env.example .env
@@ -19,6 +18,10 @@ docker compose up -d
 uv sync --extra embeddings
 uv run alembic upgrade head
 ```
+
+The first embedding operation downloads the configured Sentence Transformers model
+into the Hugging Face cache. Subsequent operations reuse that cache. Set
+`HF_HUB_OFFLINE=1` to prohibit network access once the model is cached.
 
 The host CLI reads `DATABASE_URL`, `QDRANT_URL`, and `MINIO_*` from its environment.
 The checked-in `.env.example` provides Compose-compatible local values; load those into
