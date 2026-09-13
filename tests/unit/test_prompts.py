@@ -27,7 +27,8 @@ def test_grounded_qa_prompt_loads_by_registered_id() -> None:
     )
 
     assert metadata.prompt_id == "grounded_qa_v1"
-    assert metadata.version == "1.0"
+    assert metadata.version == "1.1"
     assert rendered.metadata == metadata
     assert '<chunk ref="chunk_1">' in rendered.text
     assert "The paper introduces a framework." in rendered.text
+    assert "Populate `turn_title`" in rendered.text

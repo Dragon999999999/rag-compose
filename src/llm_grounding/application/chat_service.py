@@ -6,6 +6,24 @@ from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, CorpusRequest, Message, TaskType
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
+from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
+
+
+def _fallback_turn_title(message: str) -> str:
+    """Create a stable label when no structured model response is available."""
+    normalized = " ".join(message.split())
+    if len(normalized) <= 80:
+        return normalized or "Untitled conversation turn"
+    return f"{normalized[:77].rstrip()}…"
+
+
+def _turn_title(answer: Answer, message: str) -> str:
+    """Read the model-generated turn title or label a non-model fallback answer."""
+    if answer.payload:
+        payload = GroundedResponsePayload.model_validate(answer.payload)
+        if "turn_title" in answer.payload:
+            return payload.turn_title
+    return _fallback_turn_title(message)
 
 
 class ChatService:
@@ -59,7 +77,11 @@ class ChatService:
             metadata,
         )
         assistant_message = await self._repository.add_message(
-            chat_id, "assistant", answer.text, run_id
+            chat_id,
+            "assistant",
+            answer.text,
+            run_id,
+            _turn_title(answer, message),
         )
         retrieved = metadata.get("retrieved_chunk_ids", [])
         retrieved_ids = retrieved if isinstance(retrieved, list) else []
@@ -69,6 +91,7 @@ class ChatService:
                 **answer.metadata,
                 "rag_run_id": run_id,
                 "message_id": assistant_message.id,
+                "turn_title": assistant_message.turn_title,
                 "retrieved_chunk_ids": [
                     str(chunk_id)
                     for chunk_id in retrieved_ids

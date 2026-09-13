@@ -1,6 +1,299 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+
 import type { GroundedAnswer, Message } from "../../api/types";
 import { Button, EmptyState, ErrorState } from "../common/ui";
 
-export function ChatWorkspace({ messages, answer, loading, error, activeChunk, onSelectAnswer, onSelectCitation, onAsk }: { messages?: Message[]; answer: GroundedAnswer | null; loading: boolean; error?: Error | null; activeChunk: string | null; onSelectAnswer: (runId: string) => void; onSelectCitation: (chunkId: string) => void; onAsk: (message: string) => void }) { const [value, setValue] = useState(""); const thread = useRef<HTMLDivElement>(null); const scrollToLatest = (): void => thread.current?.scrollTo({ top: thread.current.scrollHeight, behavior: "smooth" }); useEffect(scrollToLatest, [answer?.rag_run_id, loading, messages?.length]); const send = (): void => { if (value.trim()) { onAsk(value.trim()); setValue(""); requestAnimationFrame(scrollToLatest); } }; const submit = (event: FormEvent) => { event.preventDefault(); send(); }; return <section className="chat-workspace"><div className="chat-thread" ref={thread}>{error && <ErrorState error={error} />}{!loading && !messages?.length && <EmptyState title="No chats yet">Start a new conversation to ask grounded questions about this project.</EmptyState>}{messages?.map(message => <article key={message.id} className={`message message-${message.role}`} onClick={() => message.rag_run_id && onSelectAnswer(message.rag_run_id)}><span className="message-role">{message.role === "assistant" ? "Assistant" : "You"}</span><div>{message.content}</div></article>)}{loading && <article className="message message-assistant generation"><span className="message-role">Assistant</span><span>Generating grounded answer…</span></article>}{answer && <AssistantAnswer answer={answer} activeChunk={activeChunk} onSelectCitation={onSelectCitation} />}</div><form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="question">Ask about this project</label><textarea id="question" value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Ask about this project…" disabled={loading} /><Button variant="primary" disabled={loading || !value.trim()}>{loading ? "Sending…" : "Send"}</Button></form></section>; }
-function AssistantAnswer({ answer, activeChunk, onSelectCitation }: { answer: GroundedAnswer; activeChunk: string | null; onSelectCitation: (chunkId: string) => void }) { if (answer.insufficient_evidence) return <article className="message message-assistant insufficient"><span className="message-role">Assistant</span><strong>Insufficient evidence in this project</strong><p>{answer.answer_text}</p></article>; return <article className="message message-assistant structured-answer"><span className="message-role">Assistant</span>{answer.claims.map(claim => <p key={claim.id} className={claim.citations.some(citation => citation.chunk_id === activeChunk) ? "active-claim" : ""}>{claim.text} <span className="citation-group">{claim.citations.map(citation => { const evidence = answer.evidence[citation.chunk_id]; return evidence && <button key={citation.chunk_id} className="citation" title={evidence.excerpt} onClick={() => onSelectCitation(citation.chunk_id)}>{claim.citations.length > 1 ? `${claim.citations.length} sources` : `${evidence.document_name.replace(/\.pdf$/i, "")} · p.${evidence.page_start ?? "?"}`}</button>; })}</span></p>)}</article>; }
+type ConversationTurn = {
+  id: string;
+  prompt: Message;
+  response?: Message;
+  liveAnswer?: GroundedAnswer;
+  title: string;
+};
+
+type ChatWorkspaceProps = {
+  messages?: Message[];
+  answer: GroundedAnswer | null;
+  loading: boolean;
+  error?: Error | null;
+  activeChunk: string | null;
+  onSelectAnswer: (runId: string) => void;
+  onSelectCitation: (chunkId: string) => void;
+  onAsk: (message: string) => void;
+};
+
+/** Render a chat as navigable prompt-and-answer turns. */
+export function ChatWorkspace({
+  messages,
+  answer,
+  loading,
+  error,
+  activeChunk,
+  onSelectAnswer,
+  onSelectCitation,
+  onAsk,
+}: ChatWorkspaceProps) {
+  const [value, setValue] = useState("");
+  const thread = useRef<HTMLDivElement>(null);
+  const turnElements = useRef(new Map<string, HTMLElement>());
+  const turns = buildConversationTurns(messages ?? [], answer);
+  const completedTurns = turns.filter(
+    (turn) => turn.response !== undefined || turn.liveAnswer !== undefined,
+  );
+  const showTurnNavigation = completedTurns.length > 1;
+
+  const scrollToLatest = (): void =>
+    thread.current?.scrollTo({
+      top: thread.current.scrollHeight,
+      behavior: "smooth",
+    });
+
+  useEffect(scrollToLatest, [answer?.rag_run_id, loading, messages?.length]);
+
+  const send = (): void => {
+    if (value.trim()) {
+      onAsk(value.trim());
+      setValue("");
+      requestAnimationFrame(scrollToLatest);
+    }
+  };
+
+  const submit = (event: FormEvent): void => {
+    event.preventDefault();
+    send();
+  };
+
+  const scrollToTurn = (turn: ConversationTurn): void => {
+    turnElements.current
+      .get(turn.id)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <section className="chat-workspace">
+      <div className="chat-thread" ref={thread}>
+        {error && <ErrorState error={error} />}
+        {!loading && !turns.length && (
+          <EmptyState title="No chats yet">
+            Start a new conversation to ask grounded questions about this project.
+          </EmptyState>
+        )}
+        {turns.map((turn) => {
+          const isComplete =
+            turn.response !== undefined || turn.liveAnswer !== undefined;
+          return (
+            <section
+              className={`conversation-turn ${showTurnNavigation && isComplete ? "with-turn-marker" : ""}`}
+              key={turn.id}
+              ref={(element) => {
+                if (element) {
+                  turnElements.current.set(turn.id, element);
+                } else {
+                  turnElements.current.delete(turn.id);
+                }
+              }}
+            >
+              {showTurnNavigation && isComplete && (
+                <button
+                  aria-label={`Jump to ${turn.title}`}
+                  className="turn-marker"
+                  onClick={() => scrollToTurn(turn)}
+                  type="button"
+                >
+                  <span aria-hidden="true" className="turn-marker-line" />
+                  <span className="turn-marker-tooltip" role="tooltip">
+                    {turn.title}
+                  </span>
+                </button>
+              )}
+              <div className="conversation-turn-content">
+                <MessageArticle message={turn.prompt} />
+                {turn.liveAnswer ? (
+                  <AssistantAnswer
+                    activeChunk={activeChunk}
+                    answer={turn.liveAnswer}
+                    onSelectCitation={onSelectCitation}
+                  />
+                ) : turn.response ? (
+                  <MessageArticle
+                    message={turn.response}
+                    onSelectAnswer={onSelectAnswer}
+                  />
+                ) : null}
+              </div>
+            </section>
+          );
+        })}
+        {loading && (
+          <article className="message message-assistant generation">
+            <span className="message-role">Assistant</span>
+            <span>Generating grounded answer…</span>
+          </article>
+        )}
+      </div>
+      <form className="composer" onSubmit={submit}>
+        <label className="sr-only" htmlFor="question">
+          Ask about this project
+        </label>
+        <textarea
+          disabled={loading}
+          id="question"
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              send();
+            }
+          }}
+          placeholder="Ask about this project…"
+          value={value}
+        />
+        <Button variant="primary" disabled={loading || !value.trim()}>
+          {loading ? "Sending…" : "Send"}
+        </Button>
+      </form>
+    </section>
+  );
+}
+
+function buildConversationTurns(
+  messages: Message[],
+  answer: GroundedAnswer | null,
+): ConversationTurn[] {
+  // Pair each user prompt with its following assistant answer.
+  const turns: ConversationTurn[] = [];
+  let currentTurn: ConversationTurn | undefined;
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      currentTurn = {
+        id: `turn-${message.id}`,
+        prompt: message,
+        title: fallbackTurnTitle(message.content),
+      };
+      turns.push(currentTurn);
+      continue;
+    }
+
+    if (message.role === "assistant" && currentTurn && !currentTurn.response) {
+      currentTurn.response = message;
+      currentTurn.title = message.turn_title ?? currentTurn.title;
+      if (isCurrentAnswer(message, answer)) {
+        currentTurn.liveAnswer = answer;
+        currentTurn.title = answer.turn_title ?? currentTurn.title;
+      }
+    }
+  }
+
+  if (answer && !turns.some((turn) => turn.liveAnswer)) {
+    const latestTurn = turns.at(-1);
+    if (latestTurn && !latestTurn.response) {
+      latestTurn.liveAnswer = answer;
+      latestTurn.title = answer.turn_title ?? latestTurn.title;
+    }
+  }
+
+  return turns;
+}
+
+function fallbackTurnTitle(prompt: string): string {
+  // Label older messages that predate model-generated navigation titles.
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  return normalized.length <= 80
+    ? normalized
+    : `${normalized.slice(0, 77).trimEnd()}…`;
+}
+
+function isCurrentAnswer(
+  message: Message,
+  answer: GroundedAnswer | null,
+): answer is GroundedAnswer {
+  // Identify the persisted assistant message represented by a live answer.
+  return Boolean(
+    answer &&
+      (answer.message_id === message.id || answer.rag_run_id === message.rag_run_id),
+  );
+}
+
+function MessageArticle({
+  message,
+  onSelectAnswer,
+}: {
+  message: Message;
+  onSelectAnswer?: (runId: string) => void;
+}) {
+  // Render one persisted message without treating it as source evidence.
+  return (
+    <article
+      className={`message message-${message.role}`}
+      onClick={() =>
+        message.rag_run_id && onSelectAnswer?.(message.rag_run_id)
+      }
+    >
+      <span className="message-role">
+        {message.role === "assistant" ? "Assistant" : "You"}
+      </span>
+      <div>{message.content}</div>
+    </article>
+  );
+}
+
+function AssistantAnswer({
+  answer,
+  activeChunk,
+  onSelectCitation,
+}: {
+  answer: GroundedAnswer;
+  activeChunk: string | null;
+  onSelectCitation: (chunkId: string) => void;
+}) {
+  // Render the current answer with evidence-backed citation controls.
+  if (answer.insufficient_evidence) {
+    return (
+      <article className="message message-assistant insufficient">
+        <span className="message-role">Assistant</span>
+        <strong>Insufficient evidence in this project</strong>
+        <p>{answer.answer_text}</p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="message message-assistant structured-answer">
+      <span className="message-role">Assistant</span>
+      {answer.claims.map((claim) => (
+        <p
+          className={
+            claim.citations.some(
+              (citation) => citation.chunk_id === activeChunk,
+            )
+              ? "active-claim"
+              : ""
+          }
+          key={claim.id}
+        >
+          {claim.text}{" "}
+          <span className="citation-group">
+            {claim.citations.map((citation) => {
+              const evidence = answer.evidence[citation.chunk_id];
+              return (
+                evidence && (
+                  <button
+                    className="citation"
+                    key={citation.chunk_id}
+                    onClick={() => onSelectCitation(citation.chunk_id)}
+                    title={evidence.excerpt}
+                  >
+                    {claim.citations.length > 1
+                      ? `${claim.citations.length} sources`
+                      : `${evidence.document_name.replace(/\.pdf$/i, "")} · p.${evidence.page_start ?? "?"}`}
+                  </button>
+                )
+              );
+            })}
+          </span>
+        </p>
+      ))}
+    </article>
+  );
+}

@@ -65,6 +65,7 @@ def _message_dto(message: Message) -> dict[str, object]:
         "content": message.content,
         "created_at": message.created_at,
         "rag_run_id": message.rag_run_id,
+        "turn_title": message.turn_title,
     }
 
 
@@ -130,6 +131,7 @@ async def _structured_answer(
     return {
         "message_id": metadata["message_id"],
         "rag_run_id": metadata["rag_run_id"],
+        "turn_title": metadata.get("turn_title"),
         "answer_text": payload.answer_text if payload else answer.text,
         "insufficient_evidence": (
             payload.insufficient_evidence
@@ -177,6 +179,7 @@ async def _structured_run(
     )
     return {
         "rag_run_id": run_id,
+        "turn_title": payload.turn_title,
         "answer_text": payload.answer_text,
         "insufficient_evidence": payload.insufficient_evidence,
         "claims": [

@@ -507,7 +507,12 @@ class PostgresRepository:
             )
 
     async def add_message(
-        self, chat_id: str, role: str, content: str, rag_run_id: str | None = None
+        self,
+        chat_id: str,
+        role: str,
+        content: str,
+        rag_run_id: str | None = None,
+        turn_title: str | None = None,
     ) -> Message:
         """Persist a user or assistant message, separately from source evidence."""
         if role not in {"user", "assistant", "system"}:
@@ -516,7 +521,11 @@ class PostgresRepository:
             if await session.get(ChatRow, chat_id) is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
             row = MessageRow(
-                chat_id=chat_id, role=role, content=content, rag_run_id=rag_run_id
+                chat_id=chat_id,
+                role=role,
+                content=content,
+                rag_run_id=rag_run_id,
+                turn_title=turn_title,
             )
             session.add(row)
             await session.flush()
@@ -527,6 +536,7 @@ class PostgresRepository:
                 row.content,
                 row.created_at or _now(),
                 row.rag_run_id,
+                row.turn_title,
             )
 
     async def recent_messages(self, chat_id: str, limit: int) -> tuple[Message, ...]:
@@ -548,6 +558,7 @@ class PostgresRepository:
                     row.content,
                     row.created_at,
                     row.rag_run_id,
+                    row.turn_title,
                 )
                 for row in reversed(rows)
             )

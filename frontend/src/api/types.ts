@@ -1,9 +1,9 @@
 export type Project = { id: string; name: string; created_at: string };
 export type Chat = { id: string; project_id: string; name: string; created_at: string };
-export type Message = { id: string; chat_id: string; role: "user" | "assistant" | "system"; content: string; created_at: string; rag_run_id: string | null };
+export type Message = { id: string; chat_id: string; role: "user" | "assistant" | "system"; content: string; created_at: string; rag_run_id: string | null; turn_title: string | null };
 export type SourceLocation = { page: number; bounding_boxes: BoundingBox[]; positioning: "exact" | "page_only" };
 export type BoundingBox = { x: number; y: number; width: number; height: number };
 export type Evidence = { chunk_id: string; document_id: string; document_name: string; page_start: number | null; page_end: number | null; excerpt: string; locations: SourceLocation[] };
 export type Claim = { id: string; text: string; citations: { chunk_id: string }[] };
-export type GroundedAnswer = { message_id?: string; rag_run_id: string; answer_text: string; insufficient_evidence: boolean; claims: Claim[]; evidence: Record<string, Evidence>; retrieved_chunk_ids: string[] };
+export type GroundedAnswer = { message_id?: string; rag_run_id: string; turn_title?: string | null; answer_text: string; insufficient_evidence: boolean; claims: Claim[]; evidence: Record<string, Evidence>; retrieved_chunk_ids: string[] };
 export type Source = { document: { id: string; name: string; created_at: string }; ingestion: { id: string; status: string; error: string | null; created_at: string } | null };

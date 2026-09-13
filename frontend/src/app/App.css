@@ -28,6 +28,78 @@
   overscroll-behavior: contain;
 }
 
+.conversation-turn {
+  margin-bottom: var(--spacing-5);
+  scroll-margin-top: var(--spacing-4);
+}
+
+.conversation-turn.with-turn-marker {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 760px);
+  column-gap: var(--spacing-3);
+}
+
+.conversation-turn .message {
+  margin-bottom: var(--spacing-5);
+}
+
+.conversation-turn .message:last-child {
+  margin-bottom: 0;
+}
+
+.turn-marker {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  display: flex;
+  justify-content: center;
+  min-height: 26px;
+  padding: 4px 0;
+  position: relative;
+}
+
+.turn-marker-line {
+  background: var(--color-border);
+  border-radius: 999px;
+  height: 18px;
+  transition: background 0.15s, transform 0.15s;
+  width: 2px;
+}
+
+.turn-marker:hover .turn-marker-line,
+.turn-marker:focus-visible .turn-marker-line {
+  background: var(--color-primary);
+  transform: scaleY(1.15);
+}
+
+.turn-marker-tooltip {
+  background: var(--color-text);
+  border-radius: var(--radius-sm);
+  color: var(--color-surface);
+  font-size: 12px;
+  font-weight: 600;
+  left: 28px;
+  max-width: 240px;
+  opacity: 0;
+  overflow: hidden;
+  padding: 6px 8px;
+  pointer-events: none;
+  position: absolute;
+  text-align: left;
+  text-overflow: ellipsis;
+  top: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.turn-marker:hover .turn-marker-tooltip,
+.turn-marker:focus-visible .turn-marker-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .sources-workspace .source-name {
   background: transparent;
   border: 0;

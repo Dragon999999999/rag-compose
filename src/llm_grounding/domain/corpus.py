@@ -122,6 +122,7 @@ class Message:
     content: str
     created_at: datetime
     rag_run_id: str | None = None
+    turn_title: str | None = None
 
 
 class TaskType(StrEnum):

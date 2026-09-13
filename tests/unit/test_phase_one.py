@@ -194,6 +194,7 @@ async def test_unknown_model_source_refs_are_rejected_before_rendering() -> None
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Unsupported source reference",
             answer_text="Answer",
             claims=[{"text": "Claim", "source_refs": ["chunk_99"]}],
             insufficient_evidence=False,
@@ -228,6 +229,7 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Paper contribution",
             answer_text="The paper introduces a framework.",
             claims=[
                 {
@@ -243,8 +245,10 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     payload = GroundedResponsePayload.model_validate(reasoning.payload)
     assessments = await SourceReferenceAssessor().assess_context(reasoning, context)
 
+    assert payload.turn_title == "Paper contribution"
     assert payload.claims[0].source_chunk_ids == [canonical_id]
     assert reasoning.metadata["raw_model_payload"] == {
+        "turn_title": "Paper contribution",
         "answer_text": "The paper introduces a framework.",
         "claims": [
             {
@@ -264,15 +268,26 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     assert canonical_id not in model.prompts[0]
     assert '<chunk ref="chunk_1">' in model.prompts[0]
     assert reasoning.metadata["prompt_id"] == "grounded_qa_v1"
-    assert reasoning.metadata["prompt_version"] == "1.0"
+    assert reasoning.metadata["prompt_version"] == "1.1"
 
 
 def test_model_claim_requires_at_least_one_source_ref() -> None:
     """Supported factual claims cannot use an empty model-facing reference list."""
     with pytest.raises(ValidationError, match="at least 1 item"):
         ModelGroundedResponsePayload(
+            turn_title="Uncited claim",
             answer_text="Answer",
             claims=[{"text": "Uncited claim", "source_refs": []}],
+            insufficient_evidence=False,
+        )
+
+
+def test_model_response_requires_a_navigation_title() -> None:
+    """The model must return a title during the existing grounded-answer call."""
+    with pytest.raises(ValidationError, match="turn_title"):
+        ModelGroundedResponsePayload(
+            answer_text="Answer",
+            claims=[{"text": "Cited claim", "source_refs": ["chunk_1"]}],
             insufficient_evidence=False,
         )
 
@@ -281,6 +296,7 @@ def test_model_requires_claims_when_evidence_is_sufficient() -> None:
     """A non-abstaining response cannot bypass the claim-level source contract."""
     with pytest.raises(ValidationError, match="claims must not be empty"):
         ModelGroundedResponsePayload(
+            turn_title="Missing claims",
             answer_text="Answer",
             claims=[],
             insufficient_evidence=False,
@@ -321,6 +337,7 @@ async def test_multiple_source_refs_resolve_to_canonical_ids() -> None:
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Combined evidence",
             answer_text="A and B.",
             claims=[{"text": "A and B.", "source_refs": ["chunk_1", "chunk_2"]}],
             insufficient_evidence=False,
@@ -356,6 +373,7 @@ async def test_history_is_context_not_a_source_reference() -> None:
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Evidence answer",
             answer_text="Evidence answer.",
             claims=[{"text": "Evidence answer.", "source_refs": ["chunk_1"]}],
             insufficient_evidence=False,
@@ -389,6 +407,7 @@ async def test_basic_rag_renders_sources_and_excludes_history_as_evidence() -> N
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Protocol mechanism",
             answer_text="It uses photons.",
             claims=[
                 {
@@ -437,6 +456,7 @@ async def test_basic_rag_renders_explicit_insufficient_evidence() -> None:
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Evidence limitation",
             answer_text="The retrieved source does not answer the question.",
             claims=[],
             insufficient_evidence=True,
@@ -484,6 +504,7 @@ async def test_rejected_decision_bypasses_grounded_renderer(
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            turn_title="Unsafe answer",
             answer_text="Unsafe answer.",
             claims=[{"text": "Unsafe claim.", "source_refs": ["chunk_99"]}],
             insufficient_evidence=False,

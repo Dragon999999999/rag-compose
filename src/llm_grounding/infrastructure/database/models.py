@@ -193,6 +193,7 @@ class MessageRow(Base):
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    turn_title: Mapped[str | None] = mapped_column(String(120))
     rag_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("rag_runs.id", ondelete="SET NULL")
     )

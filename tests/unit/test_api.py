@@ -1,7 +1,9 @@
 """Test deterministic browser provenance DTO serialization."""
 
-from llm_grounding.api.main import _evidence_dto
-from llm_grounding.domain.corpus import EvidenceReference, RetrievalUnit
+from datetime import UTC, datetime
+
+from llm_grounding.api.main import _evidence_dto, _message_dto
+from llm_grounding.domain.corpus import EvidenceReference, Message, RetrievalUnit
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 
 
@@ -41,3 +43,20 @@ def test_evidence_dto_exposes_canonical_geometry_without_model_identifiers() -> 
             "positioning": "exact",
         }
     ]
+
+
+def test_message_dto_exposes_persisted_turn_title() -> None:
+    """The browser receives the generated navigation label with its answer."""
+    message = Message(
+        "message",
+        "chat",
+        "assistant",
+        "Answer text",
+        datetime.now(UTC),
+        "run",
+        "Paper contribution",
+    )
+
+    dto = _message_dto(message)
+
+    assert dto["turn_title"] == "Paper contribution"

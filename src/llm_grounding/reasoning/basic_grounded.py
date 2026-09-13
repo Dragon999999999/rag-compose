@@ -43,10 +43,27 @@ class ModelGroundedResponsePayload(BaseModel):
     """Structured LLM response using only request-local source references."""
 
     model_config = ConfigDict(extra="forbid")
+    turn_title: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "Concise navigation title for this prompt-and-answer turn. It names "
+            "the user's request without adding factual claims or source references."
+        ),
+    )
     answer_text: str = Field(min_length=1, max_length=8000)
     claims: list[ModelClaimPayload] = Field(default_factory=list)
     insufficient_evidence: bool
     limitations: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("turn_title")
+    @classmethod
+    def reject_blank_turn_title(cls, value: str) -> str:
+        """Normalize the persisted navigation title and reject blank values."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("turn_title must not be blank")
+        return normalized
 
     @model_validator(mode="after")
     def require_claims_when_evidence_is_sufficient(
@@ -72,6 +89,7 @@ class GroundedResponsePayload(BaseModel):
     """Canonicalized response consumed by assessment, policy, and rendering."""
 
     model_config = ConfigDict(extra="forbid")
+    turn_title: str = Field(default="Earlier answer", min_length=1, max_length=120)
     answer_text: str = Field(min_length=1, max_length=8000)
     claims: list[GroundedClaimPayload] = Field(default_factory=list)
     insufficient_evidence: bool
@@ -155,6 +173,7 @@ def _canonicalize_model_payload(
         )
     return (
         GroundedResponsePayload(
+            turn_title=payload.turn_title,
             answer_text=payload.answer_text,
             claims=claims,
             insufficient_evidence=payload.insufficient_evidence,
