@@ -3,10 +3,12 @@
 from datetime import UTC, datetime
 
 from llm_grounding.api.main import (
+    _claim_source_chunk_ids,
     _evidence_dto,
     _item,
     _message_dto,
     _structured_answer,
+    _structured_run,
 )
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, EvidenceReference, Message, RetrievalUnit
@@ -106,6 +108,24 @@ class EvidenceRepository:
         return {}
 
 
+class RunEvidenceRepository(EvidenceRepository):
+    """Add fixed run metadata to the focused browser DTO repository."""
+
+    def __init__(
+        self,
+        chunks: tuple[RetrievalUnit, ...],
+        metadata: dict[str, object],
+    ) -> None:
+        """Retain one stored run alongside its canonical chunks."""
+        super().__init__(chunks)
+        self._metadata = metadata
+
+    async def run_metadata(self, run_id: str) -> dict[str, object]:
+        """Return the fixed run metadata for the requested test run."""
+        assert run_id == "run"
+        return self._metadata
+
+
 class EvidenceApplication:
     """Expose only the repository dependency consumed by structured answer DTOs."""
 
@@ -115,7 +135,7 @@ class EvidenceApplication:
 
 
 async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() -> None:
-    """Browser evidence includes uncited retrieval candidates in stable label order."""
+    """Canonical claims drive citations even if an answer's used-ID cache drifts."""
     cited = RetrievalUnit(
         "canonical-cited",
         "document",
@@ -147,7 +167,7 @@ async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() 
     answer = Answer(
         "Rendered answer",
         payload=payload.model_dump(),
-        evidence_ids=(cited.chunk_id,),
+        evidence_ids=(),
         metadata={
             "message_id": "message",
             "rag_run_id": "run",
@@ -165,4 +185,66 @@ async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() 
     assert dto["evidence"][cited.chunk_id]["reference_label"] == "Smith_15"
     assert dto["evidence"][cited.chunk_id]["used"] is True
     assert dto["evidence"][additional.chunk_id]["reference_label"] == "Smith_16"
+    assert dto["evidence"][additional.chunk_id]["used"] is False
+
+
+def test_claim_source_chunk_ids_are_unique_in_first_citation_order() -> None:
+    """The browser used subset follows canonical claims without duplicate IDs."""
+    payload = GroundedResponsePayload(
+        answer_text="Two supported claims.",
+        claims=[
+            {"text": "First.", "source_chunk_ids": ["canonical-b", "canonical-a"]},
+            {"text": "Second.", "source_chunk_ids": ["canonical-a"]},
+        ],
+        insufficient_evidence=False,
+    )
+
+    assert _claim_source_chunk_ids(payload) == ("canonical-b", "canonical-a")
+
+
+async def test_structured_run_derives_used_chunks_from_canonical_claims() -> None:
+    """Restored answers ignore a stale presentation cache of evidence IDs."""
+    cited = RetrievalUnit(
+        "canonical-cited",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Supported text.",
+        14,
+        3,
+        3,
+        (),
+    )
+    additional = RetrievalUnit(
+        "canonical-additional",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Additional context.",
+        15,
+        4,
+        4,
+        (),
+    )
+    payload = GroundedResponsePayload(
+        turn_title="Smith evidence",
+        answer_text="Supported text.",
+        claims=[{"text": "Supported text.", "source_chunk_ids": [cited.chunk_id]}],
+        insufficient_evidence=False,
+    )
+    repository = RunEvidenceRepository(
+        (cited, additional),
+        {
+            "answer_payload": payload.model_dump(mode="json"),
+            "evidence_ids": [additional.chunk_id],
+            "retrieved_chunk_ids": [cited.chunk_id, additional.chunk_id],
+        },
+    )
+    application = EvidenceApplication((cited, additional))
+    application.repository = repository
+
+    dto = await _structured_run(application, "run")  # type: ignore[arg-type]
+
+    assert dto["claims"][0]["citations"] == [{"chunk_id": cited.chunk_id}]
+    assert dto["evidence"][cited.chunk_id]["used"] is True
     assert dto["evidence"][additional.chunk_id]["used"] is False

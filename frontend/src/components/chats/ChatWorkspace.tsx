@@ -372,15 +372,20 @@ function RetrievedChunkList({
   answer: GroundedAnswer;
   onSelectCitation: (chunkId: string) => void;
 }) {
-  // Preserve the backend's retrieval order while exposing cited and uncited chunks.
+  // Use the same canonical claim citations that render beside the answer text.
   const retrieved = Object.values(answer.evidence);
+  const citedChunkIds = new Set(
+    answer.claims.flatMap((claim) =>
+      claim.citations.map((citation) => citation.chunk_id),
+    ),
+  );
   return (
     <section className="retrieved-chunk-summary">
       <strong>Retrieved chunks</strong>
       <div className="retrieved-chunk-tags">
         {retrieved.map((evidence) => (
           <button
-            className={`retrieved-chunk-tag ${evidence.used ? "used" : ""}`}
+            className={`retrieved-chunk-tag ${citedChunkIds.has(evidence.chunk_id) ? "used" : ""}`}
             key={evidence.chunk_id}
             onClick={(event) => {
               event.stopPropagation();

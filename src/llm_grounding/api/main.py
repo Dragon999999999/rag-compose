@@ -121,6 +121,22 @@ def _identifier_list(value: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(item for item in value if isinstance(item, str)))
 
 
+def _claim_source_chunk_ids(
+    payload: GroundedResponsePayload,
+) -> tuple[str, ...]:
+    """Collect canonical cited chunk IDs from the validated claim payload.
+
+    The claim payload is the canonical grounding result. Deriving the used subset
+    from it prevents a separately persisted presentation list from drifting away
+    from the IDs used to construct browser citations.
+    """
+    return tuple(
+        dict.fromkeys(
+            chunk_id for claim in payload.claims for chunk_id in claim.source_chunk_ids
+        )
+    )
+
+
 async def _evidence_dtos(
     application: PhaseOneApplication,
     chunk_ids: tuple[str, ...],
@@ -148,15 +164,17 @@ async def _structured_answer(
 ) -> dict[str, object]:
     """Build browser-safe claims and evidence from canonical validated output."""
     metadata = answer.metadata
-    used_chunk_ids = tuple(answer.evidence_ids)
-    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
-    visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
-    evidence = await _evidence_dtos(application, visible_chunk_ids, used_chunk_ids)
     payload = (
         GroundedResponsePayload.model_validate(answer.payload)
         if answer.payload
         else None
     )
+    used_chunk_ids = (
+        _claim_source_chunk_ids(payload) if payload else tuple(answer.evidence_ids)
+    )
+    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
+    visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
+    evidence = await _evidence_dtos(application, visible_chunk_ids, used_chunk_ids)
     return {
         "message_id": metadata["message_id"],
         "rag_run_id": metadata["rag_run_id"],
@@ -190,11 +208,10 @@ async def _structured_run(
     """Restore persisted structured provenance for an older assistant message."""
     metadata = await application.repository.run_metadata(run_id)
     payload_data = metadata.get("answer_payload", {})
-    evidence_data = metadata.get("evidence_ids", [])
-    if not isinstance(payload_data, dict) or not isinstance(evidence_data, list):
+    if not isinstance(payload_data, dict):
         raise HTTPException(404, "Structured evidence is unavailable for this run.")
     payload = GroundedResponsePayload.model_validate(payload_data)
-    used_chunk_ids = _identifier_list(evidence_data)
+    used_chunk_ids = _claim_source_chunk_ids(payload)
     retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
     visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
     evidence = await _evidence_dtos(

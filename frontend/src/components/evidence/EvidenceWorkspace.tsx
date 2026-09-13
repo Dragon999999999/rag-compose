@@ -41,7 +41,14 @@ export function EvidenceWorkspace({
   }
 
   const retrieved = Object.values(answer.evidence);
-  const usedCount = retrieved.filter((evidence) => evidence.used).length;
+  const citedChunkIds = new Set(
+    answer.claims.flatMap((claim) =>
+      claim.citations.map((citation) => citation.chunk_id),
+    ),
+  );
+  const usedCount = retrieved.filter((evidence) =>
+    citedChunkIds.has(evidence.chunk_id),
+  ).length;
   return (
     <section className="evidence-workspace">
       <header>
@@ -55,42 +62,47 @@ export function EvidenceWorkspace({
         </p>
       </header>
       <div className="evidence-list">
-        {retrieved.map((evidence) => (
-          <article
-            className={`evidence-card ${
-              evidence.used ? "used" : "retrieved-only"
-            } ${activeChunk === evidence.chunk_id ? "selected" : ""}`}
-            key={evidence.chunk_id}
-            onClick={() => onSelect(evidence.chunk_id)}
-          >
-            <div className="evidence-card-title">
-              <strong>{evidence.reference_label}</strong>
-              <span>p.{evidence.page_start ?? "?"}</span>
-            </div>
-            <small className="evidence-document-name">{evidence.document_name}</small>
-            <div className="evidence-crop">
-              <mark>{evidence.excerpt}</mark>
-            </div>
-            <small>
-              {evidence.used
-                ? "Cited in this response"
-                : "Retrieved for this response, not cited"}
-              {evidence.locations.some(
-                (location) => location.positioning === "exact",
-              )
-                ? " · Exact PDF location"
-                : " · Page-level location"}
-            </small>
-            <Button
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenPdf(evidence);
-              }}
+        {retrieved.map((evidence) => {
+          const used = citedChunkIds.has(evidence.chunk_id);
+          return (
+            <article
+              className={`evidence-card ${
+                used ? "used" : "retrieved-only"
+              } ${activeChunk === evidence.chunk_id ? "selected" : ""}`}
+              key={evidence.chunk_id}
+              onClick={() => onSelect(evidence.chunk_id)}
             >
-              Open PDF
-            </Button>
-          </article>
-        ))}
+              <div className="evidence-card-title">
+                <strong>{evidence.reference_label}</strong>
+                <span>p.{evidence.page_start ?? "?"}</span>
+              </div>
+              <small className="evidence-document-name">
+                {evidence.document_name}
+              </small>
+              <div className="evidence-crop">
+                <mark>{evidence.excerpt}</mark>
+              </div>
+              <small>
+                {used
+                  ? "Cited in this response"
+                  : "Retrieved for this response, not cited"}
+                {evidence.locations.some(
+                  (location) => location.positioning === "exact",
+                )
+                  ? " · Exact PDF location"
+                  : " · Page-level location"}
+              </small>
+              <Button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenPdf(evidence);
+                }}
+              >
+                Open PDF
+              </Button>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
