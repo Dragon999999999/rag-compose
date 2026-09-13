@@ -396,7 +396,9 @@ function AssistantAnswer({
               return (
                 evidence && (
                   <button
-                    className="citation"
+                    className={`citation ${
+                      citation.chunk_id === activeChunk ? "citation-related" : ""
+                    }`}
                     key={citation.chunk_id}
                     onClick={(event) => {
                       event.stopPropagation();
