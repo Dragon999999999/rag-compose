@@ -33,10 +33,13 @@
   scroll-margin-top: var(--spacing-4);
 }
 
+.chat-workspace {
+  position: relative;
+}
+
 .chat-thread.with-turn-navigation {
   display: grid;
-  grid-template-columns: 18px minmax(0, 760px);
-  column-gap: var(--spacing-3);
+  grid-template-columns: minmax(0, 760px);
 }
 
 .conversation-content {
@@ -45,17 +48,21 @@
 }
 
 .chat-thread.with-turn-navigation .conversation-content {
-  grid-column: 2;
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .turn-navigation {
   align-self: start;
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
+  flex-direction: row;
+  gap: 4px;
   grid-column: 1;
-  max-height: calc(100vh - 160px);
-  overflow-y: auto;
+  grid-row: 1;
+  justify-self: start;
+  margin-left: clamp(-48px, -4vw, -12px);
+  max-width: min(260px, calc(100vw - 32px));
+  overflow-x: auto;
   position: sticky;
   top: 50%;
   transform: translateY(-50%);
@@ -75,52 +82,45 @@
   background: transparent;
   border: 0;
   display: flex;
+  flex: 0 0 18px;
   justify-content: center;
-  min-height: 18px;
-  padding: 4px 0;
+  min-height: 14px;
+  padding: 4px 2px;
   position: relative;
 }
 
 .turn-marker-line {
   background: var(--color-border);
   border-radius: 999px;
-  height: 18px;
+  height: 2px;
   transition: background 0.15s, transform 0.15s;
-  width: 2px;
+  width: 14px;
 }
 
 .turn-marker:hover .turn-marker-line,
 .turn-marker:focus-visible .turn-marker-line {
   background: var(--color-primary);
-  transform: scaleY(1.15);
+  transform: scaleX(1.15);
 }
 
-.turn-marker-tooltip {
+.turn-navigation-tooltip {
   background: var(--color-text);
   border-radius: var(--radius-sm);
   color: var(--color-surface);
   font-size: 12px;
   font-weight: 600;
-  left: 28px;
+  left: clamp(36px, 6vw, 72px);
   max-width: 240px;
-  opacity: 0;
   overflow: hidden;
   padding: 6px 8px;
   pointer-events: none;
   position: absolute;
   text-align: left;
   text-overflow: ellipsis;
-  top: 0;
-  transform: translateY(-4px);
-  transition: opacity 0.15s, transform 0.15s;
+  top: 50%;
+  transform: translateY(-50%);
   white-space: nowrap;
   z-index: 2;
-}
-
-.turn-marker:hover .turn-marker-tooltip,
-.turn-marker:focus-visible .turn-marker-tooltip {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .sources-workspace .source-name {

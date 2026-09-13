@@ -34,6 +34,7 @@ export function ChatWorkspace({
   onAsk,
 }: ChatWorkspaceProps) {
   const [value, setValue] = useState("");
+  const [hoveredTurnTitle, setHoveredTurnTitle] = useState<string | null>(null);
   const thread = useRef<HTMLDivElement>(null);
   const turnElements = useRef(new Map<string, HTMLElement>());
   const turns = buildConversationTurns(messages ?? [], answer);
@@ -82,13 +83,15 @@ export function ChatWorkspace({
                 aria-label={`Jump to ${turn.title}`}
                 className="turn-marker"
                 key={turn.id}
+                onBlur={() => setHoveredTurnTitle(null)}
                 onClick={() => scrollToTurn(turn)}
+                onFocus={() => setHoveredTurnTitle(turn.title)}
+                onMouseEnter={() => setHoveredTurnTitle(turn.title)}
+                onMouseLeave={() => setHoveredTurnTitle(null)}
                 type="button"
+                title={turn.title}
               >
                 <span aria-hidden="true" className="turn-marker-line" />
-                <span className="turn-marker-tooltip" role="tooltip">
-                  {turn.title}
-                </span>
               </button>
             ))}
           </nav>
@@ -137,6 +140,11 @@ export function ChatWorkspace({
           )}
         </div>
       </div>
+      {hoveredTurnTitle && (
+        <span className="turn-navigation-tooltip" role="tooltip">
+          {hoveredTurnTitle}
+        </span>
+      )}
       <form className="composer" onSubmit={submit}>
         <label className="sr-only" htmlFor="question">
           Ask about this project
