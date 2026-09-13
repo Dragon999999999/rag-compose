@@ -408,7 +408,7 @@ function AssistantAnswer({
                     }}
                     title={evidence.excerpt}
                   >
-                    {evidence.reference_label}
+                    <CitationBadgeLabel label={evidence.reference_label} />
                   </button>
                 )
               );
@@ -418,6 +418,20 @@ function AssistantAnswer({
       ))}
       <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
     </article>
+  );
+}
+
+function CitationBadgeLabel({ label }: { label: string }) {
+  // Split only the display label's final chunk-order suffix; the canonical ID stays untouched.
+  const match = /^(.*)_(\d+)$/.exec(label);
+  if (!match) {
+    return <span className="citation-document">{label}</span>;
+  }
+  return (
+    <>
+      <span className="citation-document">{match[1]}</span>
+      <span className="citation-chunk">C{match[2]}</span>
+    </>
   );
 }
 
