@@ -71,19 +71,38 @@ export function ChatWorkspace({
 
   return (
     <section className="chat-workspace">
-      <div className="chat-thread" ref={thread}>
-        {error && <ErrorState error={error} />}
-        {!loading && !turns.length && (
-          <EmptyState title="No chats yet">
-            Start a new conversation to ask grounded questions about this project.
-          </EmptyState>
+      <div
+        className={`chat-thread ${showTurnNavigation ? "with-turn-navigation" : ""}`}
+        ref={thread}
+      >
+        {showTurnNavigation && (
+          <nav aria-label="Conversation turns" className="turn-navigation">
+            {completedTurns.map((turn) => (
+              <button
+                aria-label={`Jump to ${turn.title}`}
+                className="turn-marker"
+                key={turn.id}
+                onClick={() => scrollToTurn(turn)}
+                type="button"
+              >
+                <span aria-hidden="true" className="turn-marker-line" />
+                <span className="turn-marker-tooltip" role="tooltip">
+                  {turn.title}
+                </span>
+              </button>
+            ))}
+          </nav>
         )}
-        {turns.map((turn) => {
-          const isComplete =
-            turn.response !== undefined || turn.liveAnswer !== undefined;
-          return (
+        <div className="conversation-content">
+          {error && <ErrorState error={error} />}
+          {!loading && !turns.length && (
+            <EmptyState title="No chats yet">
+              Start a new conversation to ask grounded questions about this project.
+            </EmptyState>
+          )}
+          {turns.map((turn) => (
             <section
-              className={`conversation-turn ${showTurnNavigation && isComplete ? "with-turn-marker" : ""}`}
+              className="conversation-turn"
               key={turn.id}
               ref={(element) => {
                 if (element) {
@@ -93,19 +112,6 @@ export function ChatWorkspace({
                 }
               }}
             >
-              {showTurnNavigation && isComplete && (
-                <button
-                  aria-label={`Jump to ${turn.title}`}
-                  className="turn-marker"
-                  onClick={() => scrollToTurn(turn)}
-                  type="button"
-                >
-                  <span aria-hidden="true" className="turn-marker-line" />
-                  <span className="turn-marker-tooltip" role="tooltip">
-                    {turn.title}
-                  </span>
-                </button>
-              )}
               <div className="conversation-turn-content">
                 <MessageArticle message={turn.prompt} />
                 {turn.liveAnswer ? (
@@ -122,14 +128,14 @@ export function ChatWorkspace({
                 ) : null}
               </div>
             </section>
-          );
-        })}
-        {loading && (
-          <article className="message message-assistant generation">
-            <span className="message-role">Assistant</span>
-            <span>Generating grounded answer…</span>
-          </article>
-        )}
+          ))}
+          {loading && (
+            <article className="message message-assistant generation">
+              <span className="message-role">Assistant</span>
+              <span>Generating grounded answer…</span>
+            </article>
+          )}
+        </div>
       </div>
       <form className="composer" onSubmit={submit}>
         <label className="sr-only" htmlFor="question">
