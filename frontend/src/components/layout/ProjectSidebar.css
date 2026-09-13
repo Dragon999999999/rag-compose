@@ -1,0 +1,20 @@
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.project-row a {
+  color: inherit;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row .icon-button {
+  min-width: 24px;
+  padding: 2px;
+}
