@@ -9,7 +9,7 @@ type ProjectSidebarProps = {
   selectedProjectId?: string;
   chats: Chat[];
   onNewProject: () => void;
-  onNewChat: () => void;
+  onNewChat: (projectId: string) => void;
 };
 
 export function ProjectSidebar({
@@ -29,15 +29,13 @@ export function ProjectSidebar({
             <section className="project-tree" key={project.id}>
               <div className={`project-row ${isSelected ? "selected" : ""}`}>
                 <NavLink to={`/projects/${project.id}/sources`}>{project.name}</NavLink>
-                {isSelected && (
-                  <IconButton
-                    aria-label={`Create a chat in ${project.name}`}
-                    onClick={onNewChat}
-                    title="New chat"
-                  >
-                    ＋
-                  </IconButton>
-                )}
+                <IconButton
+                  aria-label={`Create a chat in ${project.name}`}
+                  onClick={() => onNewChat(project.id)}
+                  title="New chat"
+                >
+                  ＋
+                </IconButton>
               </div>
               {isSelected && chats.length > 0 && (
                 <div className="chat-tree">
