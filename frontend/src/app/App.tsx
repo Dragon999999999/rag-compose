@@ -211,14 +211,10 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const header = (
     <ProjectHeader
       chat={chat}
-      evidenceOpen={evidenceOpen}
-      onEvidence={() => setEvidenceOpen(!evidenceOpen)}
       onNewChat={() => createChat()}
-      onSidebar={() => setSidebarOpen(!sidebarOpen)}
       onSources={() => projectId && navigate(`/projects/${projectId}/sources`)}
       onSummary={() => ask("Summarize this project", true)}
       project={project}
-      sidebarOpen={sidebarOpen}
     />
   );
 
@@ -286,6 +282,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         evidence={evidencePane}
         evidenceOpen={evidenceOpen}
         header={header}
+        onEvidenceToggle={() => setEvidenceOpen(!evidenceOpen)}
+        onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
         sidebar={sidebar}
         sidebarOpen={sidebarOpen}
       >
