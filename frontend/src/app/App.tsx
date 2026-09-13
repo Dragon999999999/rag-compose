@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
 import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
@@ -166,6 +166,37 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     setMode("evidence");
   }, []);
 
+  useEffect(() => {
+    setLatest(null);
+    setSelectedRun(undefined);
+    setEvidenceTurnTitle(null);
+    setActiveChunk(null);
+    setDirectPdf(null);
+    setMode("evidence");
+  }, [chatId]);
+
+  useEffect(() => {
+    if (sourcesRoute || latest || selectedRun || messages.isLoading) {
+      return;
+    }
+    const firstAnswer = messages.data?.find(
+      (message) => message.role === "assistant" && message.rag_run_id,
+    );
+    if (firstAnswer?.rag_run_id) {
+      chooseRun(
+        firstAnswer.rag_run_id,
+        firstAnswer.turn_title ?? undefined,
+      );
+    }
+  }, [
+    chooseRun,
+    latest,
+    messages.data,
+    messages.isLoading,
+    selectedRun,
+    sourcesRoute,
+  ]);
+
   const openPdf = (item: Evidence): void => {
     setDirectPdf(null);
     setActiveChunk(item.chunk_id);
@@ -312,6 +343,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
             activeChunk={activeChunk}
             answer={answer}
             error={chatMutations.ask.error ?? messages.error}
+            key={chatId}
             loading={chatMutations.ask.isPending || messages.isLoading}
             messages={messages.data}
             onAsk={(message) => ask(message)}

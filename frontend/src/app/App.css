@@ -231,6 +231,33 @@
   white-space: nowrap;
 }
 
+.citation-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+
+.citation-group .citation {
+  border: 1px solid #b8c8f5;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  min-height: 26px;
+  padding: 5px 9px;
+}
+
+.citation-group .citation:hover {
+  background: #d9e4ff;
+  border-color: #91a8e9;
+}
+
+.structured-unavailable {
+  color: var(--color-text-muted);
+}
+
 .evidence-card.used {
   border-color: #8fbca5;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type { GroundedAnswer, Message } from "../../api/types";
+import { useEvidence } from "../../features/hooks";
 import { Button, EmptyState, ErrorState } from "../common/ui";
 
 type ConversationTurn = {
@@ -37,6 +38,7 @@ export function ChatWorkspace({
   const [value, setValue] = useState("");
   const [hoveredTurnTitle, setHoveredTurnTitle] = useState<string | null>(null);
   const thread = useRef<HTMLDivElement>(null);
+  const messagesHydrated = useRef(false);
   const turnElements = useRef(new Map<string, HTMLElement>());
   const turns = useMemo(
     () => buildConversationTurns(messages ?? [], answer),
@@ -53,7 +55,16 @@ export function ChatWorkspace({
       behavior: "smooth",
     });
 
-  useEffect(scrollToLatest, [answer?.rag_run_id, loading, messages?.length]);
+  useEffect(() => {
+    if (messages === undefined) {
+      return;
+    }
+    if (!messagesHydrated.current) {
+      messagesHydrated.current = true;
+      return;
+    }
+    scrollToLatest();
+  }, [loading, messages, messages?.length]);
 
   const send = (): void => {
     if (value.trim()) {
@@ -163,9 +174,11 @@ export function ChatWorkspace({
                     onSelectCitation={onSelectCitation}
                   />
                 ) : turn.response ? (
-                  <MessageArticle
+                  <PersistedAssistantAnswer
+                    activeChunk={activeChunk}
                     message={turn.response}
                     onSelectAnswer={onSelectAnswer}
+                    onSelectCitation={onSelectCitation}
                   />
                 ) : null}
               </div>
@@ -273,24 +286,63 @@ function isCurrentAnswer(
 
 function MessageArticle({
   message,
-  onSelectAnswer,
 }: {
   message: Message;
-  onSelectAnswer?: (runId: string, turnTitle?: string) => void;
 }) {
-  // Render one persisted message without treating it as source evidence.
+  // Render a user prompt without treating conversation history as evidence.
   return (
-    <article
-      className={`message message-${message.role}`}
-      onClick={() =>
-        message.rag_run_id && onSelectAnswer?.(message.rag_run_id, message.turn_title ?? undefined)
-      }
-    >
-      <span className="message-role">
-        {message.role === "assistant" ? "Assistant" : "You"}
-      </span>
+    <article className={`message message-${message.role}`}>
+      <span className="message-role">You</span>
       <div>{message.content}</div>
     </article>
+  );
+}
+
+function PersistedAssistantAnswer({
+  message,
+  activeChunk,
+  onSelectAnswer,
+  onSelectCitation,
+}: {
+  message: Message;
+  activeChunk: string | null;
+  onSelectAnswer: (runId: string, turnTitle?: string) => void;
+  onSelectCitation: (chunkId: string) => void;
+}) {
+  // Hydrate every stored response so unselected turns never fall back to raw text.
+  const structuredAnswer = useEvidence(message.rag_run_id ?? undefined);
+  if (!message.rag_run_id) {
+    return (
+      <article className="message message-assistant structured-unavailable">
+        <span className="message-role">Assistant</span>
+        <p>Structured evidence is unavailable for this older response.</p>
+      </article>
+    );
+  }
+  if (structuredAnswer.isLoading) {
+    return (
+      <article className="message message-assistant generation">
+        <span className="message-role">Assistant</span>
+        <span>Loading structured answer…</span>
+      </article>
+    );
+  }
+  if (structuredAnswer.error || !structuredAnswer.data) {
+    return (
+      <article className="message message-assistant structured-unavailable">
+        <span className="message-role">Assistant</span>
+        <p>Structured evidence could not be loaded for this response.</p>
+        <Button onClick={() => structuredAnswer.refetch()}>Retry</Button>
+      </article>
+    );
+  }
+  return (
+    <AssistantAnswer
+      activeChunk={activeChunk}
+      answer={structuredAnswer.data}
+      onSelectAnswer={onSelectAnswer}
+      onSelectCitation={onSelectCitation}
+    />
   );
 }
 
@@ -348,6 +400,10 @@ function AssistantAnswer({
                     key={citation.chunk_id}
                     onClick={(event) => {
                       event.stopPropagation();
+                      onSelectAnswer(
+                        answer.rag_run_id,
+                        answer.turn_title ?? undefined,
+                      );
                       onSelectCitation(citation.chunk_id);
                     }}
                     title={evidence.excerpt}
