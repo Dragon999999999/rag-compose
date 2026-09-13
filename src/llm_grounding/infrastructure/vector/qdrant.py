@@ -189,9 +189,11 @@ class QdrantVectorStore:
         except Exception as exc:
             raise RuntimeError("Qdrant could not delete document vectors") from exc
 
-    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> None:
-        """Add project payload membership to existing points without re-embedding."""
+    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> bool:
+        """Add project membership when reusable ingestion points exist."""
         try:
+            if not await self._client.collection_exists(self._collection):
+                return False
             records, _ = await self._client.scroll(
                 self._collection,
                 scroll_filter=self._filter(ingestion_id=ingestion_id),
@@ -204,7 +206,7 @@ class QdrantVectorStore:
                 "Qdrant could not load reusable ingestion vectors"
             ) from exc
         if not records:
-            raise KeyError(f"No indexed vectors for ingestion: {ingestion_id}")
+            return False
         for record in records:
             payload = record.payload or {}
             project_ids = set(payload.get(_PROJECT_IDS, []))
@@ -215,6 +217,7 @@ class QdrantVectorStore:
                 points=[record.id],
                 wait=True,
             )
+        return True
 
     async def remove_project(self, project_id: str) -> None:
         """Remove project membership while preserving vectors shared elsewhere."""

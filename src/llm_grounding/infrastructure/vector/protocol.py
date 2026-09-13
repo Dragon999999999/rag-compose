@@ -30,12 +30,16 @@ class VectorStore(Protocol):
         """Remove derived vectors for a deleted canonical document when required."""
         ...
 
-    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> None:
+    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> bool:
         """Associate an existing ingestion's derived vectors with another project.
 
         Implementations must reuse the already-generated vectors and must not invoke
         an embedder. The association allows a content-addressed document ingestion to
         be selected by more than one project while retaining index-time project scope.
+
+        Returns:
+            True when indexed vectors existed and were associated, or False when the
+            derived index contains no vectors for the ingestion.
         """
         ...
 

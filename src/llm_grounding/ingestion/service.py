@@ -49,8 +49,9 @@ class DocumentIngestionService:
         """Attach a PDF to a project and reuse or build the compatible representation.
 
         Artifact content is deduplicated by SHA-256. A ready ingestion with matching
-        full config is selected without reparsing/re-embedding. Different config
-        produces a separate ingestion, preserving prior representations.
+        full config is reused only while its derived vectors still exist. Missing
+        vectors and incomplete lifecycle states rebuild the existing ingestion;
+        different configuration produces a separate representation.
         """
         if not source.is_file() or source.suffix.lower() != ".pdf":
             raise ValueError(f"Expected an existing PDF: {source}")
@@ -61,12 +62,6 @@ class DocumentIngestionService:
             await self._artifacts.put_pdf(key, source)
             document = await self._repository.create_document(source.name, digest, key)
         existing = await self._repository.find_ingestion(document.id, config.identity())
-        if existing is not None and existing.status == IngestionStatus.READY:
-            association = await self._repository.attach_document(
-                project_id, document.id, existing.id
-            )
-            await self._vectors.associate_ingestion(project_id, existing.id)
-            return document, association, existing
         ingestion = existing or await self._repository.create_ingestion(
             document.id,
             config.identity(),
@@ -77,8 +72,13 @@ class DocumentIngestionService:
         association = await self._repository.attach_document(
             project_id, document.id, ingestion.id
         )
-        if existing is None or existing.status != IngestionStatus.READY:
-            await self.ingest(project_id, document, ingestion, config)
+        if (
+            existing is not None
+            and existing.status == IngestionStatus.READY
+            and await self._vectors.associate_ingestion(project_id, existing.id)
+        ):
+            return document, association, existing
+        await self.ingest(project_id, document, ingestion, config)
         refreshed = await self._repository.find_ingestion(
             document.id, config.identity()
         )

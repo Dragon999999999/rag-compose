@@ -179,3 +179,16 @@ async def test_qdrant_search_filters_project_before_canonical_hydration() -> Non
     ] == ["alpha"]
     await store.delete_ingestion("ingestion-a")
     assert not await store.search("project-c", vector, 5)
+
+
+async def test_qdrant_association_reports_missing_ingestion_vectors() -> None:
+    """An absent collection or empty ingestion is a rebuild signal, not an error."""
+    fake = FakeQdrantClient()
+    store = object.__new__(QdrantVectorStore)
+    store._collection = "test"
+    store._repository = ChunkRepository(())  # type: ignore[assignment]
+    store._client = fake  # type: ignore[assignment]
+
+    assert not await store.associate_ingestion("project", "ingestion")
+    fake.exists = True
+    assert not await store.associate_ingestion("project", "ingestion")

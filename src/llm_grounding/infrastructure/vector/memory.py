@@ -56,7 +56,7 @@ class InMemoryVectorStore:
         for key in keys:
             del self._items[key]
 
-    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> None:
+    async def associate_ingestion(self, project_id: str, ingestion_id: str) -> bool:
         """Copy existing derived-vector associations without re-embedding content."""
         matches = [
             item
@@ -64,13 +64,14 @@ class InMemoryVectorStore:
             if item.chunk.ingestion_id == ingestion_id
         ]
         if not matches:
-            raise KeyError(f"No indexed vectors for ingestion: {ingestion_id}")
+            return False
         for item in matches:
             self._items[(project_id, item.chunk.chunk_id)] = _IndexedChunk(
                 project_id,
                 item.chunk,
                 item.vector,
             )
+        return True
 
     async def remove_project(self, project_id: str) -> None:
         """Remove only one project's derived entries, preserving shared ingestions."""
