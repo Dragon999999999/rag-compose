@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import type { Evidence, GroundedAnswer } from "../../api/types";
 import { Button, EmptyState } from "../common/ui";
 import { PdfViewer } from "../pdf/PdfViewer";
@@ -24,14 +26,34 @@ export function EvidenceWorkspace({
   onOpenPdf,
   onBack,
 }: EvidenceWorkspaceProps) {
+  const workspace = useRef<HTMLElement>(null);
+  const evidenceCards = useRef(new Map<string, HTMLElement>());
   const active = activeChunk && answer?.evidence[activeChunk];
   const pdfEvidence = documentEvidence ?? active;
+
+  useEffect(() => {
+    if (mode !== "evidence" || !activeChunk) {
+      return;
+    }
+    const container = workspace.current;
+    const card = evidenceCards.current.get(activeChunk);
+    if (!container || !card) {
+      return;
+    }
+    const top =
+      card.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop -
+      12;
+    container.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
+  }, [activeChunk, answer?.rag_run_id, mode]);
+
   if (mode === "pdf" && pdfEvidence) {
     return <PdfViewer evidence={pdfEvidence} onBack={onBack} />;
   }
   if (!answer) {
     return (
-      <section className="evidence-workspace">
+      <section className="evidence-workspace" ref={workspace}>
         <EmptyState title="Evidence workspace">
           Select an assistant response or conversation turn to inspect its retrieved
           evidence.
@@ -50,7 +72,7 @@ export function EvidenceWorkspace({
     citedChunkIds.has(evidence.chunk_id),
   ).length;
   return (
-    <section className="evidence-workspace">
+    <section className="evidence-workspace" ref={workspace}>
       <header>
         <div className="evidence-heading">
           <h2>Retrieved evidence</h2>
@@ -71,6 +93,13 @@ export function EvidenceWorkspace({
               } ${activeChunk === evidence.chunk_id ? "selected" : ""}`}
               key={evidence.chunk_id}
               onClick={() => onSelect(evidence.chunk_id)}
+              ref={(element) => {
+                if (element) {
+                  evidenceCards.current.set(evidence.chunk_id, element);
+                } else {
+                  evidenceCards.current.delete(evidence.chunk_id);
+                }
+              }}
             >
               <div className="evidence-card-title">
                 <strong>{evidence.reference_label}</strong>
