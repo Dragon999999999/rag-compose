@@ -2,6 +2,10 @@
   overflow: hidden;
 }
 
+.app-shell:not(.with-sidebar):not(.with-evidence) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-shell .main-workspace,
 .app-shell .evidence-slot,
 .app-shell .chat-workspace,
