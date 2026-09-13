@@ -55,14 +55,14 @@
 .turn-navigation {
   align-self: start;
   display: flex;
-  flex-direction: row;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
   grid-column: 1;
   grid-row: 1;
   justify-self: start;
   margin-left: clamp(-48px, -4vw, -12px);
-  max-width: min(260px, calc(100vw - 32px));
-  overflow-x: auto;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
   position: sticky;
   top: 50%;
   transform: translateY(-50%);
