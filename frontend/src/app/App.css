@@ -210,3 +210,72 @@
   color: var(--color-primary);
   text-decoration: underline;
 }
+
+.evidence-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.turn-evidence-tag {
+  background: #e8efff;
+  border-radius: 999px;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-card.used {
+  border-color: #8fbca5;
+}
+
+.evidence-card.retrieved-only {
+  opacity: 0.78;
+}
+
+.evidence-document-name {
+  color: var(--color-text-muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.retrieved-chunk-summary {
+  border-top: 1px solid var(--color-border);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  margin-top: var(--spacing-5);
+  padding-top: var(--spacing-3);
+}
+
+.retrieved-chunk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--spacing-2) 0;
+}
+
+.retrieved-chunk-tag {
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-secondary);
+  font-size: 12px;
+  padding: 3px 7px;
+}
+
+.retrieved-chunk-tag.used {
+  background: #e6f5eb;
+  border-color: #8fbca5;
+  color: #246a45;
+  font-weight: 700;
+}
+
+.retrieved-chunk-summary small {
+  color: var(--color-text-muted);
+}

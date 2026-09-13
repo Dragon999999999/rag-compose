@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
 import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
@@ -120,6 +120,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [selectedRun, setSelectedRun] = useState<string>();
   const [latest, setLatest] = useState<GroundedAnswer | null>(null);
+  const [evidenceTurnTitle, setEvidenceTurnTitle] = useState<string | null>(null);
   const evidence = useEvidence(selectedRun);
   const answer = latest ?? evidence.data ?? null;
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
@@ -146,6 +147,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         onSuccess: (result) => {
           setLatest(result);
           setSelectedRun(undefined);
+          setEvidenceTurnTitle(result.turn_title ?? null);
           setActiveChunk(Object.keys(result.evidence)[0] ?? null);
           setDirectPdf(null);
           setEvidenceOpen(true);
@@ -155,13 +157,14 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     );
   };
 
-  const chooseRun = (runId: string): void => {
+  const chooseRun = useCallback((runId: string, turnTitle?: string): void => {
     setLatest(null);
     setSelectedRun(runId);
+    setEvidenceTurnTitle(turnTitle ?? null);
     setDirectPdf(null);
     setEvidenceOpen(true);
     setMode("evidence");
-  };
+  }, []);
 
   const openPdf = (item: Evidence): void => {
     setDirectPdf(null);
@@ -175,6 +178,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   }): void => {
     setDirectPdf({
       chunk_id: source.document.id,
+      reference_label: source.document.name.replace(/\.pdf$/i, ""),
+      used: false,
       document_id: source.document.id,
       document_name: source.document.name,
       page_start: null,
@@ -224,6 +229,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       answer={answer}
       documentEvidence={directPdf}
       mode={mode}
+      turnTitle={evidenceTurnTitle ?? answer?.turn_title}
       onBack={() => {
         setDirectPdf(null);
         setMode("evidence");
@@ -304,7 +310,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         ) : chatId ? (
           <ChatWorkspace
             activeChunk={activeChunk}
-            answer={latest}
+            answer={answer}
             error={chatMutations.ask.error ?? messages.error}
             loading={chatMutations.ask.isPending || messages.isLoading}
             messages={messages.data}

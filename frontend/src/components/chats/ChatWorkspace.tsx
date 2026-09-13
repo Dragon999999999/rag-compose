@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type { GroundedAnswer, Message } from "../../api/types";
 import { Button, EmptyState, ErrorState } from "../common/ui";
@@ -8,6 +8,7 @@ type ConversationTurn = {
   prompt: Message;
   response?: Message;
   liveAnswer?: GroundedAnswer;
+  runId?: string;
   title: string;
 };
 
@@ -17,7 +18,7 @@ type ChatWorkspaceProps = {
   loading: boolean;
   error?: Error | null;
   activeChunk: string | null;
-  onSelectAnswer: (runId: string) => void;
+  onSelectAnswer: (runId: string, turnTitle?: string) => void;
   onSelectCitation: (chunkId: string) => void;
   onAsk: (message: string) => void;
 };
@@ -37,7 +38,10 @@ export function ChatWorkspace({
   const [hoveredTurnTitle, setHoveredTurnTitle] = useState<string | null>(null);
   const thread = useRef<HTMLDivElement>(null);
   const turnElements = useRef(new Map<string, HTMLElement>());
-  const turns = buildConversationTurns(messages ?? [], answer);
+  const turns = useMemo(
+    () => buildConversationTurns(messages ?? [], answer),
+    [messages, answer],
+  );
   const completedTurns = turns.filter(
     (turn) => turn.response !== undefined || turn.liveAnswer !== undefined,
   );
@@ -65,10 +69,43 @@ export function ChatWorkspace({
   };
 
   const scrollToTurn = (turn: ConversationTurn): void => {
+    if (turn.runId) {
+      onSelectAnswer(turn.runId, turn.title);
+    }
     turnElements.current
       .get(turn.id)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  useEffect(() => {
+    const root = thread.current;
+    if (!root || completedTurns.length < 2) {
+      return;
+    }
+    const turnsById = new Map(
+      turns.filter((turn) => turn.runId).map((turn) => [turn.id, turn]),
+    );
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        const turnId = visible?.target.getAttribute("data-turn-id");
+        const turn = turnId ? turnsById.get(turnId) : undefined;
+        if (turn?.runId) {
+          onSelectAnswer(turn.runId, turn.title);
+        }
+      },
+      { root, threshold: [0.35, 0.65] },
+    );
+    for (const turn of turnsById.values()) {
+      const element = turnElements.current.get(turn.id);
+      if (element) {
+        observer.observe(element);
+      }
+    }
+    return () => observer.disconnect();
+  }, [onSelectAnswer, turns]);
 
   return (
     <section className="chat-workspace">
@@ -106,6 +143,7 @@ export function ChatWorkspace({
           {turns.map((turn) => (
             <section
               className="conversation-turn"
+              data-turn-id={turn.id}
               key={turn.id}
               ref={(element) => {
                 if (element) {
@@ -121,6 +159,7 @@ export function ChatWorkspace({
                   <AssistantAnswer
                     activeChunk={activeChunk}
                     answer={turn.liveAnswer}
+                    onSelectAnswer={onSelectAnswer}
                     onSelectCitation={onSelectCitation}
                   />
                 ) : turn.response ? (
@@ -191,9 +230,11 @@ function buildConversationTurns(
 
     if (message.role === "assistant" && currentTurn && !currentTurn.response) {
       currentTurn.response = message;
+      currentTurn.runId = message.rag_run_id ?? undefined;
       currentTurn.title = message.turn_title ?? currentTurn.title;
       if (isCurrentAnswer(message, answer)) {
         currentTurn.liveAnswer = answer;
+        currentTurn.runId = answer.rag_run_id;
         currentTurn.title = answer.turn_title ?? currentTurn.title;
       }
     }
@@ -203,6 +244,7 @@ function buildConversationTurns(
     const latestTurn = turns.at(-1);
     if (latestTurn && !latestTurn.response) {
       latestTurn.liveAnswer = answer;
+      latestTurn.runId = answer.rag_run_id;
       latestTurn.title = answer.turn_title ?? latestTurn.title;
     }
   }
@@ -234,14 +276,14 @@ function MessageArticle({
   onSelectAnswer,
 }: {
   message: Message;
-  onSelectAnswer?: (runId: string) => void;
+  onSelectAnswer?: (runId: string, turnTitle?: string) => void;
 }) {
   // Render one persisted message without treating it as source evidence.
   return (
     <article
       className={`message message-${message.role}`}
       onClick={() =>
-        message.rag_run_id && onSelectAnswer?.(message.rag_run_id)
+        message.rag_run_id && onSelectAnswer?.(message.rag_run_id, message.turn_title ?? undefined)
       }
     >
       <span className="message-role">
@@ -255,25 +297,34 @@ function MessageArticle({
 function AssistantAnswer({
   answer,
   activeChunk,
+  onSelectAnswer,
   onSelectCitation,
 }: {
   answer: GroundedAnswer;
   activeChunk: string | null;
+  onSelectAnswer: (runId: string, turnTitle?: string) => void;
   onSelectCitation: (chunkId: string) => void;
 }) {
   // Render the current answer with evidence-backed citation controls.
   if (answer.insufficient_evidence) {
     return (
-      <article className="message message-assistant insufficient">
+      <article
+        className="message message-assistant insufficient"
+        onClick={() => onSelectAnswer(answer.rag_run_id, answer.turn_title ?? undefined)}
+      >
         <span className="message-role">Assistant</span>
         <strong>Insufficient evidence in this project</strong>
         <p>{answer.answer_text}</p>
+        <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
       </article>
     );
   }
 
   return (
-    <article className="message message-assistant structured-answer">
+    <article
+      className="message message-assistant structured-answer"
+      onClick={() => onSelectAnswer(answer.rag_run_id, answer.turn_title ?? undefined)}
+    >
       <span className="message-role">Assistant</span>
       {answer.claims.map((claim) => (
         <p
@@ -295,12 +346,13 @@ function AssistantAnswer({
                   <button
                     className="citation"
                     key={citation.chunk_id}
-                    onClick={() => onSelectCitation(citation.chunk_id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectCitation(citation.chunk_id);
+                    }}
                     title={evidence.excerpt}
                   >
-                    {claim.citations.length > 1
-                      ? `${claim.citations.length} sources`
-                      : `${evidence.document_name.replace(/\.pdf$/i, "")} · p.${evidence.page_start ?? "?"}`}
+                    {evidence.reference_label}
                   </button>
                 )
               );
@@ -308,6 +360,40 @@ function AssistantAnswer({
           </span>
         </p>
       ))}
+      <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
     </article>
+  );
+}
+
+function RetrievedChunkList({
+  answer,
+  onSelectCitation,
+}: {
+  answer: GroundedAnswer;
+  onSelectCitation: (chunkId: string) => void;
+}) {
+  // Preserve the backend's retrieval order while exposing cited and uncited chunks.
+  const retrieved = Object.values(answer.evidence);
+  return (
+    <section className="retrieved-chunk-summary">
+      <strong>Retrieved chunks</strong>
+      <div className="retrieved-chunk-tags">
+        {retrieved.map((evidence) => (
+          <button
+            className={`retrieved-chunk-tag ${evidence.used ? "used" : ""}`}
+            key={evidence.chunk_id}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectCitation(evidence.chunk_id);
+            }}
+            title={evidence.excerpt}
+            type="button"
+          >
+            {evidence.reference_label}
+          </button>
+        ))}
+      </div>
+      <small>Highlighted chunks directly support the answer.</small>
+    </section>
   );
 }

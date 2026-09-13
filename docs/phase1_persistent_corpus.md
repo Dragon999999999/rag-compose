@@ -72,6 +72,14 @@ renderer creates source markers and source listings itself, so a model cannot in
 citation. If no matching chunks exist or the model marks evidence insufficient, the
 answer states that clearly.
 
+User-facing citations use stable display labels such as `Smith_15`: the PDF filename
+stem plus the one-based canonical chunk order. The label is therefore consistent across
+chats that use the same project representation, while canonical UUID-like chunk IDs stay
+internal. Every rendered answer lists all retrieved chunks; cited chunks are marked as
+used and other retrieval candidates remain visible as context. The browser Evidence pane
+uses the same ordered list and follows the active prompt-answer turn when the user clicks
+an answer, selects a turn marker, or scrolls to another completed turn.
+
 New browser chats persist the placeholder name `New chat` with an unset name flag. The
 first grounded-answer request also asks the model for a concise conversation name, which
 is applied only if the flag is still unset when generation finishes. Any manual rename,

@@ -2,9 +2,16 @@
 
 from datetime import UTC, datetime
 
-from llm_grounding.api.main import _evidence_dto, _item, _message_dto
+from llm_grounding.api.main import (
+    _evidence_dto,
+    _item,
+    _message_dto,
+    _structured_answer,
+)
+from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, EvidenceReference, Message, RetrievalUnit
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
+from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 
 
 def test_evidence_dto_exposes_canonical_geometry_without_model_identifiers() -> None:
@@ -32,9 +39,11 @@ def test_evidence_dto_exposes_canonical_geometry_without_model_identifiers() -> 
         "Supported source text.",
     )
 
-    dto = _evidence_dto(chunk, {"evidence": evidence})
+    dto = _evidence_dto(chunk, {"evidence": evidence}, used=True)
 
     assert dto["chunk_id"] == "canonical-chunk"
+    assert dto["reference_label"] == "paper_1"
+    assert dto["used"] is True
     assert dto["document_name"] == "paper.pdf"
     assert dto["locations"] == [
         {
@@ -70,3 +79,90 @@ def test_chat_dto_exposes_automatic_name_state() -> None:
 
     assert dto["name"] == "New chat"
     assert dto["chat_name_set"] is False
+
+
+class EvidenceRepository:
+    """Provide ordered retrieval chunks for browser DTO tests without a database."""
+
+    def __init__(self, chunks: tuple[RetrievalUnit, ...]) -> None:
+        """Index fixed chunks by their canonical identifiers."""
+        self._chunks = {chunk.chunk_id: chunk for chunk in chunks}
+
+    async def chunks_by_ids(
+        self, chunk_ids: tuple[str, ...]
+    ) -> dict[str, RetrievalUnit]:
+        """Return requested chunks while preserving the DTO helper's supplied order."""
+        return {
+            chunk_id: self._chunks[chunk_id]
+            for chunk_id in chunk_ids
+            if chunk_id in self._chunks
+        }
+
+    async def evidence_by_ids(
+        self, evidence_ids: tuple[str, ...]
+    ) -> dict[str, EvidenceUnit]:
+        """Return no page geometry for this focused response-shape test."""
+        assert evidence_ids == ()
+        return {}
+
+
+class EvidenceApplication:
+    """Expose only the repository dependency consumed by structured answer DTOs."""
+
+    def __init__(self, chunks: tuple[RetrievalUnit, ...]) -> None:
+        """Construct the minimal application shape used by `_structured_answer`."""
+        self.repository = EvidenceRepository(chunks)
+
+
+async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() -> None:
+    """Browser evidence includes uncited retrieval candidates in stable label order."""
+    cited = RetrievalUnit(
+        "canonical-cited",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Supported text.",
+        14,
+        3,
+        3,
+        (),
+    )
+    additional = RetrievalUnit(
+        "canonical-additional",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Additional context.",
+        15,
+        4,
+        4,
+        (),
+    )
+    payload = GroundedResponsePayload(
+        turn_title="Smith evidence",
+        answer_text="Supported text.",
+        claims=[{"text": "Supported text.", "source_chunk_ids": [cited.chunk_id]}],
+        insufficient_evidence=False,
+    )
+    answer = Answer(
+        "Rendered answer",
+        payload=payload.model_dump(),
+        evidence_ids=(cited.chunk_id,),
+        metadata={
+            "message_id": "message",
+            "rag_run_id": "run",
+            "turn_title": "Smith evidence",
+            "retrieved_chunk_ids": [cited.chunk_id, additional.chunk_id],
+        },
+    )
+
+    dto = await _structured_answer(
+        EvidenceApplication((cited, additional)),  # type: ignore[arg-type]
+        answer,
+    )
+
+    assert list(dto["evidence"]) == [cited.chunk_id, additional.chunk_id]
+    assert dto["evidence"][cited.chunk_id]["reference_label"] == "Smith_15"
+    assert dto["evidence"][cited.chunk_id]["used"] is True
+    assert dto["evidence"][additional.chunk_id]["reference_label"] == "Smith_16"
+    assert dto["evidence"][additional.chunk_id]["used"] is False

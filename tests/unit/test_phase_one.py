@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
-from llm_grounding.domain.answers import DecisionAction
+from llm_grounding.domain.answers import DecisionAction, DecisionResult, ReasoningResult
 from llm_grounding.domain.corpus import (
     ChunkRetrievalResult,
     CorpusRequest,
@@ -466,13 +466,69 @@ async def test_basic_rag_renders_sources_and_excludes_history_as_evidence() -> N
         GroundedAnswerRenderer(),
     )
     _, answer, _ = await runner.run(CorpusRequest("project", "What does it use?"))
-    assert f"[{canonical_id}]" in answer.text
+    assert "[paper_1]" in answer.text
+    assert canonical_id not in answer.text
+    assert "[USED] paper_1" in answer.text
+    assert "Retrieved chunks" in answer.text
     assert "Document: paper.pdf" in answer.text
     assert answer.evidence_ids == (canonical_id,)
     assert '<chunk ref="chunk_1">' in model.prompts[0]
     assert canonical_id not in model.prompts[0]
     assert embedder.document_inputs == [["The protocol uses photons."]]
     assert embedder.query_inputs == ["What does it use?"]
+
+
+async def test_renderer_lists_every_retrieved_chunk_with_stable_display_labels() -> (
+    None
+):
+    """Cited and merely retrieved chunks remain distinguishable without UUIDs."""
+    cited = RetrievalUnit(
+        "canonical-cited",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Supported text.",
+        14,
+        3,
+        3,
+        (),
+    )
+    additional = RetrievalUnit(
+        "canonical-additional",
+        "document",
+        "ingestion",
+        "Smith.pdf",
+        "Additional context.",
+        15,
+        4,
+        4,
+        (),
+    )
+    context = GroundingContext(
+        CorpusRequest("project", "question"),
+        (
+            ChunkRetrievalResult(cited, 1, "vector", 0.9),
+            ChunkRetrievalResult(additional, 2, "vector", 0.8),
+        ),
+    )
+    payload = GroundedResponsePayload(
+        turn_title="Question",
+        answer_text="Supported text.",
+        claims=[{"text": "Supported text.", "source_chunk_ids": [cited.chunk_id]}],
+        insufficient_evidence=False,
+    )
+
+    decision = DecisionResult(
+        DecisionAction.ACCEPT,
+        ReasoningResult("result", payload.model_dump()),
+    )
+    answer = await GroundedAnswerRenderer().render_context(decision, context)
+
+    assert "[Smith_15]" in answer.text
+    assert "[USED] Smith_15" in answer.text
+    assert "[retrieved] Smith_16" in answer.text
+    assert "canonical-cited" not in answer.text
+    assert "canonical-additional" not in answer.text
 
 
 async def test_basic_rag_renders_explicit_insufficient_evidence() -> None:
@@ -516,6 +572,7 @@ async def test_basic_rag_renders_explicit_insufficient_evidence() -> None:
     )
 
     assert answer.text.startswith("Insufficient evidence:")
+    assert "[retrieved] paper_1" in answer.text
     assert answer.metadata["insufficient_evidence"] is True
     assert metadata["decision"] == DecisionAction.ABSTAIN
     assert metadata["status"] == "completed"

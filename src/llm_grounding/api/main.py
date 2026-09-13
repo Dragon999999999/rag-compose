@@ -34,6 +34,7 @@ from llm_grounding.infrastructure.config.loader import (
     load_ingestion_config,
 )
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
+from llm_grounding.rendering.chunk_references import chunk_reference_label
 
 
 class NameRequest(BaseModel):
@@ -70,9 +71,11 @@ def _message_dto(message: Message) -> dict[str, object]:
 
 
 def _evidence_dto(
-    chunk: RetrievalUnit, evidence: dict[str, EvidenceUnit]
+    chunk: RetrievalUnit,
+    evidence: dict[str, EvidenceUnit],
+    used: bool,
 ) -> dict[str, object]:
-    """Expose a trusted chunk with page-level locations, never LLM-provided IDs."""
+    """Expose a trusted chunk with stable display label and PDF locations."""
     references = chunk.evidence_refs
     locations: list[dict[str, object]] = []
     for reference in references:
@@ -100,6 +103,8 @@ def _evidence_dto(
         )
     return {
         "chunk_id": chunk.chunk_id,
+        "reference_label": chunk_reference_label(chunk),
+        "used": used,
         "document_id": chunk.document_id,
         "document_name": chunk.document_name,
         "page_start": chunk.page_start,
@@ -109,20 +114,44 @@ def _evidence_dto(
     }
 
 
+def _identifier_list(value: object) -> tuple[str, ...]:
+    """Return unique string identifiers while preserving their supplied order."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(dict.fromkeys(item for item in value if isinstance(item, str)))
+
+
+async def _evidence_dtos(
+    application: PhaseOneApplication,
+    chunk_ids: tuple[str, ...],
+    used_chunk_ids: tuple[str, ...],
+) -> dict[str, dict[str, object]]:
+    """Hydrate ordered retrieved chunks and mark the subset cited by claims."""
+    chunks_by_id = await application.repository.chunks_by_ids(chunk_ids)
+    chunks = tuple(
+        chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id
+    )
+    evidence_ids = tuple(
+        reference.evidence_id for chunk in chunks for reference in chunk.evidence_refs
+    )
+    evidence = await application.repository.evidence_by_ids(evidence_ids)
+    used = set(used_chunk_ids)
+    return {
+        chunk.chunk_id: _evidence_dto(chunk, evidence, chunk.chunk_id in used)
+        for chunk in chunks
+    }
+
+
 async def _structured_answer(
     application: PhaseOneApplication,
     answer: Answer,
 ) -> dict[str, object]:
     """Build browser-safe claims and evidence from canonical validated output."""
     metadata = answer.metadata
-    evidence_ids = answer.evidence_ids
-    chunks = await application.repository.chunks_by_ids(evidence_ids)
-    evidence_ids_by_chunk = tuple(
-        reference.evidence_id
-        for chunk in chunks.values()
-        for reference in chunk.evidence_refs
-    )
-    evidence = await application.repository.evidence_by_ids(evidence_ids_by_chunk)
+    used_chunk_ids = tuple(answer.evidence_ids)
+    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
+    visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
+    evidence = await _evidence_dtos(application, visible_chunk_ids, used_chunk_ids)
     payload = (
         GroundedResponsePayload.model_validate(answer.payload)
         if answer.payload
@@ -145,16 +174,13 @@ async def _structured_answer(
                 "citations": [
                     {"chunk_id": chunk_id}
                     for chunk_id in claim.source_chunk_ids
-                    if chunk_id in chunks
+                    if chunk_id in evidence
                 ],
             }
             for index, claim in enumerate(payload.claims if payload else (), start=1)
         ],
-        "evidence": {
-            chunk_id: _evidence_dto(chunk, evidence)
-            for chunk_id, chunk in chunks.items()
-        },
-        "retrieved_chunk_ids": metadata.get("retrieved_chunk_ids", []),
+        "evidence": {chunk_id: item for chunk_id, item in evidence.items()},
+        "retrieved_chunk_ids": list(retrieved_chunk_ids),
     }
 
 
@@ -168,14 +194,13 @@ async def _structured_run(
     if not isinstance(payload_data, dict) or not isinstance(evidence_data, list):
         raise HTTPException(404, "Structured evidence is unavailable for this run.")
     payload = GroundedResponsePayload.model_validate(payload_data)
-    evidence_ids = tuple(item for item in evidence_data if isinstance(item, str))
-    chunks = await application.repository.chunks_by_ids(evidence_ids)
-    evidence = await application.repository.evidence_by_ids(
-        tuple(
-            reference.evidence_id
-            for chunk in chunks.values()
-            for reference in chunk.evidence_refs
-        )
+    used_chunk_ids = _identifier_list(evidence_data)
+    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
+    visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
+    evidence = await _evidence_dtos(
+        application,
+        visible_chunk_ids,
+        used_chunk_ids,
     )
     return {
         "rag_run_id": run_id,
@@ -189,16 +214,13 @@ async def _structured_run(
                 "citations": [
                     {"chunk_id": chunk_id}
                     for chunk_id in claim.source_chunk_ids
-                    if chunk_id in chunks
+                    if chunk_id in evidence
                 ],
             }
             for index, claim in enumerate(payload.claims, start=1)
         ],
-        "evidence": {
-            chunk_id: _evidence_dto(chunk, evidence)
-            for chunk_id, chunk in chunks.items()
-        },
-        "retrieved_chunk_ids": metadata.get("retrieved_chunk_ids", []),
+        "evidence": {chunk_id: item for chunk_id, item in evidence.items()},
+        "retrieved_chunk_ids": list(retrieved_chunk_ids),
     }
 
 

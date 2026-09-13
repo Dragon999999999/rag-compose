@@ -3,18 +3,20 @@
 from llm_grounding.domain.answers import Answer, DecisionAction, DecisionResult
 from llm_grounding.domain.corpus import GroundingContext
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
+from llm_grounding.rendering.chunk_references import chunk_reference_label
 
 
 class GroundedAnswerRenderer:
-    """Resolve source markers from actual retrieved chunks; never trust free-form citations."""
+    """Resolve source markers from retrieved chunks, never free-form citations."""
 
     async def render_context(
         self, decision: DecisionResult, context: GroundingContext
     ) -> Answer:
-        """Render accepted claims or a clear insufficiency answer with real source listings.
+        """Render accepted claims or a clear insufficiency answer with source listings.
 
         Raises:
-            ValueError: If policy rejected output or a claim references an unselected chunk.
+            ValueError: If policy rejected output or a claim references an unselected
+                chunk.
         """
         if decision.action == DecisionAction.REJECT:
             raise ValueError("Grounded renderer refuses a rejected decision")
@@ -25,7 +27,7 @@ class GroundedAnswerRenderer:
             if payload.limitations:
                 text += f"\n\nLimitations: {payload.limitations}"
             return Answer(
-                text,
+                f"{text}\n\n{self._retrieved_chunk_listing(context, ())}",
                 payload=payload.model_dump(mode="json"),
                 metadata={"insufficient_evidence": True},
             )
@@ -38,24 +40,41 @@ class GroundedAnswerRenderer:
                 raise ValueError(
                     "Accepted grounded claim references an unselected chunk"
                 )
-            lines.append(
-                f"{claim.text} {' '.join(f'[{chunk_id}]' for chunk_id in claim.source_chunk_ids)}"
+            citation_labels = " ".join(
+                f"[{chunk_reference_label(chunks[chunk_id])}]"
+                for chunk_id in claim.source_chunk_ids
             )
+            lines.append(f"{claim.text} {citation_labels}")
             referenced.extend(claim.source_chunk_ids)
         body = "\n".join(lines) if lines else payload.answer_text
         unique_ids = tuple(dict.fromkeys(referenced))
-        source_lines: list[str] = []
-        for chunk_id in unique_ids:
-            chunk = chunks[chunk_id]
-            source_lines.append(
-                f"[{chunk_id}]\nDocument: {chunk.document_name}\n"
-                f"Pages: {chunk.page_start or 'unknown'}–{chunk.page_end or 'unknown'}\n"
-                f"Excerpt: {chunk.text[:500]}"
-            )
-        sources = "\n\n".join(source_lines)
         return Answer(
-            f"{body}\n\nSources\n\n{sources}",
+            f"{body}\n\n{self._retrieved_chunk_listing(context, unique_ids)}",
             payload=payload.model_dump(mode="json"),
             evidence_ids=unique_ids,
             metadata={"insufficient_evidence": False},
         )
+
+    @staticmethod
+    def _retrieved_chunk_listing(
+        context: GroundingContext, used_chunk_ids: tuple[str, ...]
+    ) -> str:
+        """Render every retrieved chunk, visibly distinguishing cited support."""
+        used = set(used_chunk_ids)
+        lines = ["Retrieved chunks"]
+        for result in context.chunks:
+            chunk = result.chunk
+            state = "USED" if chunk.chunk_id in used else "retrieved"
+            page_range = (
+                f"{chunk.page_start or 'unknown'}–{chunk.page_end or 'unknown'}"
+            )
+            lines.extend(
+                (
+                    f"[{state}] {chunk_reference_label(chunk)}",
+                    f"Document: {chunk.document_name}",
+                    f"Pages: {page_range}",
+                    f"Excerpt: {chunk.text[:500]}",
+                    "",
+                )
+            )
+        return "\n".join(lines).rstrip()
