@@ -22,7 +22,7 @@ class Project:
 
 @dataclass(frozen=True)
 class Document:
-    """Identify immutable PDF content by SHA-256 and a storage-owned artifact key."""
+    """Identify immutable PDF content and its current user-facing filename."""
 
     id: str
     name: str

@@ -44,7 +44,7 @@ class ProjectRow(Base):
 
 
 class DocumentRow(Base):
-    """Persist deduplicated immutable PDF metadata and artifact reference."""
+    """Persist deduplicated PDF identity, display name, and artifact reference."""
 
     __tablename__ = "documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_identifier)

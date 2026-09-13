@@ -1,5 +1,6 @@
 """Separate persistent document ingestion workflow, never invoked by query retrieval."""
 
+import re
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -19,6 +20,22 @@ from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.parsing.protocol import DocumentParser
+
+_TEMPORARY_PDF_NAME = re.compile(r"^tmp[a-z0-9]{6,32}\.pdf$", re.IGNORECASE)
+_UUID_PDF_NAME = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pdf$",
+    re.IGNORECASE,
+)
+_DIGEST_PDF_NAME = re.compile(r"^[0-9a-f]{64}\.pdf$", re.IGNORECASE)
+
+
+def _is_generated_pdf_name(name: str) -> bool:
+    """Return whether a PDF basename is an infrastructure-generated identifier."""
+    return any(
+        pattern.fullmatch(name)
+        for pattern in (_TEMPORARY_PDF_NAME, _UUID_PDF_NAME, _DIGEST_PDF_NAME)
+    )
 
 
 class DocumentIngestionService:
@@ -51,7 +68,8 @@ class DocumentIngestionService:
         Artifact content is deduplicated by SHA-256. A ready ingestion with matching
         full config is reused only while its derived vectors still exist. Missing
         vectors and incomplete lifecycle states rebuild the existing ingestion;
-        different configuration produces a separate representation.
+        different configuration produces a separate representation. Reuse also
+        replaces legacy generated filenames with the uploaded PDF's real basename.
         """
         if not source.is_file() or source.suffix.lower() != ".pdf":
             raise ValueError(f"Expected an existing PDF: {source}")
@@ -61,6 +79,14 @@ class DocumentIngestionService:
             key = f"pdf/{digest}.pdf"
             await self._artifacts.put_pdf(key, source)
             document = await self._repository.create_document(source.name, digest, key)
+        elif _is_generated_pdf_name(document.name) and not _is_generated_pdf_name(
+            source.name
+        ):
+            # Early uploads persisted parser/upload temporary basenames. Repair the
+            # display metadata when the same content is supplied with its real name.
+            document = await self._repository.update_document_name(
+                document.id, source.name
+            )
         existing = await self._repository.find_ingestion(document.id, config.identity())
         ingestion = existing or await self._repository.create_ingestion(
             document.id,

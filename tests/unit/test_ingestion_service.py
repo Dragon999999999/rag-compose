@@ -26,7 +26,10 @@ from llm_grounding.ingestion.models import (
     EmbeddingConfig,
     IngestionConfig,
 )
-from llm_grounding.ingestion.service import DocumentIngestionService
+from llm_grounding.ingestion.service import (
+    DocumentIngestionService,
+    _is_generated_pdf_name,
+)
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 
@@ -70,6 +73,82 @@ class FixedDigestIngestionService(DocumentIngestionService):
     async def _digest(self, source: Path) -> str:
         """Return the digest represented by the existing document record."""
         return "stored-digest"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("tmpjluizqrw.pdf", True),
+        ("64710113-74ab-4d84-98a9-ab70cf5d169e.pdf", True),
+        (f"{'a' * 64}.pdf", True),
+        ("tmp_report.pdf", False),
+        ("Kumpf2024.pdf", False),
+    ],
+)
+def test_generated_pdf_name_detection(name: str, expected: bool) -> None:
+    """Recognize infrastructure names without classifying ordinary filenames."""
+    assert _is_generated_pdf_name(name) is expected
+
+
+async def test_reuse_repairs_legacy_temporary_document_name(tmp_path: Path) -> None:
+    """Reuse content while replacing legacy upload names in canonical provenance."""
+    source = tmp_path / "Original Research Paper.pdf"
+    source.write_bytes(b"%PDF-1.7 test")
+    config = IngestionConfig(
+        chunker=ChunkerConfig(target_chars=64, overlap_chars=0),
+        embedding=EmbeddingConfig(type="fake", model="test", dimension=2),
+    )
+    document = Document(
+        "document",
+        "tmpjluizqrw.pdf",
+        "stored-digest",
+        "pdf/stored-digest.pdf",
+        datetime.now(UTC),
+    )
+    repaired = replace(document, name=source.name)
+    ingestion = DocumentIngestion(
+        "ingestion",
+        document.id,
+        config.identity(),
+        config.model_dump_json(),
+        config.embedding.identity(),
+        config.embedding.dimension,
+        IngestionStatus.READY,
+        datetime.now(UTC),
+    )
+    repository = SimpleNamespace(
+        find_document_by_sha256=AsyncMock(return_value=document),
+        update_document_name=AsyncMock(return_value=repaired),
+        find_ingestion=AsyncMock(return_value=ingestion),
+        create_ingestion=AsyncMock(
+            side_effect=AssertionError("Ready ingestion should be reused")
+        ),
+        attach_document=AsyncMock(
+            return_value=ProjectDocument("project", document.id, ingestion.id)
+        ),
+    )
+    artifacts = SimpleNamespace(
+        put_pdf=AsyncMock(
+            side_effect=AssertionError("Existing document must reuse its artifact")
+        )
+    )
+    vectors = SimpleNamespace(associate_ingestion=AsyncMock(return_value=True))
+    service = FixedDigestIngestionService(
+        repository,  # type: ignore[arg-type]
+        artifacts,  # type: ignore[arg-type]
+        SimpleNamespace(),  # type: ignore[arg-type]
+        BasicKnowledgeBuilder(),
+        FixedWindowChunker(config.chunker),
+        MatchingEmbedder(config.embedding.identity(), config.embedding.dimension),
+        vectors,  # type: ignore[arg-type]
+    )
+
+    result, _, result_ingestion = await service.add_document("project", source, config)
+
+    assert result.name == source.name
+    assert result_ingestion is ingestion
+    repository.update_document_name.assert_awaited_once_with(document.id, source.name)
+    vectors.associate_ingestion.assert_awaited_once_with("project", ingestion.id)
 
 
 @pytest.mark.parametrize(

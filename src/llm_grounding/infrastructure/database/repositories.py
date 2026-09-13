@@ -6,7 +6,7 @@ rebuild vectors, validate grounding references, and isolate project corpora.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from llm_grounding.domain.corpus import (
@@ -120,6 +120,42 @@ class PostgresRepository:
         async with self._sessions.begin() as session:
             row = DocumentRow(name=name, sha256=digest, artifact_key=artifact_key)
             session.add(row)
+            await session.flush()
+            return Document(
+                row.id, row.name, row.sha256, row.artifact_key, row.created_at or _now()
+            )
+
+    async def update_document_name(self, document_id: str, name: str) -> Document:
+        """Repair a document display name and its persisted chunk provenance.
+
+        Canonical content and retrieval identities remain unchanged. Existing chunks
+        carry a denormalized document name, so both records are updated in the same
+        transaction to keep source lists, citations, and evidence views consistent.
+
+        Args:
+            document_id: Canonical document whose display metadata should be repaired.
+            name: Original user-facing PDF basename.
+
+        Returns:
+            Document metadata with the repaired display name.
+
+        Raises:
+            KeyError: If the document does not exist.
+            ValueError: If the replacement name is blank.
+        """
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Document name must not be blank")
+        async with self._sessions.begin() as session:
+            row = await session.get(DocumentRow, document_id)
+            if row is None:
+                raise KeyError(f"Unknown document: {document_id}")
+            row.name = normalized_name
+            await session.execute(
+                update(RetrievalUnitRow)
+                .where(RetrievalUnitRow.document_id == document_id)
+                .values(document_name=normalized_name)
+            )
             await session.flush()
             return Document(
                 row.id, row.name, row.sha256, row.artifact_key, row.created_at or _now()
