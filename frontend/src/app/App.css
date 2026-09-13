@@ -1,0 +1,25 @@
+.app-shell {
+  overflow: hidden;
+}
+
+.app-shell .main-workspace,
+.app-shell .evidence-slot,
+.app-shell .chat-workspace,
+.app-shell .chat-thread {
+  min-height: 0;
+}
+
+.app-shell .main-workspace,
+.app-shell .chat-workspace {
+  overflow: hidden;
+}
+
+.app-shell .evidence-slot {
+  overflow: hidden;
+}
+
+.app-shell .chat-thread,
+.app-shell .evidence-workspace,
+.app-shell .pdf-workspace {
+  overscroll-behavior: contain;
+}

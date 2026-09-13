@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import "./App.css";
 import { ChatWorkspace } from "../components/chats/ChatWorkspace";
 import { NameDialog, Dialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";

@@ -296,17 +296,14 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     ) -> dict[str, object]:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(422, "Only PDF uploads are supported.")
-        descriptor, temporary_name = tempfile.mkstemp(suffix=".pdf")
-        os.close(descriptor)
-        temporary_path = Path(temporary_name)
-        try:
+        original_name = Path(file.filename).name
+        with tempfile.TemporaryDirectory(prefix="llm-grounding-upload-") as directory:
+            temporary_path = Path(directory) / original_name
             temporary_path.write_bytes(await file.read())
             document, ingestion = await application.projects.add_document(
                 project_id, temporary_path, load_ingestion_config(None)
             )
             return {"document": _item(document), "ingestion": _item(ingestion)}
-        finally:
-            temporary_path.unlink(missing_ok=True)
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
     async def remove_document(project_id: str, document_id: str) -> None:
