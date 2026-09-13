@@ -1,5 +1,6 @@
 .project-row {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: var(--spacing-1);
 }
@@ -15,6 +16,7 @@
 }
 
 .project-row .icon-button {
+  margin-left: auto;
   min-width: 24px;
   padding: 2px;
 }
