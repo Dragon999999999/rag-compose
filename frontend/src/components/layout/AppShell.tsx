@@ -21,34 +21,53 @@ export function AppShell({
   onEvidenceToggle,
   children,
 }: AppShellProps) {
+  const sidebarToggle = (
+    <button
+      aria-label={sidebarOpen ? "Hide navigation" : "Show navigation"}
+      className={`panel-toggle sidebar-toggle ${sidebarOpen ? "open" : "closed"}`}
+      onClick={onSidebarToggle}
+      title={sidebarOpen ? "Hide navigation" : "Show navigation"}
+      type="button"
+    >
+      {sidebarOpen ? "‹" : "›"}
+    </button>
+  );
+  const evidenceToggle = (
+    <button
+      aria-label={evidenceOpen ? "Hide evidence" : "Show evidence"}
+      className={`panel-toggle evidence-toggle ${evidenceOpen ? "open" : "closed"}`}
+      onClick={onEvidenceToggle}
+      title={evidenceOpen ? "Hide evidence" : "Show evidence"}
+      type="button"
+    >
+      {evidenceOpen ? "›" : "‹"}
+    </button>
+  );
+
   return (
     <div
       className={`app-shell ${sidebarOpen ? "with-sidebar" : ""} ${evidenceOpen ? "with-evidence" : ""}`}
     >
-      {sidebarOpen && <div className="sidebar-slot">{sidebar}</div>}
-      <button
-        aria-label={sidebarOpen ? "Hide navigation" : "Show navigation"}
-        className={`panel-toggle sidebar-toggle ${sidebarOpen ? "open" : "closed"}`}
-        onClick={onSidebarToggle}
-        title={sidebarOpen ? "Hide navigation" : "Show navigation"}
-        type="button"
-      >
-        {sidebarOpen ? "‹" : "›"}
-      </button>
+      {sidebarOpen ? (
+        <div className="sidebar-slot">
+          {sidebar}
+          {sidebarToggle}
+        </div>
+      ) : (
+        sidebarToggle
+      )}
       <main className="main-workspace">
         <div className="header-slot">{header}</div>
         {children}
       </main>
-      {evidenceOpen && <aside className="evidence-slot">{evidence}</aside>}
-      <button
-        aria-label={evidenceOpen ? "Hide evidence" : "Show evidence"}
-        className={`panel-toggle evidence-toggle ${evidenceOpen ? "open" : "closed"}`}
-        onClick={onEvidenceToggle}
-        title={evidenceOpen ? "Hide evidence" : "Show evidence"}
-        type="button"
-      >
-        {evidenceOpen ? "›" : "‹"}
-      </button>
+      {evidenceOpen ? (
+        <aside className="evidence-slot">
+          {evidence}
+          {evidenceToggle}
+        </aside>
+      ) : (
+        evidenceToggle
+      )}
     </div>
   );
 }
