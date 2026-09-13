@@ -54,6 +54,10 @@ class ChatService:
         """Delete one conversation while retaining its project's corpus."""
         await self._repository.delete_chat(chat_id)
 
+    async def rename_chat(self, chat_id: str, name: str) -> Chat:
+        """Rename one project-scoped conversation."""
+        return await self._repository.rename_chat(chat_id, name)
+
     async def messages(self, chat_id: str) -> tuple[Message, ...]:
         """Load the complete persisted conversation in chronological order."""
         return await self._repository.recent_messages(chat_id, 10_000)
@@ -76,13 +80,16 @@ class ChatService:
             str(metadata["status"]),
             metadata,
         )
+        turn_title = _turn_title(answer, message)
         assistant_message = await self._repository.add_message(
             chat_id,
             "assistant",
             answer.text,
             run_id,
-            _turn_title(answer, message),
+            turn_title,
         )
+        if chat.name == "New chat":
+            await self._repository.rename_chat(chat_id, turn_title)
         retrieved = metadata.get("retrieved_chunk_ids", [])
         retrieved_ids = retrieved if isinstance(retrieved, list) else []
         return replace(

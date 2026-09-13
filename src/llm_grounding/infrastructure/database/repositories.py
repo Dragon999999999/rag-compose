@@ -484,6 +484,18 @@ class PostgresRepository:
                 raise KeyError(f"Unknown chat: {chat_id}")
             return Chat(row.id, row.project_id, row.name, row.created_at)
 
+    async def rename_chat(self, chat_id: str, name: str) -> Chat:
+        """Rename a chat while preserving its messages and project membership."""
+        if not name.strip():
+            raise ValueError("Chat name must not be blank")
+        async with self._sessions.begin() as session:
+            row = await session.get(ChatRow, chat_id)
+            if row is None:
+                raise KeyError(f"Unknown chat: {chat_id}")
+            row.name = name.strip()
+            await session.flush()
+            return Chat(row.id, row.project_id, row.name, row.created_at or _now())
+
     async def delete_chat(self, chat_id: str) -> None:
         """Delete a chat and its messages without changing project documents."""
         async with self._sessions.begin() as session:

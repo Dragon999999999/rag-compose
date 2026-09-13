@@ -268,7 +268,7 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     assert canonical_id not in model.prompts[0]
     assert '<chunk ref="chunk_1">' in model.prompts[0]
     assert reasoning.metadata["prompt_id"] == "grounded_qa_v1"
-    assert reasoning.metadata["prompt_version"] == "1.1"
+    assert reasoning.metadata["prompt_version"] == "1.2"
 
 
 def test_model_claim_requires_at_least_one_source_ref() -> None:

@@ -256,6 +256,10 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     async def create_chat(project_id: str, request: NameRequest) -> dict[str, object]:
         return _item(await application.chats.create_chat(project_id, request.name))
 
+    @app.patch("/api/chats/{chat_id}")
+    async def rename_chat(chat_id: str, request: NameRequest) -> dict[str, object]:
+        return _item(await application.chats.rename_chat(chat_id, request.name))
+
     @app.delete("/api/chats/{chat_id}", status_code=204)
     async def delete_chat(chat_id: str) -> None:
         await application.chats.delete_chat(chat_id)

@@ -27,3 +27,63 @@
 .project-sidebar .project-row:focus-within .icon-button {
   opacity: 1;
 }
+
+.project-sidebar .chat-row-container {
+  min-width: 0;
+}
+
+.sidebar-name-editor {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.sidebar-name-editor input {
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  padding: 3px 5px;
+}
+
+.sidebar-name-editor button {
+  background: transparent;
+  border: 0;
+  color: var(--color-primary);
+  font-weight: 700;
+  padding: 2px;
+}
+
+.sidebar-context-menu {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: grid;
+  min-width: 112px;
+  padding: var(--spacing-1);
+  position: fixed;
+  z-index: 30;
+}
+
+.sidebar-context-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.sidebar-context-menu button:hover,
+.sidebar-context-menu button:focus-visible {
+  background: var(--color-surface-subtle);
+}
+
+.sidebar-context-menu .danger-action {
+  color: var(--color-danger);
+}
