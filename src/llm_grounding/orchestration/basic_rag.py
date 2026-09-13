@@ -37,7 +37,11 @@ class BasicRagRunner:
         self._diagnostics = diagnostics or GroundingDiagnostics()
 
     async def run(
-        self, request: CorpusRequest, history: tuple[Message, ...] = ()
+        self,
+        request: CorpusRequest,
+        history: tuple[Message, ...] = (),
+        *,
+        generate_chat_name: bool = False,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute Basic RAG and retain metadata suitable for persistence."""
         chunks = await (
@@ -47,7 +51,7 @@ class BasicRagRunner:
         )
         if not chunks:
             self._diagnostics.report_empty_retrieval(
-                GroundingContext(request, (), history)
+                GroundingContext(request, (), history, generate_chat_name)
             )
             answer = Answer(
                 "Insufficient evidence: no indexed project chunks matched "
@@ -65,7 +69,7 @@ class BasicRagRunner:
                     "created_at": datetime.now(UTC).isoformat(),
                 },
             )
-        context = GroundingContext(request, chunks, history)
+        context = GroundingContext(request, chunks, history, generate_chat_name)
         reasoning = await self._reasoner.reason(context)
         assessments = await self._assessor.assess_context(reasoning, context)
         decision = await self._policy.decide(reasoning, assessments)
@@ -84,6 +88,7 @@ class BasicRagRunner:
                 "retrieved_chunk_ids": [item.chunk.chunk_id for item in chunks],
                 "assessment_labels": [item.label for item in assessments],
                 "decision": decision.action,
+                "generated_chat_name": reasoning.payload.get("chat_name"),
                 "answer_payload": answer.payload,
                 "evidence_ids": list(answer.evidence_ids),
                 "answer_metadata": answer.metadata,

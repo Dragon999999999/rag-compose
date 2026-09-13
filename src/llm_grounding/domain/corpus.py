@@ -104,12 +104,17 @@ class ChunkRetrievalResult:
 
 @dataclass(frozen=True)
 class Chat:
-    """Hold a conversation within one project, without owning its evidence."""
+    """Hold a project conversation and its automatic-name eligibility.
+
+    Once `chat_name_set` is true, generated names must never replace the current
+    name, even when its text happens to match the initial placeholder.
+    """
 
     id: str
     project_id: str
     name: str
     created_at: datetime
+    chat_name_set: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,3 +158,4 @@ class GroundingContext:
     request: CorpusRequest
     chunks: tuple[ChunkRetrievalResult, ...]
     history: tuple[Message, ...] = ()
+    generate_chat_name: bool = False

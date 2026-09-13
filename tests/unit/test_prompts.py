@@ -14,6 +14,7 @@ def test_grounded_qa_prompt_loads_by_registered_id() -> None:
         {
             "task": "What does the paper introduce?",
             "history": "(none)",
+            "generate_chat_name": True,
             "chunks": (
                 PromptChunk(
                     "chunk_1",
@@ -27,9 +28,26 @@ def test_grounded_qa_prompt_loads_by_registered_id() -> None:
     )
 
     assert metadata.prompt_id == "grounded_qa_v1"
-    assert metadata.version == "1.2"
+    assert metadata.version == "1.3"
     assert rendered.metadata == metadata
     assert '<chunk ref="chunk_1">' in rendered.text
     assert "The paper introduces a framework." in rendered.text
     assert "Populate `turn_title`" in rendered.text
-    assert "title of a new chat" in rendered.text
+    assert "Populate `chat_name`" in rendered.text
+    assert "first answer in a chat" in rendered.text
+
+
+def test_grounded_qa_prompt_does_not_rename_a_finalized_chat() -> None:
+    """Later turns explicitly tell the model not to propose another chat name."""
+    rendered = PromptLibrary.default().render(
+        "grounded_qa_v1",
+        {
+            "task": "Follow up",
+            "history": "user: Earlier question",
+            "generate_chat_name": False,
+            "chunks": (PromptChunk("chunk_1", "paper.pdf", "1", "1", "Evidence."),),
+        },
+    )
+
+    assert "Set `chat_name` to `null`" in rendered.text
+    assert "first answer in a chat" not in rendered.text

@@ -22,13 +22,22 @@ The final `answer_text` must contain only information supported by the claims an
 
 Do not expose, infer, or refer to internal document IDs, ingestion IDs, database IDs, UUIDs, storage identifiers, or other internal identifiers. Use only the request-local chunk references supplied to you.
 
-## Conversation navigation title
+## Chat and conversation navigation names
+
+{% if generate_chat_name %}
+This is the first answer in a chat whose default name has not been replaced.
+Populate `chat_name` with a concise, specific name of three to eight words for
+the overall conversation. Base it on the user's request. Do not return "New
+chat" or another generic placeholder.
+{% else %}
+The chat already has a finalized name. Set `chat_name` to `null` and do not
+propose a replacement.
+{% endif %}
 
 Populate `turn_title` with a concise title of three to eight words for this
-prompt-and-answer turn. It is also used as the title of a new chat after its
-first answer. The title is navigation metadata, not part of the answer: it
-must not add factual claims, source references, or internal identifiers. Name
-the user's request or the answer topic in plain language.
+prompt-and-answer turn. The title is navigation metadata, not part of the
+answer: it must not add factual claims, source references, or internal
+identifiers. Name the user's request or the answer topic in plain language.
 
 ## Evidence boundaries
 

@@ -226,9 +226,11 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     context = GroundingContext(
         CorpusRequest("project", "What is the main contribution?"),
         (ChunkRetrievalResult(chunk, 1, "vector", 0.9),),
+        generate_chat_name=True,
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            chat_name="Grounded Paper Contribution",
             turn_title="Paper contribution",
             answer_text="The paper introduces a framework.",
             claims=[
@@ -246,8 +248,10 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     assessments = await SourceReferenceAssessor().assess_context(reasoning, context)
 
     assert payload.turn_title == "Paper contribution"
+    assert payload.chat_name == "Grounded Paper Contribution"
     assert payload.claims[0].source_chunk_ids == [canonical_id]
     assert reasoning.metadata["raw_model_payload"] == {
+        "chat_name": "Grounded Paper Contribution",
         "turn_title": "Paper contribution",
         "answer_text": "The paper introduces a framework.",
         "claims": [
@@ -268,7 +272,30 @@ async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     assert canonical_id not in model.prompts[0]
     assert '<chunk ref="chunk_1">' in model.prompts[0]
     assert reasoning.metadata["prompt_id"] == "grounded_qa_v1"
-    assert reasoning.metadata["prompt_version"] == "1.2"
+    assert reasoning.metadata["prompt_version"] == "1.3"
+
+
+async def test_first_chat_answer_requires_generated_chat_name() -> None:
+    """An unset chat cannot silently remain unnamed after model generation."""
+    chunk = RetrievalUnit(
+        "canonical-a", "doc-a", "ing-a", "a.pdf", "Evidence", 0, 1, 1, ()
+    )
+    context = GroundingContext(
+        CorpusRequest("project", "question"),
+        (ChunkRetrievalResult(chunk, 1, "vector", 0.9),),
+        generate_chat_name=True,
+    )
+    model = FixedGroundedModel(
+        ModelGroundedResponsePayload(
+            turn_title="Question",
+            answer_text="Answer",
+            claims=[{"text": "Answer", "source_refs": ["chunk_1"]}],
+            insufficient_evidence=False,
+        )
+    )
+
+    with pytest.raises(ValidationError, match="chat_name"):
+        await grounded_reasoner(model).reason(context)
 
 
 def test_model_claim_requires_at_least_one_source_ref() -> None:
@@ -286,6 +313,18 @@ def test_model_response_requires_a_navigation_title() -> None:
     """The model must return a title during the existing grounded-answer call."""
     with pytest.raises(ValidationError, match="turn_title"):
         ModelGroundedResponsePayload(
+            answer_text="Answer",
+            claims=[{"text": "Cited claim", "source_refs": ["chunk_1"]}],
+            insufficient_evidence=False,
+        )
+
+
+def test_model_chat_name_rejects_default_placeholder() -> None:
+    """The model cannot finalize an unnamed chat with another generic placeholder."""
+    with pytest.raises(ValidationError, match="default placeholder"):
+        ModelGroundedResponsePayload(
+            chat_name="New Chat",
+            turn_title="Question",
             answer_text="Answer",
             claims=[{"text": "Cited claim", "source_refs": ["chunk_1"]}],
             insufficient_evidence=False,
@@ -504,6 +543,7 @@ async def test_rejected_decision_bypasses_grounded_renderer(
     )
     model = FixedGroundedModel(
         ModelGroundedResponsePayload(
+            chat_name="Question About Safety",
             turn_title="Unsafe answer",
             answer_text="Unsafe answer.",
             claims=[{"text": "Unsafe claim.", "source_refs": ["chunk_99"]}],
@@ -522,11 +562,14 @@ async def test_rejected_decision_bypasses_grounded_renderer(
         renderer,
     )
 
-    _, answer, metadata = await runner.run(CorpusRequest("project", "Question"))
+    _, answer, metadata = await runner.run(
+        CorpusRequest("project", "Question"), generate_chat_name=True
+    )
 
     render_context.assert_not_awaited()
     assert answer.text.startswith("Grounding failure:")
     assert answer.metadata["grounding_rejected"] is True
+    assert metadata["generated_chat_name"] == "Question About Safety"
     assert metadata["decision"] == DecisionAction.REJECT
     assert metadata["status"] == "rejected"
 

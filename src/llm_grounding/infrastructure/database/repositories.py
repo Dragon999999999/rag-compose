@@ -459,7 +459,9 @@ class PostgresRepository:
             dict(row.metadata_json),
         )
 
-    async def create_chat(self, project_id: str, name: str) -> Chat:
+    async def create_chat(
+        self, project_id: str, name: str, chat_name_set: bool = False
+    ) -> Chat:
         """Create a project-scoped conversation.
 
         Raises:
@@ -471,10 +473,20 @@ class PostgresRepository:
         async with self._sessions.begin() as session:
             if await session.get(ProjectRow, project_id) is None:
                 raise KeyError(f"Unknown project: {project_id}")
-            row = ChatRow(project_id=project_id, name=name.strip())
+            row = ChatRow(
+                project_id=project_id,
+                name=name.strip(),
+                chat_name_set=chat_name_set,
+            )
             session.add(row)
             await session.flush()
-            return Chat(row.id, row.project_id, row.name, row.created_at or _now())
+            return Chat(
+                row.id,
+                row.project_id,
+                row.name,
+                row.created_at or _now(),
+                row.chat_name_set,
+            )
 
     async def get_chat(self, chat_id: str) -> Chat:
         """Load a chat and its project scope."""
@@ -482,10 +494,16 @@ class PostgresRepository:
             row = await session.get(ChatRow, chat_id)
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
-            return Chat(row.id, row.project_id, row.name, row.created_at)
+            return Chat(
+                row.id,
+                row.project_id,
+                row.name,
+                row.created_at,
+                row.chat_name_set,
+            )
 
     async def rename_chat(self, chat_id: str, name: str) -> Chat:
-        """Rename a chat while preserving its messages and project membership."""
+        """Apply a user-selected name and prevent later automatic replacement."""
         if not name.strip():
             raise ValueError("Chat name must not be blank")
         async with self._sessions.begin() as session:
@@ -493,8 +511,39 @@ class PostgresRepository:
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
             row.name = name.strip()
+            row.chat_name_set = True
             await session.flush()
-            return Chat(row.id, row.project_id, row.name, row.created_at or _now())
+            return Chat(
+                row.id,
+                row.project_id,
+                row.name,
+                row.created_at or _now(),
+                row.chat_name_set,
+            )
+
+    async def set_generated_chat_name(self, chat_id: str, name: str) -> Chat:
+        """Set the first generated name unless a user already finalized the name.
+
+        The flag is checked and updated in one transaction so a manual rename
+        completed during answer generation cannot be overwritten afterward.
+        """
+        if not name.strip():
+            raise ValueError("Chat name must not be blank")
+        async with self._sessions.begin() as session:
+            row = await session.get(ChatRow, chat_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown chat: {chat_id}")
+            if not row.chat_name_set:
+                row.name = name.strip()
+                row.chat_name_set = True
+                await session.flush()
+            return Chat(
+                row.id,
+                row.project_id,
+                row.name,
+                row.created_at or _now(),
+                row.chat_name_set,
+            )
 
     async def delete_chat(self, chat_id: str) -> None:
         """Delete a chat and its messages without changing project documents."""
@@ -515,7 +564,14 @@ class PostgresRepository:
                 )
             ).all()
             return tuple(
-                Chat(row.id, row.project_id, row.name, row.created_at) for row in rows
+                Chat(
+                    row.id,
+                    row.project_id,
+                    row.name,
+                    row.created_at,
+                    row.chat_name_set,
+                )
+                for row in rows
             )
 
     async def add_message(

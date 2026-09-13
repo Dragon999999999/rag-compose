@@ -65,11 +65,19 @@ filters by project inside the vector-store operation before scoring. It can narr
 document IDs when supplied by a request. Retrieval output carries chunk ID, document,
 page span, evidence IDs, and character spans.
 
-The grounded reasoner receives source blocks labelled by actual chunk IDs. Conversation
-history is labelled untrusted and is never corpus evidence. A deterministic assessor
-rejects model-supplied IDs absent from the retrieved context. The renderer creates source
-markers and source listings itself, so a model cannot invent a citation. If no matching
-chunks exist or the model marks evidence insufficient, the answer states that clearly.
+The grounded reasoner receives source blocks labelled by request-local `chunk_N`
+aliases. Conversation history is labelled untrusted and is never corpus evidence. A
+deterministic resolver maps aliases back to canonical chunk IDs before assessment. The
+renderer creates source markers and source listings itself, so a model cannot invent a
+citation. If no matching chunks exist or the model marks evidence insufficient, the
+answer states that clearly.
+
+New browser chats persist the placeholder name `New chat` with an unset name flag. The
+first grounded-answer request also asks the model for a concise conversation name, which
+is applied only if the flag is still unset when generation finishes. Any manual rename,
+including a rename back to `New Chat`, finalizes the flag and cannot be overwritten by
+an in-flight generated name. Per-turn navigation titles remain separate from the chat
+name and continue to be generated for every prompt-answer pair.
 
 The implementation deliberately has no lexical, hybrid, or Qdrant backend yet. Those
 remain extension points behind retrieval/vector protocols after quality and operational

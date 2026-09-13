@@ -8,6 +8,8 @@ from llm_grounding.infrastructure.database.repositories import PostgresRepositor
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 
+DEFAULT_CHAT_NAME = "New chat"
+
 
 def _fallback_turn_title(message: str) -> str:
     """Create a stable label when no structured model response is available."""
@@ -24,6 +26,14 @@ def _turn_title(answer: Answer, message: str) -> str:
         if "turn_title" in answer.payload:
             return payload.turn_title
     return _fallback_turn_title(message)
+
+
+def _generated_chat_name(answer: Answer, run_metadata: dict[str, object]) -> str | None:
+    """Read a validated first-turn name from accepted or rejected generation."""
+    if not answer.payload:
+        value = run_metadata.get("generated_chat_name")
+        return value if isinstance(value, str) else None
+    return GroundedResponsePayload.model_validate(answer.payload).chat_name
 
 
 class ChatService:
@@ -44,7 +54,12 @@ class ChatService:
 
     async def create_chat(self, project_id: str, name: str) -> Chat:
         """Create a project-scoped conversation."""
-        return await self._repository.create_chat(project_id, name)
+        normalized_name = name.strip()
+        return await self._repository.create_chat(
+            project_id,
+            normalized_name,
+            chat_name_set=normalized_name.casefold() != DEFAULT_CHAT_NAME.casefold(),
+        )
 
     async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
         """List chats belonging to a reusable project corpus."""
@@ -67,10 +82,13 @@ class ChatService:
     ) -> Answer:
         """Persist a question, query its corpus, then persist the answer."""
         chat = await self._repository.get_chat(chat_id)
+        generate_chat_name = not chat.chat_name_set
         await self._repository.add_message(chat_id, "user", message)
         history = await self._repository.recent_messages(chat_id, self._max_history)
         run_id, answer, metadata = await self._runner.run(
-            CorpusRequest(chat.project_id, message, task_type), history
+            CorpusRequest(chat.project_id, message, task_type),
+            history,
+            generate_chat_name=generate_chat_name,
         )
         await self._repository.record_run(
             run_id,
@@ -88,8 +106,8 @@ class ChatService:
             run_id,
             turn_title,
         )
-        if chat.name == "New chat":
-            await self._repository.rename_chat(chat_id, turn_title)
+        if generate_chat_name and (chat_name := _generated_chat_name(answer, metadata)):
+            await self._repository.set_generated_chat_name(chat_id, chat_name)
         retrieved = metadata.get("retrieved_chunk_ids", [])
         retrieved_ids = retrieved if isinstance(retrieved, list) else []
         return replace(

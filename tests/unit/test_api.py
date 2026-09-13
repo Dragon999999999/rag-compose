@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime
 
-from llm_grounding.api.main import _evidence_dto, _message_dto
-from llm_grounding.domain.corpus import EvidenceReference, Message, RetrievalUnit
+from llm_grounding.api.main import _evidence_dto, _item, _message_dto
+from llm_grounding.domain.corpus import Chat, EvidenceReference, Message, RetrievalUnit
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 
 
@@ -60,3 +60,13 @@ def test_message_dto_exposes_persisted_turn_title() -> None:
     dto = _message_dto(message)
 
     assert dto["turn_title"] == "Paper contribution"
+
+
+def test_chat_dto_exposes_automatic_name_state() -> None:
+    """The browser can distinguish a placeholder from a finalized chat name."""
+    chat = Chat("chat", "project", "New chat", datetime.now(UTC), False)
+
+    dto = _item(chat)
+
+    assert dto["name"] == "New chat"
+    assert dto["chat_name_set"] is False

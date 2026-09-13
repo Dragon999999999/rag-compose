@@ -1,5 +1,5 @@
 export type Project = { id: string; name: string; created_at: string };
-export type Chat = { id: string; project_id: string; name: string; created_at: string };
+export type Chat = { id: string; project_id: string; name: string; created_at: string; chat_name_set: boolean };
 export type Message = { id: string; chat_id: string; role: "user" | "assistant" | "system"; content: string; created_at: string; rag_run_id: string | null; turn_title: string | null };
 export type SourceLocation = { page: number; bounding_boxes: BoundingBox[]; positioning: "exact" | "page_only" };
 export type BoundingBox = { x: number; y: number; width: number; height: number };

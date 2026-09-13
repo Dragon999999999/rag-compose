@@ -43,6 +43,15 @@ class ModelGroundedResponsePayload(BaseModel):
     """Structured LLM response using only request-local source references."""
 
     model_config = ConfigDict(extra="forbid")
+    chat_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        description=(
+            "Concise conversation name requested only for the first answer of an "
+            "unnamed chat; otherwise null."
+        ),
+    )
     turn_title: str = Field(
         min_length=1,
         max_length=120,
@@ -55,6 +64,19 @@ class ModelGroundedResponsePayload(BaseModel):
     claims: list[ModelClaimPayload] = Field(default_factory=list)
     insufficient_evidence: bool
     limitations: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("chat_name")
+    @classmethod
+    def normalize_chat_name(cls, value: str | None) -> str | None:
+        """Normalize a generated name and reject the default placeholder."""
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("chat_name must not be blank")
+        if normalized.casefold() == "new chat":
+            raise ValueError("chat_name must replace the default placeholder")
+        return normalized
 
     @field_validator("turn_title")
     @classmethod
@@ -77,6 +99,19 @@ class ModelGroundedResponsePayload(BaseModel):
         return self
 
 
+class ModelInitialGroundedResponsePayload(ModelGroundedResponsePayload):
+    """Require a generated conversation name for an unnamed chat's first answer."""
+
+    chat_name: str = Field(
+        min_length=1,
+        max_length=80,
+        description=(
+            "Concise, specific conversation name for this first chat answer. It "
+            "must replace the default placeholder."
+        ),
+    )
+
+
 class GroundedClaimPayload(BaseModel):
     """One canonical internal claim whose support uses persistent chunk IDs."""
 
@@ -89,6 +124,7 @@ class GroundedResponsePayload(BaseModel):
     """Canonicalized response consumed by assessment, policy, and rendering."""
 
     model_config = ConfigDict(extra="forbid")
+    chat_name: str | None = Field(default=None, min_length=1, max_length=80)
     turn_title: str = Field(default="Earlier answer", min_length=1, max_length=120)
     answer_text: str = Field(min_length=1, max_length=8000)
     claims: list[GroundedClaimPayload] = Field(default_factory=list)
@@ -173,6 +209,7 @@ def _canonicalize_model_payload(
         )
     return (
         GroundedResponsePayload(
+            chat_name=payload.chat_name,
             turn_title=payload.turn_title,
             answer_text=payload.answer_text,
             claims=claims,
@@ -209,9 +246,15 @@ class BasicGroundedReasoner:
             raise ValueError("Grounded reasoning requires at least one retrieved chunk")
         prompt_context = build_grounded_prompt_context(context)
         prompt = self._render_prompt(context, prompt_context)
-        model_payload = await self._model_client.generate(
-            prompt.text, ModelGroundedResponsePayload
-        )
+        model_payload: ModelGroundedResponsePayload
+        if context.generate_chat_name:
+            model_payload = await self._model_client.generate(
+                prompt.text, ModelInitialGroundedResponsePayload
+            )
+        else:
+            model_payload = await self._model_client.generate(
+                prompt.text, ModelGroundedResponsePayload
+            )
         raw_model_payload: dict[str, JsonValue] = model_payload.model_dump(mode="json")
         canonical_payload, resolutions, unresolved_refs = _canonicalize_model_payload(
             model_payload, prompt_context
@@ -232,7 +275,7 @@ class BasicGroundedReasoner:
         metadata: dict[str, JsonValue] = {
             "prompt_id": prompt.metadata.prompt_id,
             "prompt_version": prompt.metadata.version,
-            "output_schema": "ModelGroundedResponsePayload",
+            "output_schema": type(model_payload).__name__,
             "raw_model_payload": raw_model_payload,
             "source_ref_aliases": alias_metadata,
             "source_ref_resolutions": resolution_metadata,
@@ -256,5 +299,6 @@ class BasicGroundedReasoner:
                 "task": context.request.task,
                 "history": _history_text(context),
                 "chunks": prompt_context.chunks,
+                "generate_chat_name": context.generate_chat_name,
             },
         )
