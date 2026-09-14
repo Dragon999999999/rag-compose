@@ -2,6 +2,11 @@
 
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import event
+from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.orm import Session, make_transient_to_detached
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.dml import Update
 
 from llm_grounding.domain.corpus import EvidenceReference, RetrievalUnit, SummaryStatus
@@ -12,6 +17,7 @@ from llm_grounding.infrastructure.database.models import (
     RetrievalUnitRow,
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.infrastructure.database.session import create_session_factory
 
 
 class RecordingSession:
@@ -165,19 +171,41 @@ async def test_update_document_name_synchronizes_chunk_provenance() -> None:
 
 
 class SummaryMutationSession:
-    """Simulate expiry at commit and require an explicit async refresh."""
+    """Expire real ORM attributes and reject implicit database loads offline."""
 
-    def __init__(self, row: DocumentSummaryRow) -> None:
+    def __init__(self, row: DocumentSummaryRow, *, exists: bool = True) -> None:
         """Retain the row that a document-summary mutation updates."""
         self.row = row
+        self.exists = exists
         self.committed = False
         self.flushed = False
         self.refreshed = False
         self.refreshed_at = datetime(2025, 1, 2, tzinfo=UTC)
+        self.orm = Session(expire_on_commit=False)
+        if exists:
+            make_transient_to_detached(row)
+            self.orm.add(row)
+        event.listen(self.orm, "do_orm_execute", self._reject_implicit_load)
+
+    @staticmethod
+    def _reject_implicit_load(*args: object) -> None:
+        """Simulate the async driver's error when mapping loads expired state."""
+        raise MissingGreenlet("Implicit ORM load outside an awaited session method")
 
     def begin(self) -> "SummaryTransaction":
-        """Open the transaction whose exit expires server-managed fields."""
+        """Open the transaction whose exit detaches the ORM row."""
         return SummaryTransaction(self)
+
+    def add(self, row: DocumentSummaryRow) -> None:
+        """Attach a new row with simulated database timestamp defaults."""
+        row.created_at = self.refreshed_at
+        row.updated_at = self.refreshed_at
+        row.rag_run_id = None
+        row.error = None
+        make_transient_to_detached(row)
+        self.orm.add(row)
+        self.row = row
+        self.exists = True
 
     async def get(
         self,
@@ -193,18 +221,20 @@ class SummaryMutationSession:
             "ingestion_id": self.row.ingestion_id,
         }
         assert with_for_update
-        return self.row
+        return self.row if self.exists else None
 
     async def flush(self) -> None:
-        """Record that pending summary fields were sent to the database."""
+        """Simulate SQL onupdate expiry even with expire_on_commit disabled."""
         self.flushed = True
+        self.orm.expire(self.row, ["updated_at"])
 
     async def refresh(self, row: DocumentSummaryRow) -> None:
-        """Reload expired timestamps only after the transaction commits."""
-        assert self.committed
+        """Supply the database timestamp while the transaction is still active."""
+        assert self.flushed
+        assert not self.committed
         assert row is self.row
         self.refreshed = True
-        row.updated_at = self.refreshed_at
+        set_committed_value(row, "updated_at", self.refreshed_at)
 
 
 class SummaryTransaction:
@@ -219,35 +249,22 @@ class SummaryTransaction:
         return self._session
 
     async def __aexit__(self, *args: object) -> None:
-        """Model the commit boundary for a successful mutation."""
+        """Expire and detach the row to catch mapping after transaction exit."""
         self._session.committed = True
-
-
-class SummarySessionContext:
-    """Provide a non-transactional session context around one mutation."""
-
-    def __init__(self, session: SummaryMutationSession) -> None:
-        """Retain the session returned by the factory."""
-        self._session = session
-
-    async def __aenter__(self) -> SummaryMutationSession:
-        """Open the session before its nested transaction begins."""
-        return self._session
-
-    async def __aexit__(self, *args: object) -> None:
-        """Close the simulated session without suppressing errors."""
+        self._session.orm.expire_all()
+        self._session.orm.close()
 
 
 class SummarySessionFactory:
-    """Return a session context compatible with post-commit refreshes."""
+    """Return an isolated transaction for each summary mutation test."""
 
-    def __init__(self, row: DocumentSummaryRow) -> None:
+    def __init__(self, row: DocumentSummaryRow, *, exists: bool = True) -> None:
         """Expose the mutable summary session for assertions."""
-        self.session = SummaryMutationSession(row)
+        self.session = SummaryMutationSession(row, exists=exists)
 
-    def __call__(self) -> SummarySessionContext:
-        """Create the session context used by a repository operation."""
-        return SummarySessionContext(self.session)
+    def begin(self) -> SummaryTransaction:
+        """Create the transaction context used by a repository operation."""
+        return SummaryTransaction(self.session)
 
 
 def _document_summary_row() -> DocumentSummaryRow:
@@ -279,7 +296,7 @@ async def test_completed_summary_refreshes_before_mapping() -> None:
     assert summary.updated_at == sessions.session.refreshed_at
 
 
-async def test_fail_document_summary_refreshes_after_commit_before_mapping() -> None:
+async def test_failed_summary_refreshes_before_mapping() -> None:
     """A failed summary maps loaded timestamps without lazy async ORM I/O."""
     sessions = SummarySessionFactory(_document_summary_row())
     repository = PostgresRepository(sessions)  # type: ignore[arg-type]
@@ -293,3 +310,60 @@ async def test_fail_document_summary_refreshes_after_commit_before_mapping() -> 
     assert summary.status == SummaryStatus.FAILED
     assert summary.error == "network unavailable"
     assert summary.updated_at == sessions.session.refreshed_at
+
+
+@pytest.mark.parametrize("status", [SummaryStatus.READY, SummaryStatus.FAILED])
+async def test_regenerate_summary_refreshes_generating_state(
+    status: SummaryStatus,
+) -> None:
+    """Restarting a persisted summary clears prior results and loads its timestamp."""
+    row = _document_summary_row()
+    row.status = status
+    row.rag_run_id = "old-run"
+    row.error = "previous failure"
+    sessions = SummarySessionFactory(row)
+    repository = PostgresRepository(sessions)  # type: ignore[arg-type]
+
+    summary = await repository.begin_document_summary("document", "ingestion", 30)
+
+    assert summary.status == SummaryStatus.GENERATING
+    assert summary.rag_run_id is None
+    assert summary.error is None
+    assert summary.page_count == 30
+    assert summary.updated_at == sessions.session.refreshed_at
+    assert sessions.session.committed
+
+
+async def test_summary_mapping_without_refresh_reproduces_missing_greenlet() -> None:
+    """Verify the regression harness rejects the original implicit-load behavior."""
+    row = _document_summary_row()
+    sessions = SummarySessionFactory(row)
+    async with sessions.begin() as session:
+        await session.flush()
+        with pytest.raises(MissingGreenlet, match="Implicit ORM load"):
+            PostgresRepository._document_summary(row)
+
+
+async def test_new_summary_refreshes_before_mapping() -> None:
+    """Creating a missing summary returns loaded database-generated timestamps."""
+    sessions = SummarySessionFactory(_document_summary_row(), exists=False)
+    repository = PostgresRepository(sessions)  # type: ignore[arg-type]
+
+    summary = await repository.begin_document_summary("document", "ingestion", 24)
+
+    assert summary.status == SummaryStatus.GENERATING
+    assert summary.created_at == sessions.session.refreshed_at
+    assert summary.updated_at == sessions.session.refreshed_at
+    assert summary.page_count == 24
+
+
+async def test_async_session_factory_disables_commit_expiry() -> None:
+    """Inspect the configured session without connecting to PostgreSQL."""
+    engine, sessions = create_session_factory(
+        "postgresql+asyncpg://test:test@localhost/test"
+    )
+    try:
+        async with sessions() as session:
+            assert session.sync_session.expire_on_commit is False
+    finally:
+        await engine.dispose()

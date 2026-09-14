@@ -21,6 +21,10 @@ def database_url() -> str:
 def create_session_factory(
     url: str | None = None,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    """Create an engine and session factory; callers own engine disposal on shutdown."""
+    """Create sessions without commit expiry; callers dispose the engine on shutdown.
+
+    Database-generated values can still expire during flush. Repositories must
+    explicitly refresh updated rows before mapping them to domain records.
+    """
     engine = create_async_engine(url or database_url(), pool_pre_ping=True)
     return engine, async_sessionmaker(engine, expire_on_commit=False)
