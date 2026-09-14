@@ -1,6 +1,8 @@
 """Persisted grounded summaries generated after successful PDF ingestion."""
 
 import asyncio
+import logging
+from datetime import UTC, datetime
 
 from llm_grounding.domain.corpus import (
     CorpusRequest,
@@ -19,13 +21,13 @@ DOCUMENT_SUMMARY_TASK = (
     "supported, and notable limitations when available."
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class DocumentSummaryService:
     """Generate and retain one verified document overview per ingestion version."""
 
-    def __init__(
-        self, repository: PostgresRepository, runner: BasicRagRunner
-    ) -> None:
+    def __init__(self, repository: PostgresRepository, runner: BasicRagRunner) -> None:
         """Inject persistence and the established grounded summary workflow."""
         self._repository = repository
         self._runner = runner
@@ -47,7 +49,9 @@ class DocumentSummaryService:
                 self._generate_summary(project_id, document, ingestion)
             )
             self._tasks[key] = task
-            task.add_done_callback(lambda _: self._tasks.pop(key, None))
+            task.add_done_callback(
+                lambda completed_task: self._finish_scheduled_task(key, completed_task)
+            )
         return summary
 
     async def ensure_summary(
@@ -124,7 +128,65 @@ class DocumentSummaryService:
             return await self._repository.complete_document_summary(
                 document.id, ingestion.id, run_id
             )
-        except (RuntimeError, ValueError) as exc:
+        except Exception as exc:
+            return await self._persist_failure(document, ingestion, exc)
+
+    async def _persist_failure(
+        self,
+        document: Document,
+        ingestion: DocumentIngestion,
+        error: Exception,
+    ) -> DocumentSummary:
+        """Persist an LLM failure without allowing background work to escape.
+
+        The original exception text is retained for the document workspace. If the
+        failure itself cannot be persisted, return an ephemeral failed state and log
+        the persistence problem so the scheduled task still completes normally.
+        """
+        failure_reason = str(error) or type(error).__name__
+        _LOGGER.exception(
+            "Document summary generation failed for document %s ingestion %s",
+            document.id,
+            ingestion.id,
+        )
+        try:
             return await self._repository.fail_document_summary(
-                document.id, ingestion.id, type(exc).__name__
+                document.id, ingestion.id, failure_reason
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Unable to persist summary failure for document %s ingestion %s",
+                document.id,
+                ingestion.id,
+            )
+            now = datetime.now(UTC)
+            return DocumentSummary(
+                document.id,
+                ingestion.id,
+                SummaryStatus.FAILED,
+                None,
+                failure_reason,
+                None,
+                now,
+                now,
+            )
+
+    def _finish_scheduled_task(
+        self,
+        key: tuple[str, str],
+        task: asyncio.Task[DocumentSummary],
+    ) -> None:
+        """Remove a completed task and retrieve/log unexpected task failures."""
+        if self._tasks.get(key) is task:
+            self._tasks.pop(key, None)
+        if task.cancelled():
+            _LOGGER.info("Document summary task cancelled for document %s", key[0])
+            return
+        try:
+            task.result()
+        except Exception:
+            _LOGGER.exception(
+                "Unexpected document summary task failure for document %s ingestion %s",
+                key[0],
+                key[1],
             )

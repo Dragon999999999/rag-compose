@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy.sql.dml import Update
 
-from llm_grounding.domain.corpus import EvidenceReference, RetrievalUnit
+from llm_grounding.domain.corpus import EvidenceReference, RetrievalUnit, SummaryStatus
 from llm_grounding.infrastructure.database.models import (
     DocumentRow,
+    DocumentSummaryRow,
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
@@ -161,3 +162,134 @@ async def test_update_document_name_synchronizes_chunk_provenance() -> None:
     assert sessions.session.statement.compile().params["document_name"] == (
         "Original Research Paper.pdf"
     )
+
+
+class SummaryMutationSession:
+    """Simulate expiry at commit and require an explicit async refresh."""
+
+    def __init__(self, row: DocumentSummaryRow) -> None:
+        """Retain the row that a document-summary mutation updates."""
+        self.row = row
+        self.committed = False
+        self.flushed = False
+        self.refreshed = False
+        self.refreshed_at = datetime(2025, 1, 2, tzinfo=UTC)
+
+    def begin(self) -> "SummaryTransaction":
+        """Open the transaction whose exit expires server-managed fields."""
+        return SummaryTransaction(self)
+
+    async def get(
+        self,
+        model: type[object],
+        identity: dict[str, str],
+        *,
+        with_for_update: bool,
+    ) -> DocumentSummaryRow | None:
+        """Return the configured summary row for its canonical composite key."""
+        assert model is DocumentSummaryRow
+        assert identity == {
+            "document_id": self.row.document_id,
+            "ingestion_id": self.row.ingestion_id,
+        }
+        assert with_for_update
+        return self.row
+
+    async def flush(self) -> None:
+        """Record that pending summary fields were sent to the database."""
+        self.flushed = True
+
+    async def refresh(self, row: DocumentSummaryRow) -> None:
+        """Reload expired timestamps only after the transaction commits."""
+        assert self.committed
+        assert row is self.row
+        self.refreshed = True
+        row.updated_at = self.refreshed_at
+
+
+class SummaryTransaction:
+    """Commit the simulated document-summary mutation on context exit."""
+
+    def __init__(self, session: SummaryMutationSession) -> None:
+        """Retain the session whose transaction state must be advanced."""
+        self._session = session
+
+    async def __aenter__(self) -> SummaryMutationSession:
+        """Expose the active session to the repository."""
+        return self._session
+
+    async def __aexit__(self, *args: object) -> None:
+        """Model the commit boundary for a successful mutation."""
+        self._session.committed = True
+
+
+class SummarySessionContext:
+    """Provide a non-transactional session context around one mutation."""
+
+    def __init__(self, session: SummaryMutationSession) -> None:
+        """Retain the session returned by the factory."""
+        self._session = session
+
+    async def __aenter__(self) -> SummaryMutationSession:
+        """Open the session before its nested transaction begins."""
+        return self._session
+
+    async def __aexit__(self, *args: object) -> None:
+        """Close the simulated session without suppressing errors."""
+
+
+class SummarySessionFactory:
+    """Return a session context compatible with post-commit refreshes."""
+
+    def __init__(self, row: DocumentSummaryRow) -> None:
+        """Expose the mutable summary session for assertions."""
+        self.session = SummaryMutationSession(row)
+
+    def __call__(self) -> SummarySessionContext:
+        """Create the session context used by a repository operation."""
+        return SummarySessionContext(self.session)
+
+
+def _document_summary_row() -> DocumentSummaryRow:
+    """Build one generating row with stable timestamps for mutation tests."""
+    now = datetime(2025, 1, 1, tzinfo=UTC)
+    return DocumentSummaryRow(
+        document_id="document",
+        ingestion_id="ingestion",
+        status=SummaryStatus.GENERATING,
+        rag_run_id=None,
+        error=None,
+        page_count=24,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+async def test_completed_summary_refreshes_before_mapping() -> None:
+    """A completed summary maps loaded timestamps without lazy async ORM I/O."""
+    sessions = SummarySessionFactory(_document_summary_row())
+    repository = PostgresRepository(sessions)  # type: ignore[arg-type]
+
+    summary = await repository.complete_document_summary("document", "ingestion", "run")
+
+    assert sessions.session.flushed
+    assert sessions.session.refreshed
+    assert summary.status == SummaryStatus.READY
+    assert summary.rag_run_id == "run"
+    assert summary.updated_at == sessions.session.refreshed_at
+
+
+async def test_fail_document_summary_refreshes_after_commit_before_mapping() -> None:
+    """A failed summary maps loaded timestamps without lazy async ORM I/O."""
+    sessions = SummarySessionFactory(_document_summary_row())
+    repository = PostgresRepository(sessions)  # type: ignore[arg-type]
+
+    summary = await repository.fail_document_summary(
+        "document", "ingestion", "network unavailable"
+    )
+
+    assert sessions.session.flushed
+    assert sessions.session.refreshed
+    assert summary.status == SummaryStatus.FAILED
+    assert summary.error == "network unavailable"
+    assert summary.updated_at == sessions.session.refreshed_at

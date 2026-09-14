@@ -324,36 +324,44 @@ class PostgresRepository:
         self, document_id: str, ingestion_id: str, rag_run_id: str
     ) -> DocumentSummary:
         """Mark a summary ready after its grounded RAG run has been persisted."""
-        async with self._sessions.begin() as session:
-            row = await session.get(
-                DocumentSummaryRow,
-                {"document_id": document_id, "ingestion_id": ingestion_id},
-                with_for_update=True,
-            )
-            if row is None:
-                raise KeyError("Document summary does not exist")
-            row.status = SummaryStatus.READY
-            row.rag_run_id = rag_run_id
-            row.error = None
-            await session.flush()
+        async with self._sessions() as session:
+            async with session.begin():
+                row = await session.get(
+                    DocumentSummaryRow,
+                    {"document_id": document_id, "ingestion_id": ingestion_id},
+                    with_for_update=True,
+                )
+                if row is None:
+                    raise KeyError("Document summary does not exist")
+                row.status = SummaryStatus.READY
+                row.rag_run_id = rag_run_id
+                row.error = None
+                await session.flush()
+            # Commit may expire server-generated timestamps. Refresh while the async
+            # session remains open so mapping cannot trigger implicit database I/O.
+            await session.refresh(row)
             return self._document_summary(row)
 
     async def fail_document_summary(
         self, document_id: str, ingestion_id: str, error: str
     ) -> DocumentSummary:
-        """Persist a sanitized summary-generation failure for the document view."""
-        async with self._sessions.begin() as session:
-            row = await session.get(
-                DocumentSummaryRow,
-                {"document_id": document_id, "ingestion_id": ingestion_id},
-                with_for_update=True,
-            )
-            if row is None:
-                raise KeyError("Document summary does not exist")
-            row.status = SummaryStatus.FAILED
-            row.rag_run_id = None
-            row.error = error
-            await session.flush()
+        """Persist a summary-generation failure reason for the document view."""
+        async with self._sessions() as session:
+            async with session.begin():
+                row = await session.get(
+                    DocumentSummaryRow,
+                    {"document_id": document_id, "ingestion_id": ingestion_id},
+                    with_for_update=True,
+                )
+                if row is None:
+                    raise KeyError("Document summary does not exist")
+                row.status = SummaryStatus.FAILED
+                row.rag_run_id = None
+                row.error = error
+                await session.flush()
+            # See complete_document_summary: asynchronous ORM instances must not
+            # lazily load expired attributes while being mapped to domain records.
+            await session.refresh(row)
             return self._document_summary(row)
 
     async def page_count_for_ingestion(self, ingestion_id: str) -> int | None:

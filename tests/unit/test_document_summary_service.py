@@ -148,19 +148,43 @@ async def test_document_summary_is_generated_once_and_persisted() -> None:
     assert repository.recorded_runs[0][-1]["summary_kind"] == "document_overview"
 
 
-async def test_document_summary_failure_does_not_fail_the_ingested_source() -> None:
-    """Model failures are persisted for the overview instead of escaping ingestion."""
+async def test_scheduled_network_failure_is_logged_and_preserves_error_reason(
+    caplog,
+) -> None:
+    """A background LLM failure becomes a visible summary state without escaping."""
     repository = SummaryRepository()
     runner = SimpleNamespace(
-        run=AsyncMock(side_effect=RuntimeError("model unavailable"))
+        run=AsyncMock(side_effect=OSError("LLM endpoint connection refused"))
     )
     document, ingestion = _document()
     service = DocumentSummaryService(repository, runner)  # type: ignore[arg-type]
 
-    summary = await service.ensure_summary("project", document, ingestion)
+    scheduled = await service.schedule_summary("project", document, ingestion)
+    await service.close()
 
-    assert summary.status == SummaryStatus.FAILED
-    assert summary.error == "RuntimeError"
+    assert scheduled.status == SummaryStatus.GENERATING
+    assert repository.summary.status == SummaryStatus.FAILED
+    assert repository.summary.error == "LLM endpoint connection refused"
+    assert "Document summary generation failed" in caplog.text
+
+
+async def test_scheduled_task_logs_unexpected_exceptions(caplog, monkeypatch) -> None:
+    """Unexpected background exceptions are retrieved instead of being unobserved."""
+    repository = SummaryRepository()
+    runner = SimpleNamespace(run=AsyncMock())
+    document, ingestion = _document()
+    service = DocumentSummaryService(repository, runner)  # type: ignore[arg-type]
+
+    async def raise_unexpected(*args: object):
+        raise RuntimeError("unexpected task failure")
+
+    monkeypatch.setattr(service, "_generate_summary", raise_unexpected)
+
+    await service.schedule_summary("project", document, ingestion)
+    await service.close()
+
+    assert not service._tasks
+    assert "Unexpected document summary task failure" in caplog.text
 
 
 async def test_scheduled_summary_exposes_generating_state_before_completion() -> None:
