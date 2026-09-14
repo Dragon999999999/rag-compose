@@ -16,10 +16,10 @@ export const chatsApi = {
   remove: (chatId: string) =>
     request<void>(`/chats/${chatId}`, { method: "DELETE" }),
   messages: (chatId: string) => request<Message[]>(`/chats/${chatId}/messages`),
-  ask: (chatId: string, message: string, summary = false) =>
+  ask: (chatId: string, message: string) =>
     request<GroundedAnswer>(`/chats/${chatId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, summary }),
+      body: JSON.stringify({ message }),
     }),
 };

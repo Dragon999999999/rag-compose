@@ -6,7 +6,6 @@ type ProjectHeaderProps = {
   chat?: Chat;
   onSources: () => void;
   onNewChat: () => void;
-  onSummary: () => void;
 };
 
 /** Show workspace navigation and actions that do not edit project metadata. */
@@ -15,7 +14,6 @@ export function ProjectHeader({
   chat,
   onSources,
   onNewChat,
-  onSummary,
 }: ProjectHeaderProps) {
   return (
     <header className="project-header">
@@ -26,9 +24,6 @@ export function ProjectHeader({
         </div>
       </div>
       <div className="header-actions">
-        <Button onClick={onSummary} disabled={!chat}>
-          Summarize
-        </Button>
         <Button onClick={onSources} disabled={!project}>
           Sources
         </Button>

@@ -162,9 +162,9 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     );
   };
 
-  const ask = (message: string, summary = false): void => {
+  const ask = (message: string): void => {
     chatMutations.ask.mutate(
-      { message, summary },
+      { message },
       {
         onSuccess: (result) => {
           setLatest(result);
@@ -273,7 +273,6 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       chat={chat}
       onNewChat={() => createChat()}
       onSources={() => navigate(sourcesPath)}
-      onSummary={() => ask("Summarize this project", true)}
       project={project}
     />
   );
@@ -381,7 +380,6 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
           <SourcesWorkspace
             error={sources.error}
             loading={sources.isLoading}
-            onBack={() => navigate(chatId ? chatPath : "/projects")}
             onOpen={(source) => navigate(documentPath(source.document.id))}
             onRemove={(id) => sourceMutations.remove.mutate(id)}
             onUpload={(file) => sourceMutations.upload.mutateAsync(file)}
