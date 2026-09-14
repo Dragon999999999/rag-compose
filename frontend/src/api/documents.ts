@@ -12,4 +12,9 @@ export const documentsApi = {
     request<void>(`/projects/${projectId}/documents/${documentId}`, { method: "DELETE" }),
   summary: (projectId: string, documentId: string) =>
     request<DocumentSummary>(`/projects/${projectId}/documents/${documentId}/summary`),
+  regenerateSummary: (projectId: string, documentId: string) =>
+    request<DocumentSummary>(
+      `/projects/${projectId}/documents/${documentId}/summary/regenerate`,
+      { method: "POST" },
+    ),
 };

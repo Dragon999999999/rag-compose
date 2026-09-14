@@ -5,13 +5,29 @@ import { projectsApi } from "../api/projects";
 import { ragApi } from "../api/rag";
 import type { Message } from "../api/types";
 
-export const keys = { projects: ["projects"] as const, chats: (projectId: string) => ["projects", projectId, "chats"] as const, messages: (chatId: string) => ["chats", chatId, "messages"] as const, sources: (projectId: string) => ["projects", projectId, "sources"] as const, evidence: (runId: string) => ["runs", runId, "evidence"] as const };
+export const keys = { projects: ["projects"] as const, chats: (projectId: string) => ["projects", projectId, "chats"] as const, messages: (chatId: string) => ["chats", chatId, "messages"] as const, sources: (projectId: string) => ["projects", projectId, "sources"] as const, documentSummary: (projectId: string, documentId: string) => ["projects", projectId, "documents", documentId, "summary"] as const, evidence: (runId: string) => ["runs", runId, "evidence"] as const };
 export const useProjects = () => useQuery({ queryKey: keys.projects, queryFn: projectsApi.list });
 export const useChats = (projectId?: string) => useQuery({ queryKey: keys.chats(projectId ?? ""), queryFn: () => chatsApi.list(projectId!), enabled: !!projectId });
 export const useMessages = (chatId?: string) => useQuery({ queryKey: keys.messages(chatId ?? ""), queryFn: () => chatsApi.messages(chatId!), enabled: !!chatId });
 export const useSources = (projectId?: string) => useQuery({ queryKey: keys.sources(projectId ?? ""), queryFn: () => documentsApi.list(projectId!), enabled: !!projectId });
-export const useDocumentSummary = (projectId?: string, documentId?: string) => useQuery({ queryKey: ["projects", projectId ?? "", "documents", documentId ?? "", "summary"] as const, queryFn: () => documentsApi.summary(projectId!, documentId!), enabled: !!projectId && !!documentId });
+export const useDocumentSummary = (projectId?: string, documentId?: string) => useQuery({ queryKey: keys.documentSummary(projectId ?? "", documentId ?? ""), queryFn: () => documentsApi.summary(projectId!, documentId!), enabled: !!projectId && !!documentId });
 export const useEvidence = (runId?: string) => useQuery({ queryKey: keys.evidence(runId ?? ""), queryFn: () => ragApi.evidence(runId!), enabled: !!runId });
 export function useProjectMutations() { const client = useQueryClient(); return { create: useMutation({ mutationFn: projectsApi.create, onSuccess: () => client.invalidateQueries({ queryKey: keys.projects }) }), rename: useMutation({ mutationFn: ({ id, name }: { id: string; name: string }) => projectsApi.rename(id, name), onSuccess: () => client.invalidateQueries({ queryKey: keys.projects }) }), remove: useMutation({ mutationFn: projectsApi.remove, onSuccess: () => client.invalidateQueries({ queryKey: keys.projects }) }) }; }
 export function useChatMutations(projectId?: string, chatId?: string) { const client = useQueryClient(); return { create: useMutation({ mutationFn: ({ projectId: targetProjectId, name }: { projectId: string; name: string }) => chatsApi.create(targetProjectId, name), onSuccess: (_, variables) => client.invalidateQueries({ queryKey: keys.chats(variables.projectId) }) }), rename: useMutation({ mutationFn: ({ chatId: targetChatId, name }: { chatId: string; name: string }) => chatsApi.rename(targetChatId, name), onSuccess: () => projectId && client.invalidateQueries({ queryKey: keys.chats(projectId) }) }), remove: useMutation({ mutationFn: (targetChatId: string) => chatsApi.remove(targetChatId), onSuccess: () => projectId && client.invalidateQueries({ queryKey: keys.chats(projectId) }) }), ask: useMutation({ mutationFn: ({ message, summary }: { message: string; summary: boolean }) => chatsApi.ask(chatId!, message, summary), onMutate: async ({ message }) => { if (!chatId) return { previousMessages: undefined }; const messageKey = keys.messages(chatId); await client.cancelQueries({ queryKey: messageKey }); const previousMessages = client.getQueryData<Message[]>(messageKey); const optimisticMessage: Message = { id: `pending-${Date.now()}`, chat_id: chatId, role: "user", content: message, created_at: new Date().toISOString(), rag_run_id: null, turn_title: null }; client.setQueryData<Message[]>(messageKey, (messages) => [...(messages ?? []), optimisticMessage]); return { previousMessages }; }, onError: (_error, _variables, context) => { if (chatId) client.setQueryData(keys.messages(chatId), context?.previousMessages); }, onSuccess: () => { if (projectId) client.invalidateQueries({ queryKey: keys.chats(projectId) }); }, onSettled: () => { if (chatId) client.invalidateQueries({ queryKey: keys.messages(chatId) }); } }) }; }
 export function useSourceMutations(projectId?: string) { const client = useQueryClient(); return { upload: useMutation({ mutationFn: (file: File) => documentsApi.upload(projectId!, file), onSuccess: () => client.invalidateQueries({ queryKey: keys.sources(projectId!) }) }), remove: useMutation({ mutationFn: (documentId: string) => documentsApi.remove(projectId!, documentId), onSuccess: () => client.invalidateQueries({ queryKey: keys.sources(projectId!) }) }) }; }
+export function useDocumentSummaryMutation(
+  projectId?: string,
+  documentId?: string,
+) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => documentsApi.regenerateSummary(projectId!, documentId!),
+    onSuccess: (summary) => {
+      if (!projectId || !documentId) {
+        return;
+      }
+      client.setQueryData(keys.documentSummary(projectId, documentId), summary);
+      client.invalidateQueries({ queryKey: keys.sources(projectId) });
+    },
+  });
+}

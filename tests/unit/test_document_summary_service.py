@@ -1,5 +1,6 @@
 """Test persisted, grounded document summaries outside chat conversations."""
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -213,3 +214,70 @@ async def test_scheduled_summary_exposes_generating_state_before_completion() ->
     assert scheduled.status == SummaryStatus.GENERATING
     await service.close()
     assert repository.summary.status == SummaryStatus.READY
+
+
+async def test_regenerate_summary_replaces_a_ready_overview() -> None:
+    """An explicit request regenerates an existing persisted summary."""
+    repository = SummaryRepository()
+    payload = GroundedResponsePayload(
+        turn_title="Document overview",
+        answer_text="Supported overview.",
+        claims=[{"text": "Supported overview.", "source_chunk_ids": ["c1"]}],
+        insufficient_evidence=False,
+    )
+    runner = SimpleNamespace(
+        run=AsyncMock(
+            return_value=(
+                "run",
+                Answer("Rendered", payload=payload.model_dump()),
+                {"status": "completed", "answer_payload": payload.model_dump()},
+            )
+        )
+    )
+    document, ingestion = _document()
+    service = DocumentSummaryService(repository, runner)  # type: ignore[arg-type]
+
+    await service.ensure_summary("project", document, ingestion)
+    regenerated = await service.regenerate_summary("project", document, ingestion)
+
+    assert regenerated.status == SummaryStatus.READY
+    assert repository.summary.status == SummaryStatus.READY
+    assert runner.run.await_count == 2
+
+
+async def test_repeated_regeneration_keeps_the_existing_task() -> None:
+    """Repeated button requests do not replace an in-flight summary generation."""
+    repository = SummaryRepository()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    payload = GroundedResponsePayload(
+        turn_title="Document overview",
+        answer_text="Supported overview.",
+        claims=[{"text": "Supported overview.", "source_chunk_ids": ["c1"]}],
+        insufficient_evidence=False,
+    )
+
+    async def generate(*args: object):
+        started.set()
+        await release.wait()
+        return (
+            "run",
+            Answer("Rendered", payload=payload.model_dump()),
+            {"status": "completed", "answer_payload": payload.model_dump()},
+        )
+
+    runner = SimpleNamespace(run=AsyncMock(side_effect=generate))
+    document, ingestion = _document()
+    service = DocumentSummaryService(repository, runner)  # type: ignore[arg-type]
+
+    first_task = asyncio.create_task(
+        service.regenerate_summary("project", document, ingestion)
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = await service.regenerate_summary("project", document, ingestion)
+    release.set()
+    first = await first_task
+
+    assert first.status == SummaryStatus.READY
+    assert second.status == SummaryStatus.GENERATING
+    runner.run.assert_awaited_once()

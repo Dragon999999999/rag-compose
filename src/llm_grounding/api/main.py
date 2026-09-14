@@ -392,9 +392,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             return await _source_dto(application, document, ingestion)
 
     @app.get("/api/projects/{project_id}/documents/{document_id}/summary")
-    async def document_summary(
-        project_id: str, document_id: str
-    ) -> dict[str, object]:
+    async def document_summary(project_id: str, document_id: str) -> dict[str, object]:
         """Load one project's existing grounded overview for an attached PDF."""
         source = next(
             (
@@ -412,9 +410,31 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             await application.summaries.schedule_summary(
                 project_id, document, ingestion
             )
-        return await _document_summary_dto(
-            application, document.id, ingestion.id
+        return await _document_summary_dto(application, document.id, ingestion.id)
+
+    @app.post("/api/projects/{project_id}/documents/{document_id}/summary/regenerate")
+    async def regenerate_document_summary(
+        project_id: str, document_id: str
+    ) -> dict[str, object]:
+        """Explicitly regenerate a ready PDF's grounded document overview."""
+        source = next(
+            (
+                item
+                for item in await application.projects.list_documents(project_id)
+                if item[0].id == document_id and item[1] is not None
+            ),
+            None,
         )
+        if source is None:
+            raise HTTPException(404, "Document is not available in this project.")
+        document, ingestion = source
+        assert ingestion is not None
+        if ingestion.status != IngestionStatus.READY:
+            raise HTTPException(
+                409, "Document ingestion is not ready for summarization."
+            )
+        await application.summaries.regenerate_summary(project_id, document, ingestion)
+        return await _document_summary_dto(application, document.id, ingestion.id)
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
     async def remove_document(project_id: str, document_id: str) -> None:

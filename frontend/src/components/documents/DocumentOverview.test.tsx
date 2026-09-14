@@ -47,7 +47,10 @@ describe("DocumentOverview", () => {
         activeChunk={null}
         loading={false}
         onBack={() => undefined}
+        onRegenerate={() => undefined}
         onSelectCitation={() => undefined}
+        regenerating={false}
+        regenerationAvailable
         source={source}
         summary={summary}
       />,
@@ -58,6 +61,7 @@ describe("DocumentOverview", () => {
     expect(markup).toContain("The paper investigates a topic.");
     expect(markup).toContain("Kumpf2024");
     expect(markup).toContain("C5");
+    expect(markup).toContain("Regenerate summary");
   });
 
   it("renders the persisted summary lifecycle without fabricating progress", () => {
@@ -66,13 +70,17 @@ describe("DocumentOverview", () => {
         activeChunk={null}
         loading={false}
         onBack={() => undefined}
+        onRegenerate={() => undefined}
         onSelectCitation={() => undefined}
+        regenerating
+        regenerationAvailable
         source={source}
         summary={{ ...summary, status: "generating", answer: undefined }}
       />,
     );
 
     expect(markup).toContain("Generating summary");
+    expect(markup).toContain("disabled=\"\"");
     expect(markup).not.toContain("%");
   });
 });

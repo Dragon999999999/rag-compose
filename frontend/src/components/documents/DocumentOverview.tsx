@@ -8,7 +8,10 @@ type DocumentOverviewProps = {
   error?: Error | null;
   activeChunk: string | null;
   onBack: () => void;
+  onRegenerate: () => void;
   onSelectCitation: (chunkId: string) => void;
+  regenerating: boolean;
+  regenerationAvailable: boolean;
 };
 
 /** Present a document's persisted grounded overview without duplicating evidence UI. */
@@ -19,7 +22,10 @@ export function DocumentOverview({
   error,
   activeChunk,
   onBack,
+  onRegenerate,
   onSelectCitation,
+  regenerating,
+  regenerationAvailable,
 }: DocumentOverviewProps) {
   const pageCount = summary?.page_count ?? source?.summary?.page_count;
 
@@ -33,7 +39,20 @@ export function DocumentOverview({
         {pageCount !== null && pageCount !== undefined && <p>{pageCount} pages</p>}
       </header>
       <div className="document-overview-content">
-        <h3>Summary</h3>
+        <div className="document-summary-heading">
+          <h3>Summary</h3>
+          <Button
+            disabled={regenerating || !regenerationAvailable}
+            onClick={onRegenerate}
+            title={
+              regenerationAvailable
+                ? "Generate a fresh grounded summary"
+                : "Summary generation is available after ingestion finishes"
+            }
+          >
+            {regenerating ? "Generating summary…" : "Regenerate summary"}
+          </Button>
+        </div>
         {error && <ErrorState error={error} />}
         {loading && <p className="document-summary-state">Loading summary…</p>}
         {!loading && !error && summary?.status === "pending" && (

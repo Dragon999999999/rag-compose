@@ -14,6 +14,7 @@ import { SourcesWorkspace } from "../components/sources/SourcesWorkspace";
 import {
   useChatMutations,
   useChats,
+  useDocumentSummaryMutation,
   useDocumentSummary,
   useEvidence,
   useMessages,
@@ -123,6 +124,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const chats = useChats(projectId);
   const sources = useSources(projectId);
   const documentSummary = useDocumentSummary(projectId, documentId);
+  const documentSummaryMutation = useDocumentSummaryMutation(projectId, documentId);
   const messages = useMessages(chatId);
   const project = projects.data?.find((item) => item.id === projectId);
   const chat = chats.data?.find((item) => item.id === chatId);
@@ -390,15 +392,21 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         ) : documentRoute ? (
           <DocumentOverview
             activeChunk={activeChunk}
-            error={documentSummary.error}
+            error={documentSummary.error ?? documentSummaryMutation.error}
             loading={documentSummary.isLoading}
             onBack={() => navigate(chatId ? chatPath : sourcesPath)}
+            onRegenerate={() => documentSummaryMutation.mutate()}
             onSelectCitation={(id) => {
               setDirectPdf(null);
               setActiveChunk(id);
               setEvidenceOpen(true);
               setMode("evidence");
             }}
+            regenerating={
+              documentSummaryMutation.isPending ||
+              documentSummary.data?.status === "generating"
+            }
+            regenerationAvailable={selectedSource?.ingestion?.status === "ready"}
             source={selectedSource}
             summary={documentSummary.data}
           />

@@ -32,6 +32,7 @@ class DocumentSummaryService:
         self._repository = repository
         self._runner = runner
         self._tasks: dict[tuple[str, str], asyncio.Task[DocumentSummary]] = {}
+        self._scheduling_lock = asyncio.Lock()
 
     async def schedule_summary(
         self,
@@ -40,19 +41,54 @@ class DocumentSummaryService:
         ingestion: DocumentIngestion,
     ) -> DocumentSummary:
         """Start a persisted summary in the background after ingestion is ready."""
-        summary, should_generate = await self._begin_if_needed(document, ingestion)
+        async with self._scheduling_lock:
+            summary, should_generate = await self._begin_if_needed(document, ingestion)
+            self._schedule_generation_if_needed(
+                project_id,
+                document,
+                ingestion,
+                summary,
+                should_generate,
+            )
+            return summary
+
+    async def regenerate_summary(
+        self,
+        project_id: str,
+        document: Document,
+        ingestion: DocumentIngestion,
+    ) -> DocumentSummary:
+        """Explicitly regenerate a document overview without replacing active work.
+
+        A ready or failed summary is reset and generated again. The initiating
+        caller awaits its new task so it receives the completed state without
+        polling. Repeated requests during an active generation return the current
+        lifecycle record and leave the existing task untouched.
+        """
         key = (document.id, ingestion.id)
-        if should_generate or (
-            summary.status == SummaryStatus.GENERATING and key not in self._tasks
-        ):
-            task = asyncio.create_task(
-                self._generate_summary(project_id, document, ingestion)
+        task: asyncio.Task[DocumentSummary] | None = None
+        async with self._scheduling_lock:
+            existing = await self._repository.document_summary(*key)
+            if existing is not None and existing.status == SummaryStatus.GENERATING:
+                if key in self._tasks:
+                    return existing
+
+            page_count = await self._repository.page_count_for_ingestion(ingestion.id)
+            summary = await self._repository.begin_document_summary(
+                document.id,
+                ingestion.id,
+                page_count,
             )
-            self._tasks[key] = task
-            task.add_done_callback(
-                lambda completed_task: self._finish_scheduled_task(key, completed_task)
+            task = self._schedule_generation_if_needed(
+                project_id,
+                document,
+                ingestion,
+                summary,
+                True,
             )
-        return summary
+        assert task is not None
+        # Do not cancel the persisted background task if the HTTP client disconnects.
+        return await asyncio.shield(task)
 
     async def ensure_summary(
         self,
@@ -130,6 +166,29 @@ class DocumentSummaryService:
             )
         except Exception as exc:
             return await self._persist_failure(document, ingestion, exc)
+
+    def _schedule_generation_if_needed(
+        self,
+        project_id: str,
+        document: Document,
+        ingestion: DocumentIngestion,
+        summary: DocumentSummary,
+        should_generate: bool,
+    ) -> asyncio.Task[DocumentSummary] | None:
+        """Create one tracked task when the persisted lifecycle requires it."""
+        key = (document.id, ingestion.id)
+        if not should_generate and (
+            summary.status != SummaryStatus.GENERATING or key in self._tasks
+        ):
+            return None
+        task = asyncio.create_task(
+            self._generate_summary(project_id, document, ingestion)
+        )
+        self._tasks[key] = task
+        task.add_done_callback(
+            lambda completed_task: self._finish_scheduled_task(key, completed_task)
+        )
+        return task
 
     async def _persist_failure(
         self,
