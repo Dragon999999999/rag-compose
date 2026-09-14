@@ -3,7 +3,8 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.orm import Session, make_transient_to_detached
 from sqlalchemy.orm.attributes import set_committed_value
@@ -11,13 +12,30 @@ from sqlalchemy.sql.dml import Update
 
 from llm_grounding.domain.corpus import EvidenceReference, RetrievalUnit, SummaryStatus
 from llm_grounding.infrastructure.database.models import (
+    ChatRow,
     DocumentRow,
     DocumentSummaryRow,
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
-from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.infrastructure.database.repositories import (
+    PostgresRepository,
+    _sent_prompt_exists,
+)
 from llm_grounding.infrastructure.database.session import create_session_factory
+
+
+def test_sent_prompt_state_is_correlated_to_each_chat() -> None:
+    """An existing prompt in one chat must not mark every chat as used."""
+    statement = select(
+        ChatRow.id,
+        _sent_prompt_exists(ChatRow.id).label("has_sent_prompt"),
+    )
+
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "FROM messages, chats" not in compiled
+    assert "messages.chat_id = chats.id" in compiled
 
 
 class RecordingSession:

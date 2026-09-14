@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql.selectable import Exists
 
 from llm_grounding.domain.corpus import (
     Chat,
@@ -41,6 +43,16 @@ from llm_grounding.infrastructure.database.models import (
 def _now() -> datetime:
     """Create an explicit UTC fallback for tests without database defaults."""
     return datetime.now(UTC)
+
+
+def _sent_prompt_exists(chat_id: str | InstrumentedAttribute[str]) -> Exists:
+    """Build an existence check correlated to the selected chat when needed."""
+    return exists(
+        select(MessageRow.id).where(
+            MessageRow.chat_id == chat_id,
+            MessageRow.role == "user",
+        )
+    ).correlate(ChatRow)
 
 
 class PostgresRepository:
@@ -634,14 +646,7 @@ class PostgresRepository:
             row = await session.get(ChatRow, chat_id)
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
-            has_sent_prompt = await session.scalar(
-                select(
-                    exists().where(
-                        MessageRow.chat_id == chat_id,
-                        MessageRow.role == "user",
-                    )
-                )
-            )
+            has_sent_prompt = await session.scalar(select(_sent_prompt_exists(chat_id)))
             return Chat(
                 row.id,
                 row.project_id,
@@ -718,15 +723,7 @@ class PostgresRepository:
                 )
                 .scalar_subquery()
             )
-            has_sent_prompt = (
-                select(
-                    exists().where(
-                        MessageRow.chat_id == ChatRow.id,
-                        MessageRow.role == "user",
-                    )
-                )
-                .scalar_subquery()
-            )
+            has_sent_prompt = _sent_prompt_exists(ChatRow.id)
             activity_at = func.coalesce(last_answer_at, ChatRow.created_at)
             rows = (
                 await session.execute(
