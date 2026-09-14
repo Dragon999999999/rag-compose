@@ -402,18 +402,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
             source={selectedSource}
             summary={documentSummary.data}
           />
-        ) : (
-          <main className="home-state">
-            <EmptyState title="No chat selected">
-              Create a chat to start asking grounded questions.
-              <p>
-                <Button variant="primary" onClick={() => createChat()}>
-                  New chat
-                </Button>
-              </p>
-            </EmptyState>
-          </main>
-        )}
+        ) : null}
       </AppShell>
       {createProject && (
         <NameDialog
