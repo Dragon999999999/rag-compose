@@ -133,6 +133,8 @@ class Chat:
     name, even when its text happens to match the initial placeholder.
     `last_answer_at` is the completion time of the latest persisted assistant
     message when the chat is listed; it is absent for chats without an answer.
+    `has_sent_prompt` records whether the chat has a persisted user prompt, so
+    browser clients can reuse an unopened draft conversation.
     """
 
     id: str
@@ -141,6 +143,7 @@ class Chat:
     created_at: datetime
     chat_name_set: bool = False
     last_answer_at: datetime | None = None
+    has_sent_prompt: bool = False
 
 
 @dataclass(frozen=True)

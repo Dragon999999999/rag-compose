@@ -25,6 +25,14 @@ type ChatWorkspaceProps = {
   onAsk: (message: string) => void;
 };
 
+function loadDraft(chatId: string): string {
+  return window.sessionStorage.getItem(`chat-draft:${chatId}`) ?? "";
+}
+
+function saveDraft(chatId: string, value: string): void {
+  window.sessionStorage.setItem(`chat-draft:${chatId}`, value);
+}
+
 /** Render a chat as navigable prompt-and-answer turns. */
 export function ChatWorkspace({
   chatId,
@@ -37,7 +45,7 @@ export function ChatWorkspace({
   onSelectCitation,
   onAsk,
 }: ChatWorkspaceProps) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(() => loadDraft(chatId));
   const [hoveredTurnTitle, setHoveredTurnTitle] = useState<string | null>(null);
   const thread = useRef<HTMLDivElement>(null);
   const messagesHydrated = useRef(false);
@@ -52,11 +60,11 @@ export function ChatWorkspace({
   const showTurnNavigation = completedTurns.length > 1;
 
   useEffect(() => {
-    setValue(window.sessionStorage.getItem(`chat-draft:${chatId}`) ?? "");
+    setValue(loadDraft(chatId));
   }, [chatId]);
 
   useEffect(() => {
-    window.sessionStorage.setItem(`chat-draft:${chatId}`, value);
+    saveDraft(chatId, value);
   }, [chatId, value]);
 
   const scrollToLatest = (): void =>
@@ -97,6 +105,7 @@ export function ChatWorkspace({
   const send = (): void => {
     if (value.trim()) {
       onAsk(value.trim());
+      saveDraft(chatId, "");
       setValue("");
       requestAnimationFrame(scrollToLatest);
     }
@@ -230,9 +239,14 @@ export function ChatWorkspace({
           Ask about this project
         </label>
         <textarea
+          autoFocus
           disabled={loading}
           id="question"
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            saveDraft(chatId, nextValue);
+            setValue(nextValue);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();

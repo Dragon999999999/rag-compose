@@ -89,6 +89,7 @@ def test_chat_dto_exposes_automatic_name_state() -> None:
 
     assert dto["name"] == "New chat"
     assert dto["chat_name_set"] is False
+    assert dto["has_sent_prompt"] is False
 
 
 class EvidenceRepository:

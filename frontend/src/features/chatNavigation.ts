@@ -23,3 +23,15 @@ export function selectChatForWorkspace(
   const rememberedChat = chats.find((chat) => chat.id === lastVisitedChatId);
   return rememberedChat ?? sortChatsByActivity(chats)[0];
 }
+
+/** Return the newest prompt-free chat belonging to one project. */
+export function findReusableDraftChat(
+  chats: Chat[],
+  projectId: string,
+): Chat | undefined {
+  return sortChatsByActivity(
+    chats.filter(
+      (chat) => chat.project_id === projectId && !chat.has_sent_prompt,
+    ),
+  )[0];
+}

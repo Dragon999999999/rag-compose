@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
 import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
@@ -149,6 +149,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
   const [directPdf, setDirectPdf] = useState<Evidence | null>(null);
   const [mode, setMode] = useState<"evidence" | "pdf">("evidence");
+  const createChatInFlight = useRef(false);
   const [lastVisitedChats, setLastVisitedChats] = useState<Record<string, string>>(
     () => {
       if (typeof window === "undefined") {
@@ -164,14 +165,20 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   );
 
   const createChat = (targetProjectId = projectId): void => {
-    if (!targetProjectId) {
+    if (!targetProjectId || createChatInFlight.current) {
       return;
     }
+    createChatInFlight.current = true;
     chatMutations.create.mutate(
       { projectId: targetProjectId, name: "New chat" },
       {
-        onSuccess: (newChat) =>
-          navigate(`/projects/${targetProjectId}/chats/${newChat.id}`),
+        onError: () => {
+          createChatInFlight.current = false;
+        },
+        onSuccess: (newChat) => {
+          createChatInFlight.current = false;
+          navigate(`/projects/${targetProjectId}/chats/${newChat.id}`);
+        },
       },
     );
   };

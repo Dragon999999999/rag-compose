@@ -6,7 +6,7 @@ rebuild vectors, validate grounding references, and isolate project corpora.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from llm_grounding.domain.corpus import (
@@ -634,12 +634,21 @@ class PostgresRepository:
             row = await session.get(ChatRow, chat_id)
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
+            has_sent_prompt = await session.scalar(
+                select(
+                    exists().where(
+                        MessageRow.chat_id == chat_id,
+                        MessageRow.role == "user",
+                    )
+                )
+            )
             return Chat(
                 row.id,
                 row.project_id,
                 row.name,
                 row.created_at,
                 row.chat_name_set,
+                has_sent_prompt=bool(has_sent_prompt),
             )
 
     async def rename_chat(self, chat_id: str, name: str) -> Chat:
@@ -694,10 +703,11 @@ class PostgresRepository:
             await session.delete(row)
 
     async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
-        """List chats with the most recently completed answer first.
+        """List chats with prompt state and the latest completed answer first.
 
         Chats without an assistant response use their creation time as their
-        activity time.
+        activity time. `has_sent_prompt` distinguishes an unopened chat from a
+        chat whose first answer has not completed yet.
         """
         async with self._sessions() as session:
             last_answer_at = (
@@ -708,10 +718,23 @@ class PostgresRepository:
                 )
                 .scalar_subquery()
             )
+            has_sent_prompt = (
+                select(
+                    exists().where(
+                        MessageRow.chat_id == ChatRow.id,
+                        MessageRow.role == "user",
+                    )
+                )
+                .scalar_subquery()
+            )
             activity_at = func.coalesce(last_answer_at, ChatRow.created_at)
             rows = (
                 await session.execute(
-                    select(ChatRow, last_answer_at.label("last_answer_at"))
+                    select(
+                        ChatRow,
+                        last_answer_at.label("last_answer_at"),
+                        has_sent_prompt.label("has_sent_prompt"),
+                    )
                     .where(ChatRow.project_id == project_id)
                     .order_by(
                         activity_at.desc(),
@@ -727,8 +750,9 @@ class PostgresRepository:
                     row.created_at,
                     row.chat_name_set,
                     answer_at,
+                    bool(sent_prompt),
                 )
-                for row, answer_at in rows
+                for row, answer_at, sent_prompt in rows
             )
 
     async def add_message(
