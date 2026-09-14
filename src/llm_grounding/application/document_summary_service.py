@@ -29,7 +29,7 @@ class DocumentSummaryService:
         """Inject persistence and the established grounded summary workflow."""
         self._repository = repository
         self._runner = runner
-        self._tasks: set[asyncio.Task[DocumentSummary]] = set()
+        self._tasks: dict[tuple[str, str], asyncio.Task[DocumentSummary]] = {}
 
     async def schedule_summary(
         self,
@@ -39,12 +39,15 @@ class DocumentSummaryService:
     ) -> DocumentSummary:
         """Start a persisted summary in the background after ingestion is ready."""
         summary, should_generate = await self._begin_if_needed(document, ingestion)
-        if should_generate:
+        key = (document.id, ingestion.id)
+        if should_generate or (
+            summary.status == SummaryStatus.GENERATING and key not in self._tasks
+        ):
             task = asyncio.create_task(
                 self._generate_summary(project_id, document, ingestion)
             )
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            self._tasks[key] = task
+            task.add_done_callback(lambda _: self._tasks.pop(key, None))
         return summary
 
     async def ensure_summary(
@@ -66,7 +69,7 @@ class DocumentSummaryService:
     async def close(self) -> None:
         """Allow in-flight summaries to persist their final lifecycle state."""
         if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
 
     async def _begin_if_needed(
         self, document: Document, ingestion: DocumentIngestion

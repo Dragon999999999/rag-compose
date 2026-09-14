@@ -24,6 +24,7 @@ from llm_grounding.domain.corpus import (
     Document,
     DocumentIngestion,
     DocumentSummary,
+    IngestionStatus,
     Message,
     Project,
     RetrievalUnit,
@@ -395,19 +396,24 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         project_id: str, document_id: str
     ) -> dict[str, object]:
         """Load one project's existing grounded overview for an attached PDF."""
-        associations = await application.repository.list_project_documents(project_id)
-        association = next(
+        source = next(
             (
                 item
-                for item in associations
-                if item.document_id == document_id and item.ingestion_id is not None
+                for item in await application.projects.list_documents(project_id)
+                if item[0].id == document_id and item[1] is not None
             ),
             None,
         )
-        if association is None or association.ingestion_id is None:
+        if source is None:
             raise HTTPException(404, "Document is not available in this project.")
+        document, ingestion = source
+        assert ingestion is not None
+        if ingestion.status == IngestionStatus.READY:
+            await application.summaries.schedule_summary(
+                project_id, document, ingestion
+            )
         return await _document_summary_dto(
-            application, document_id, association.ingestion_id
+            application, document.id, ingestion.id
         )
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
