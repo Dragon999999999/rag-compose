@@ -79,6 +79,7 @@ class DocumentSummaryService:
         if existing is not None and existing.status in {
             SummaryStatus.READY,
             SummaryStatus.GENERATING,
+            SummaryStatus.FAILED,
         }:
             return existing, False
         page_count = await self._repository.page_count_for_ingestion(ingestion.id)

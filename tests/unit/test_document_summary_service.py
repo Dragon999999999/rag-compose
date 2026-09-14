@@ -163,6 +163,25 @@ async def test_document_summary_failure_does_not_fail_the_ingested_source() -> N
     assert summary.error == "RuntimeError"
 
 
+async def test_failed_summary_is_not_restarted_by_status_polling() -> None:
+    """Repeated scheduling preserves a failed state without new model calls."""
+    repository = SummaryRepository()
+    runner = SimpleNamespace(
+        run=AsyncMock(side_effect=RuntimeError("model unavailable"))
+    )
+    document, ingestion = _document()
+    service = DocumentSummaryService(repository, runner)  # type: ignore[arg-type]
+
+    failed = await service.ensure_summary("project", document, ingestion)
+    first_poll = await service.schedule_summary("project", document, ingestion)
+    second_poll = await service.schedule_summary("project", document, ingestion)
+
+    assert failed.status == SummaryStatus.FAILED
+    assert first_poll.status == SummaryStatus.FAILED
+    assert second_poll.status == SummaryStatus.FAILED
+    runner.run.assert_awaited_once()
+
+
 async def test_scheduled_summary_exposes_generating_state_before_completion() -> None:
     """Post-ingestion scheduling persists lifecycle state without delaying upload."""
     repository = SummaryRepository()
