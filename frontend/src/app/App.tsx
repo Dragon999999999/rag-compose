@@ -11,6 +11,7 @@ import { AppShell } from "../components/layout/AppShell";
 import { ProjectHeader } from "../components/layout/ProjectHeader";
 import { ProjectSidebar } from "../components/layout/ProjectSidebar";
 import { SourcesWorkspace } from "../components/sources/SourcesWorkspace";
+import { selectChatForWorkspace } from "../features/chatNavigation";
 import {
   useChatMutations,
   useChats,
@@ -148,6 +149,19 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
   const [directPdf, setDirectPdf] = useState<Evidence | null>(null);
   const [mode, setMode] = useState<"evidence" | "pdf">("evidence");
+  const [lastVisitedChats, setLastVisitedChats] = useState<Record<string, string>>(
+    () => {
+      if (typeof window === "undefined") {
+        return {};
+      }
+      try {
+        const saved = window.sessionStorage.getItem("last-visited-chats");
+        return saved ? (JSON.parse(saved) as Record<string, string>) : {};
+      } catch {
+        return {};
+      }
+    },
+  );
 
   const createChat = (targetProjectId = projectId): void => {
     if (!targetProjectId) {
@@ -198,6 +212,32 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   }, [chatId]);
 
   useEffect(() => {
+    if (!projectId || !chatId) {
+      return;
+    }
+    setLastVisitedChats((previous) => {
+      if (previous[projectId] === chatId) {
+        return previous;
+      }
+      return { ...previous, [projectId]: chatId };
+    });
+  }, [chatId, projectId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(
+        "last-visited-chats",
+        JSON.stringify(lastVisitedChats),
+      );
+    } catch {
+      // Navigation still works from the current route when session storage is unavailable.
+    }
+  }, [lastVisitedChats]);
+
+  useEffect(() => {
     if (!documentAnswer) {
       return;
     }
@@ -245,6 +285,21 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     chatId
       ? `${chatPath}/documents/${sourceId}`
       : `/projects/${projectId}/documents/${sourceId}`;
+  const sourceView = sourcesRoute || documentRoute;
+  const selectedChat = selectChatForWorkspace(
+    chats.data ?? [],
+    projectId ? lastVisitedChats[projectId] : undefined,
+  );
+
+  const toggleWorkspace = (): void => {
+    if (!sourceView) {
+      navigate(sourcesPath);
+      return;
+    }
+    if (selectedChat) {
+      navigate(`/projects/${projectId}/chats/${selectedChat.id}`);
+    }
+  };
 
   const sidebar = (
     <ProjectSidebar
@@ -271,9 +326,11 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const header = (
     <ProjectHeader
       chat={chat}
+      hasChats={Boolean(selectedChat)}
       onNewChat={() => createChat()}
-      onSources={() => navigate(sourcesPath)}
+      onWorkspaceToggle={toggleWorkspace}
       project={project}
+      view={sourceView ? "sources" : "chat"}
     />
   );
 

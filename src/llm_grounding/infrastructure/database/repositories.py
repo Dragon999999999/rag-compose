@@ -694,13 +694,29 @@ class PostgresRepository:
             await session.delete(row)
 
     async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
-        """List project conversations in creation order."""
+        """List chats with the most recently completed answer first.
+
+        Chats without an assistant response use their creation time as their
+        activity time.
+        """
         async with self._sessions() as session:
+            last_answer_at = (
+                select(func.max(MessageRow.created_at))
+                .where(
+                    MessageRow.chat_id == ChatRow.id,
+                    MessageRow.role == "assistant",
+                )
+                .scalar_subquery()
+            )
+            activity_at = func.coalesce(last_answer_at, ChatRow.created_at)
             rows = (
-                await session.scalars(
-                    select(ChatRow)
+                await session.execute(
+                    select(ChatRow, last_answer_at.label("last_answer_at"))
                     .where(ChatRow.project_id == project_id)
-                    .order_by(ChatRow.created_at)
+                    .order_by(
+                        activity_at.desc(),
+                        ChatRow.created_at.desc(),
+                    )
                 )
             ).all()
             return tuple(
@@ -710,8 +726,9 @@ class PostgresRepository:
                     row.name,
                     row.created_at,
                     row.chat_name_set,
+                    answer_at,
                 )
-                for row in rows
+                for row, answer_at in rows
             )
 
     async def add_message(

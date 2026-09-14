@@ -4,16 +4,20 @@ import { Button } from "../common/ui";
 type ProjectHeaderProps = {
   project?: Project;
   chat?: Chat;
-  onSources: () => void;
+  onWorkspaceToggle: () => void;
   onNewChat: () => void;
+  hasChats: boolean;
+  view: "chat" | "sources";
 };
 
 /** Show workspace navigation and actions that do not edit project metadata. */
 export function ProjectHeader({
   project,
   chat,
-  onSources,
+  onWorkspaceToggle,
   onNewChat,
+  hasChats,
+  view,
 }: ProjectHeaderProps) {
   return (
     <header className="project-header">
@@ -24,8 +28,11 @@ export function ProjectHeader({
         </div>
       </div>
       <div className="header-actions">
-        <Button onClick={onSources} disabled={!project}>
-          Sources
+        <Button
+          onClick={onWorkspaceToggle}
+          disabled={!project || (view === "sources" && !hasChats)}
+        >
+          {view === "sources" ? "Chats" : "Sources"}
         </Button>
         <Button onClick={onNewChat} disabled={!project}>
           New chat

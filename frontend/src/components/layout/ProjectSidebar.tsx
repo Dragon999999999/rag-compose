@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { NavLink } from "react-router-dom";
 
 import type { Chat, Project } from "../../api/types";
+import { sortChatsByActivity } from "../../features/chatNavigation";
 import { Button, IconButton } from "../common/ui";
 import "./ProjectSidebar.css";
 
@@ -39,6 +40,7 @@ export function ProjectSidebar({
 }: ProjectSidebarProps) {
   const [contextTarget, setContextTarget] = useState<ContextTarget | null>(null);
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
+  const sortedChats = sortChatsByActivity(chats);
 
   useEffect(() => {
     if (!contextTarget) {
@@ -129,9 +131,9 @@ export function ProjectSidebar({
                   ＋
                 </IconButton>
               </div>
-              {isSelected && chats.length > 0 && (
+              {isSelected && sortedChats.length > 0 && (
                 <div className="chat-tree">
-                  {chats.map((chat) => {
+                  {sortedChats.map((chat) => {
                     const isEditingChat =
                       editingTarget?.kind === "chat" && editingTarget.id === chat.id;
                     return (

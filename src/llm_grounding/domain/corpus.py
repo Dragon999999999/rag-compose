@@ -131,6 +131,8 @@ class Chat:
 
     Once `chat_name_set` is true, generated names must never replace the current
     name, even when its text happens to match the initial placeholder.
+    `last_answer_at` is the completion time of the latest persisted assistant
+    message when the chat is listed; it is absent for chats without an answer.
     """
 
     id: str
@@ -138,6 +140,7 @@ class Chat:
     name: str
     created_at: datetime
     chat_name_set: bool = False
+    last_answer_at: datetime | None = None
 
 
 @dataclass(frozen=True)
