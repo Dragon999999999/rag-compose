@@ -14,6 +14,7 @@ type ConversationTurn = {
 };
 
 type ChatWorkspaceProps = {
+  chatId: string;
   messages?: Message[];
   answer: GroundedAnswer | null;
   loading: boolean;
@@ -26,6 +27,7 @@ type ChatWorkspaceProps = {
 
 /** Render a chat as navigable prompt-and-answer turns. */
 export function ChatWorkspace({
+  chatId,
   messages,
   answer,
   loading,
@@ -49,6 +51,14 @@ export function ChatWorkspace({
   );
   const showTurnNavigation = completedTurns.length > 1;
 
+  useEffect(() => {
+    setValue(window.sessionStorage.getItem(`chat-draft:${chatId}`) ?? "");
+  }, [chatId]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(`chat-draft:${chatId}`, value);
+  }, [chatId, value]);
+
   const scrollToLatest = (): void =>
     thread.current?.scrollTo({
       top: thread.current.scrollHeight,
@@ -61,10 +71,28 @@ export function ChatWorkspace({
     }
     if (!messagesHydrated.current) {
       messagesHydrated.current = true;
+      const savedPosition = Number(
+        window.sessionStorage.getItem(`chat-scroll:${chatId}`) ?? "0",
+      );
+      requestAnimationFrame(() => {
+        thread.current?.scrollTo({
+          top: Number.isFinite(savedPosition) ? savedPosition : 0,
+        });
+      });
       return;
     }
     scrollToLatest();
-  }, [loading, messages, messages?.length]);
+  }, [chatId, loading, messages, messages?.length]);
+
+  useEffect(
+    () => () => {
+      window.sessionStorage.setItem(
+        `chat-scroll:${chatId}`,
+        String(thread.current?.scrollTop ?? 0),
+      );
+    },
+    [chatId],
+  );
 
   const send = (): void => {
     if (value.trim()) {

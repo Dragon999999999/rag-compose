@@ -6,24 +6,27 @@ rebuild vectors, validate grounding references, and isolate project corpora.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from llm_grounding.domain.corpus import (
     Chat,
     Document,
     DocumentIngestion,
+    DocumentSummary,
     EvidenceReference,
     IngestionStatus,
     Message,
     Project,
     ProjectDocument,
     RetrievalUnit,
+    SummaryStatus,
 )
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
+    DocumentSummaryRow,
     EvidenceRow,
     IngestionRow,
     MessageRow,
@@ -280,6 +283,88 @@ class PostgresRepository:
                 raise KeyError(f"Unknown ingestion: {ingestion_id}")
             row.status, row.error = status, error
 
+    async def document_summary(
+        self, document_id: str, ingestion_id: str
+    ) -> DocumentSummary | None:
+        """Load a persisted document overview for one ingestion representation."""
+        async with self._sessions() as session:
+            row = await session.get(
+                DocumentSummaryRow,
+                {"document_id": document_id, "ingestion_id": ingestion_id},
+            )
+            return None if row is None else self._document_summary(row)
+
+    async def begin_document_summary(
+        self, document_id: str, ingestion_id: str, page_count: int | None
+    ) -> DocumentSummary:
+        """Create or restart a summary lifecycle after a successful ingestion."""
+        async with self._sessions.begin() as session:
+            row = await session.get(
+                DocumentSummaryRow,
+                {"document_id": document_id, "ingestion_id": ingestion_id},
+                with_for_update=True,
+            )
+            if row is None:
+                row = DocumentSummaryRow(
+                    document_id=document_id,
+                    ingestion_id=ingestion_id,
+                    status=SummaryStatus.GENERATING,
+                    page_count=page_count,
+                )
+                session.add(row)
+            else:
+                row.status = SummaryStatus.GENERATING
+                row.rag_run_id = None
+                row.error = None
+                row.page_count = page_count
+            await session.flush()
+            return self._document_summary(row)
+
+    async def complete_document_summary(
+        self, document_id: str, ingestion_id: str, rag_run_id: str
+    ) -> DocumentSummary:
+        """Mark a summary ready after its grounded RAG run has been persisted."""
+        async with self._sessions.begin() as session:
+            row = await session.get(
+                DocumentSummaryRow,
+                {"document_id": document_id, "ingestion_id": ingestion_id},
+                with_for_update=True,
+            )
+            if row is None:
+                raise KeyError("Document summary does not exist")
+            row.status = SummaryStatus.READY
+            row.rag_run_id = rag_run_id
+            row.error = None
+            await session.flush()
+            return self._document_summary(row)
+
+    async def fail_document_summary(
+        self, document_id: str, ingestion_id: str, error: str
+    ) -> DocumentSummary:
+        """Persist a sanitized summary-generation failure for the document view."""
+        async with self._sessions.begin() as session:
+            row = await session.get(
+                DocumentSummaryRow,
+                {"document_id": document_id, "ingestion_id": ingestion_id},
+                with_for_update=True,
+            )
+            if row is None:
+                raise KeyError("Document summary does not exist")
+            row.status = SummaryStatus.FAILED
+            row.rag_run_id = None
+            row.error = error
+            await session.flush()
+            return self._document_summary(row)
+
+    async def page_count_for_ingestion(self, ingestion_id: str) -> int | None:
+        """Return the highest parsed PDF page number for summary presentation."""
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(func.max(EvidenceRow.page_number)).where(
+                    EvidenceRow.ingestion_id == ingestion_id
+                )
+            )
+
     def _ingestion(self, row: IngestionRow) -> DocumentIngestion:
         """Map persistent ingestion state to its domain representation."""
         return DocumentIngestion(
@@ -292,6 +377,20 @@ class PostgresRepository:
             IngestionStatus(row.status),
             row.created_at,
             row.error,
+        )
+
+    @staticmethod
+    def _document_summary(row: DocumentSummaryRow) -> DocumentSummary:
+        """Map persisted document-summary state to its domain representation."""
+        return DocumentSummary(
+            row.document_id,
+            row.ingestion_id,
+            SummaryStatus(row.status),
+            row.rag_run_id,
+            row.error,
+            row.page_count,
+            row.created_at or _now(),
+            row.updated_at or _now(),
         )
 
     async def store_evidence(

@@ -23,9 +23,11 @@ from llm_grounding.domain.corpus import (
     Chat,
     Document,
     DocumentIngestion,
+    DocumentSummary,
     Message,
     Project,
     RetrievalUnit,
+    SummaryStatus,
     TaskType,
 )
 from llm_grounding.domain.evidence import EvidenceUnit
@@ -51,10 +53,50 @@ class AskRequest(BaseModel):
 
 
 def _item(
-    value: Project | Chat | Document | DocumentIngestion,
+    value: Project | Chat | Document | DocumentIngestion | DocumentSummary,
 ) -> dict[str, object]:
     """Serialize a small immutable domain record without framework leakage."""
     return cast(dict[str, object], asdict(value))
+
+
+async def _source_dto(
+    application: PhaseOneApplication,
+    document: Document,
+    ingestion: DocumentIngestion | None,
+) -> dict[str, object]:
+    """Serialize lightweight source-management data without loading its summary."""
+    summary = (
+        await application.repository.document_summary(document.id, ingestion.id)
+        if ingestion is not None
+        else None
+    )
+    return {
+        "document": _item(document),
+        "ingestion": _item(ingestion) if ingestion else None,
+        "summary": _item(summary) if summary else None,
+    }
+
+
+async def _document_summary_dto(
+    application: PhaseOneApplication,
+    document_id: str,
+    ingestion_id: str,
+) -> dict[str, object]:
+    """Return summary lifecycle state and its existing grounded provenance payload."""
+    summary = await application.repository.document_summary(document_id, ingestion_id)
+    if summary is None:
+        return {
+            "document_id": document_id,
+            "ingestion_id": ingestion_id,
+            "status": SummaryStatus.PENDING,
+            "rag_run_id": None,
+            "error": None,
+            "page_count": None,
+        }
+    result = _item(summary)
+    if summary.status == SummaryStatus.READY and summary.rag_run_id is not None:
+        result["answer"] = await _structured_run(application, summary.rag_run_id)
+    return result
 
 
 def _message_dto(message: Message) -> dict[str, object]:
@@ -326,10 +368,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     @app.get("/api/projects/{project_id}/documents")
     async def documents(project_id: str) -> list[dict[str, object]]:
         return [
-            {
-                "document": _item(document),
-                "ingestion": _item(ingestion) if ingestion else None,
-            }
+            await _source_dto(application, document, ingestion)
             for document, ingestion in await application.projects.list_documents(
                 project_id
             )
@@ -349,7 +388,27 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             document, ingestion = await application.projects.add_document(
                 project_id, temporary_path, load_ingestion_config(None)
             )
-            return {"document": _item(document), "ingestion": _item(ingestion)}
+            return await _source_dto(application, document, ingestion)
+
+    @app.get("/api/projects/{project_id}/documents/{document_id}/summary")
+    async def document_summary(
+        project_id: str, document_id: str
+    ) -> dict[str, object]:
+        """Load one project's existing grounded overview for an attached PDF."""
+        associations = await application.repository.list_project_documents(project_id)
+        association = next(
+            (
+                item
+                for item in associations
+                if item.document_id == document_id and item.ingestion_id is not None
+            ),
+            None,
+        )
+        if association is None or association.ingestion_id is None:
+            raise HTTPException(404, "Document is not available in this project.")
+        return await _document_summary_dto(
+            application, document_id, association.ingestion_id
+        )
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
     async def remove_document(project_id: str, document_id: str) -> None:

@@ -3,6 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
+from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
@@ -43,6 +44,7 @@ class PhaseOneApplication:
         vectors: QdrantVectorStore,
         repository: PostgresRepository,
         artifacts: ArtifactStore,
+        summaries: DocumentSummaryService,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -51,10 +53,15 @@ class PhaseOneApplication:
             engine,
             vectors,
         )
-        self.repository, self.artifacts = repository, artifacts
+        self.repository, self.artifacts, self.summaries = (
+            repository,
+            artifacts,
+            summaries,
+        )
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
+        await self.summaries.close()
         await self._vectors.close()
         await self._engine.dispose()
 
@@ -123,11 +130,13 @@ def create_phase_one_application(
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10
     )
+    summaries = DocumentSummaryService(repository, runner)
     return PhaseOneApplication(
-        ProjectService(repository, ingestion, vectors),
+        ProjectService(repository, ingestion, vectors, summaries),
         ChatService(repository, runner, max_history),
         engine,
         vectors,
         repository,
         artifacts,
+        summaries,
     )

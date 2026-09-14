@@ -6,6 +6,7 @@ import { ChatWorkspace } from "../components/chats/ChatWorkspace";
 import { Dialog, NameDialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";
 import { EvidenceWorkspace } from "../components/evidence/EvidenceWorkspace";
+import { DocumentOverview } from "../components/documents/DocumentOverview";
 import { AppShell } from "../components/layout/AppShell";
 import { ProjectHeader } from "../components/layout/ProjectHeader";
 import { ProjectSidebar } from "../components/layout/ProjectSidebar";
@@ -13,6 +14,7 @@ import { SourcesWorkspace } from "../components/sources/SourcesWorkspace";
 import {
   useChatMutations,
   useChats,
+  useDocumentSummary,
   useEvidence,
   useMessages,
   useProjectMutations,
@@ -38,6 +40,18 @@ export function App() {
       <Route
         path="/projects/:projectId/sources"
         element={<ProjectWorkspace sources />}
+      />
+      <Route
+        path="/projects/:projectId/documents/:documentId"
+        element={<ProjectWorkspace />}
+      />
+      <Route
+        path="/projects/:projectId/chats/:chatId/sources"
+        element={<ProjectWorkspace sources />}
+      />
+      <Route
+        path="/projects/:projectId/chats/:chatId/documents/:documentId"
+        element={<ProjectWorkspace />}
       />
       <Route
         path="*"
@@ -103,17 +117,22 @@ function ProjectHome() {
 }
 
 function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean }) {
-  const { projectId, chatId } = useParams();
+  const { projectId, chatId, documentId } = useParams();
   const navigate = useNavigate();
   const projects = useProjects();
   const chats = useChats(projectId);
   const sources = useSources(projectId);
+  const documentSummary = useDocumentSummary(projectId, documentId);
   const messages = useMessages(chatId);
   const project = projects.data?.find((item) => item.id === projectId);
   const chat = chats.data?.find((item) => item.id === chatId);
   const projectMutations = useProjectMutations();
   const chatMutations = useChatMutations(projectId, chatId);
   const sourceMutations = useSourceMutations(projectId);
+  const selectedSource = sources.data?.find(
+    (source) => source.document.id === documentId,
+  );
+  const documentRoute = Boolean(documentId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(true);
   const [createProject, setCreateProject] = useState(false);
@@ -122,7 +141,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [latest, setLatest] = useState<GroundedAnswer | null>(null);
   const [evidenceTurnTitle, setEvidenceTurnTitle] = useState<string | null>(null);
   const evidence = useEvidence(selectedRun);
-  const answer = latest ?? evidence.data ?? null;
+  const documentAnswer = documentSummary.data?.answer ?? null;
+  const answer = documentRoute ? documentAnswer : latest ?? evidence.data ?? null;
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
   const [directPdf, setDirectPdf] = useState<Evidence | null>(null);
   const [mode, setMode] = useState<"evidence" | "pdf">("evidence");
@@ -176,7 +196,17 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   }, [chatId]);
 
   useEffect(() => {
-    if (sourcesRoute || latest || selectedRun || messages.isLoading) {
+    if (!documentAnswer) {
+      return;
+    }
+    setActiveChunk(Object.keys(documentAnswer.evidence)[0] ?? null);
+    setDirectPdf(null);
+    setEvidenceOpen(true);
+    setMode("evidence");
+  }, [documentAnswer]);
+
+  useEffect(() => {
+    if (sourcesRoute || documentRoute || latest || selectedRun || messages.isLoading) {
       return;
     }
     const firstAnswer = messages.data?.find(
@@ -195,6 +225,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     messages.isLoading,
     selectedRun,
     sourcesRoute,
+    documentRoute,
   ]);
 
   const openPdf = (item: Evidence): void => {
@@ -204,23 +235,14 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     setEvidenceOpen(true);
   };
 
-  const openSourcePdf = (source: {
-    document: { id: string; name: string };
-  }): void => {
-    setDirectPdf({
-      chunk_id: source.document.id,
-      reference_label: source.document.name.replace(/\.pdf$/i, ""),
-      used: false,
-      document_id: source.document.id,
-      document_name: source.document.name,
-      page_start: null,
-      page_end: null,
-      excerpt: "",
-      locations: [],
-    });
-    setMode("pdf");
-    setEvidenceOpen(true);
-  };
+  const chatPath = chatId
+    ? `/projects/${projectId}/chats/${chatId}`
+    : `/projects/${projectId}/sources`;
+  const sourcesPath = chatId ? `${chatPath}/sources` : chatPath;
+  const documentPath = (sourceId: string): string =>
+    chatId
+      ? `${chatPath}/documents/${sourceId}`
+      : `/projects/${projectId}/documents/${sourceId}`;
 
   const sidebar = (
     <ProjectSidebar
@@ -248,7 +270,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     <ProjectHeader
       chat={chat}
       onNewChat={() => createChat()}
-      onSources={() => projectId && navigate(`/projects/${projectId}/sources`)}
+      onSources={() => navigate(sourcesPath)}
       onSummary={() => ask("Summarize this project", true)}
       project={project}
     />
@@ -260,7 +282,11 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       answer={answer}
       documentEvidence={directPdf}
       mode={mode}
-      turnTitle={evidenceTurnTitle ?? answer?.turn_title}
+      turnTitle={
+        documentRoute
+          ? selectedSource?.document.name
+          : evidenceTurnTitle ?? answer?.turn_title
+      }
       onBack={() => {
         setDirectPdf(null);
         setMode("evidence");
@@ -324,36 +350,57 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         sidebar={sidebar}
         sidebarOpen={sidebarOpen}
       >
+        {chatId && (
+          <div
+            className={
+              sourcesRoute || documentRoute ? "workspace-view hidden" : "workspace-view"
+            }
+          >
+            <ChatWorkspace
+              activeChunk={activeChunk}
+              answer={documentRoute ? null : answer}
+              chatId={chatId}
+              error={chatMutations.ask.error ?? messages.error}
+              key={chatId}
+              loading={chatMutations.ask.isPending || messages.isLoading}
+              messages={messages.data}
+              onAsk={(message) => ask(message)}
+              onSelectAnswer={chooseRun}
+              onSelectCitation={(id) => {
+                setDirectPdf(null);
+                setActiveChunk(id);
+                setEvidenceOpen(true);
+                setMode("evidence");
+              }}
+            />
+          </div>
+        )}
         {sourcesRoute ? (
           <SourcesWorkspace
             error={sources.error}
             loading={sources.isLoading}
-            onBack={() =>
-              navigate(chatId ? `/projects/${projectId}/chats/${chatId}` : "/projects")
-            }
-            onOpen={openSourcePdf}
+            onBack={() => navigate(chatId ? chatPath : "/projects")}
+            onOpen={(source) => navigate(documentPath(source.document.id))}
             onRemove={(id) => sourceMutations.remove.mutate(id)}
             onUpload={(file) => sourceMutations.upload.mutateAsync(file)}
             sources={sources.data}
             uploadError={sourceMutations.upload.error}
             uploading={sourceMutations.upload.isPending}
           />
-        ) : chatId ? (
-          <ChatWorkspace
+        ) : documentRoute ? (
+          <DocumentOverview
             activeChunk={activeChunk}
-            answer={answer}
-            error={chatMutations.ask.error ?? messages.error}
-            key={chatId}
-            loading={chatMutations.ask.isPending || messages.isLoading}
-            messages={messages.data}
-            onAsk={(message) => ask(message)}
-            onSelectAnswer={chooseRun}
+            error={documentSummary.error}
+            loading={documentSummary.isLoading}
+            onBack={() => navigate(chatId ? chatPath : sourcesPath)}
             onSelectCitation={(id) => {
               setDirectPdf(null);
               setActiveChunk(id);
               setEvidenceOpen(true);
               setMode("evidence");
             }}
+            source={selectedSource}
+            summary={documentSummary.data}
           />
         ) : (
           <main className="home-state">

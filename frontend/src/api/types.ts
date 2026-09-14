@@ -6,4 +6,5 @@ export type BoundingBox = { x: number; y: number; width: number; height: number 
 export type Evidence = { chunk_id: string; reference_label: string; used: boolean; document_id: string; document_name: string; page_start: number | null; page_end: number | null; excerpt: string; locations: SourceLocation[] };
 export type Claim = { id: string; text: string; citations: { chunk_id: string }[] };
 export type GroundedAnswer = { message_id?: string; rag_run_id: string; turn_title?: string | null; answer_text: string; insufficient_evidence: boolean; claims: Claim[]; evidence: Record<string, Evidence>; retrieved_chunk_ids: string[] };
-export type Source = { document: { id: string; name: string; created_at: string }; ingestion: { id: string; status: string; error: string | null; created_at: string } | null };
+export type DocumentSummary = { document_id: string; ingestion_id: string; status: "pending" | "generating" | "ready" | "failed"; rag_run_id: string | null; error: string | null; page_count: number | null; answer?: GroundedAnswer };
+export type Source = { document: { id: string; name: string; created_at: string }; ingestion: { id: string; status: string; error: string | null; created_at: string } | null; summary: DocumentSummary | null };

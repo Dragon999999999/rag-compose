@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.domain.corpus import Document, DocumentIngestion, Project
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.vector.protocol import VectorStore
@@ -17,6 +18,7 @@ class ProjectService:
         repository: PostgresRepository,
         ingestion: DocumentIngestionService,
         vectors: VectorStore,
+        summaries: DocumentSummaryService | None = None,
     ) -> None:
         """Inject canonical persistence and the separate ingestion workflow."""
         self._repository, self._ingestion, self._vectors = (
@@ -24,6 +26,7 @@ class ProjectService:
             ingestion,
             vectors,
         )
+        self._summaries = summaries
 
     async def create_project(self, name: str) -> Project:
         """Create an empty reusable project corpus."""
@@ -73,8 +76,10 @@ class ProjectService:
     async def add_document(
         self, project_id: str, file: Path, config: IngestionConfig
     ) -> tuple[Document, DocumentIngestion]:
-        """Attach and index a PDF with the supplied ingestion configuration."""
+        """Attach/index a PDF, then persist its grounded document overview."""
         document, _, ingestion = await self._ingestion.add_document(
             project_id, file, config
         )
+        if self._summaries is not None:
+            await self._summaries.schedule_summary(project_id, document, ingestion)
         return document, ingestion
