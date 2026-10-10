@@ -18,7 +18,10 @@ from llm_grounding.observability.models import LLMUsage
 from llm_grounding.observability.trace import TraceRecorder
 from llm_grounding.observability.usage import UsageAccumulator
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
-from llm_grounding.orchestration.retrieval_stages import build_retrieval_stages
+from llm_grounding.orchestration.retrieval_stages import (
+    build_retrieval_stage_graph,
+    build_retrieval_stages,
+)
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
@@ -80,6 +83,12 @@ class BasicRagRunner:
                         stage.model_dump(mode="json")
                         for stage in build_retrieval_stages((), run_id=str(uuid4()))
                     ],
+                    "stage_graph": [
+                        stage.model_dump(mode="json")
+                        for stage in build_retrieval_stage_graph(
+                            (), run_id=str(uuid4())
+                        )
+                    ],
                     "trace": [span.model_dump(mode="json") for span in traces.spans],
                     "usage": usage.build().model_dump(mode="json"),
                     "query_embedding_id": (
@@ -128,9 +137,7 @@ class BasicRagRunner:
             reasoning.result_id,
             answer,
             {
-                "status": (
-                    "rejected" if rejected else "completed"
-                ),
+                "status": ("rejected" if rejected else "completed"),
                 "observation_status": (
                     "rejected"
                     if rejected
@@ -157,6 +164,12 @@ class BasicRagRunner:
                 "retrieval_stages": [
                     stage.model_dump(mode="json")
                     for stage in build_retrieval_stages(
+                        chunks, run_id=reasoning.result_id
+                    )
+                ],
+                "stage_graph": [
+                    stage.model_dump(mode="json")
+                    for stage in build_retrieval_stage_graph(
                         chunks, run_id=reasoning.result_id
                     )
                 ],

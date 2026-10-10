@@ -8,6 +8,7 @@ from llm_grounding.observability.models import (
     RetrievalStageSnapshot,
     RetrievalStageType,
     RetrievedItem,
+    StageSnapshot,
 )
 from llm_grounding.observability.retrieved_items import retrieved_items
 
@@ -65,6 +66,57 @@ class RetrievalStageBuilder:
         return self.build(stage_type, retrieved_items(results), **kwargs)
 
 
+class StageGraphRecorder:
+    """Record an arbitrary run-local DAG with explicit item lineage."""
+
+    def __init__(self, *, run_id: str | None = None) -> None:
+        """Use stable run-local identifiers while allowing repeated stage types."""
+        self._run_id = run_id or str(uuid4())
+        self._counter = 0
+        self._stages: list[StageSnapshot] = []
+
+    @property
+    def stages(self) -> tuple[StageSnapshot, ...]:
+        """Return stages in insertion order, independent of completion order."""
+        return tuple(self._stages)
+
+    def add_stage(
+        self,
+        stage_type: str,
+        component_name: str,
+        *,
+        parent_stage_ids: tuple[str, ...] = (),
+        input_item_ids: tuple[str, ...] = (),
+        output_item_ids: tuple[str, ...] = (),
+        parameters: dict[str, object] | None = None,
+        trace_span_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> StageSnapshot:
+        """Append one stage node, supporting parallel branches and custom types."""
+        known_ids = {stage.stage_id for stage in self._stages}
+        unknown = set(parent_stage_ids) - known_ids
+        if unknown:
+            raise ValueError(f"Unknown parent stage(s): {sorted(unknown)}")
+        self._counter += 1
+        stage = StageSnapshot(
+            stage_id=f"{self._run_id}:stage:{self._counter}",
+            stage_type=stage_type,
+            component_name=component_name,
+            parent_stage_ids=list(parent_stage_ids),
+            parameters=parameters or {},
+            input_item_ids=list(input_item_ids),
+            output_item_ids=list(output_item_ids),
+            trace_span_id=trace_span_id,
+            metadata=metadata or {},
+        )
+        self._stages.append(stage)
+        return stage
+
+    def build(self) -> list[StageSnapshot]:
+        """Return a serializable copy of the recorded DAG."""
+        return list(self._stages)
+
+
 def build_retrieval_stages(
     results: tuple[ChunkRetrievalResult, ...],
     *,
@@ -92,4 +144,39 @@ def build_retrieval_stages(
         parent_stage_ids=(candidate.stage_id,),
         removed_item_ids=removed,
     )
+    candidate.input_item_ids = []
+    candidate.output_item_ids = [item.retrieval_id for item in candidate.items]
+    final.input_item_ids = [item.retrieval_id for item in candidate.items]
+    final.output_item_ids = [item.retrieval_id for item in final.items]
+    final.removed_items = [
+        item for item in candidate.items if item.retrieval_id in removed
+    ]
     return [candidate, final]
+
+
+def build_retrieval_stage_graph(
+    results: tuple[ChunkRetrievalResult, ...],
+    *,
+    run_id: str | None = None,
+    final_context: tuple[ChunkRetrievalResult, ...] | None = None,
+) -> list[StageSnapshot]:
+    """Build generic candidate/final-context lineage for the basic architecture."""
+    snapshots = build_retrieval_stages(
+        results, run_id=run_id, final_context=final_context
+    )
+    graph = StageGraphRecorder(run_id=run_id)
+    candidate = graph.add_stage(
+        snapshots[0].stage_type.value,
+        snapshots[0].component_name or "vector_retriever",
+        output_item_ids=tuple(item.retrieval_id for item in snapshots[0].items),
+        metadata={"status": snapshots[0].status},
+    )
+    graph.add_stage(
+        snapshots[1].stage_type.value,
+        snapshots[1].component_name or "grounding_context",
+        parent_stage_ids=(candidate.stage_id,),
+        input_item_ids=tuple(item.retrieval_id for item in snapshots[0].items),
+        output_item_ids=tuple(item.retrieval_id for item in snapshots[1].items),
+        metadata={"status": snapshots[1].status},
+    )
+    return graph.build()

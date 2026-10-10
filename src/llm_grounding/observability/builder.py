@@ -23,6 +23,7 @@ from llm_grounding.observability.models import (
     ObservationRequest,
     RagRunObservation,
     RagUsage,
+    StageSnapshot,
     TraceSpan,
 )
 from llm_grounding.observability.retrieved_items import retrieved_item
@@ -49,6 +50,7 @@ class ObservationBuilder:
         assessments: tuple[Assessment, ...] = (),
         decision: DecisionResult | None = None,
         retrieval_stages: list[Any] | None = None,
+        stages: list[StageSnapshot] | None = None,
         trace: list[TraceSpan] | tuple[TraceSpan, ...] = (),
         legacy_trace: list[TraceEvent] | tuple[TraceEvent, ...] = (),
         usage: RagUsage | None = None,
@@ -71,7 +73,9 @@ class ObservationBuilder:
     ) -> RagRunObservation:
         """Build an observation while preserving whatever partial state exists."""
         payload = self._payload(answer, reasoning)
-        stages = retrieval_stages or build_retrieval_stages(chunks, run_id=run_id)
+        retrieval_snapshots = retrieval_stages or build_retrieval_stages(
+            chunks, run_id=run_id
+        )
         return RagRunObservation(
             run_id=run_id,
             request_id=request_id,
@@ -91,7 +95,8 @@ class ObservationBuilder:
             ),
             answer=self._answer(payload, chunks, status),
             generation=generation or GenerationInfo(),
-            retrieval=list(stages),
+            retrieval=list(retrieval_snapshots),
+            stages=list(stages or []),
             query_embedding_id=query_embedding_id,
             embedding=embedding,
             assessments=[
@@ -137,45 +142,46 @@ class ObservationBuilder:
     ) -> RagRunObservation:
         """Build from the metadata returned by ``BasicRagRunner.run``."""
         generation_data = metadata.get("generation")
-        generation = (
-            GenerationInfo(
-                model_id=(
-                    str(generation_data.get("model_id"))
-                    if isinstance(generation_data, dict)
-                    and generation_data.get("model_id") is not None
-                    else (
-                        effective_configuration.generation.model_id
-                        if effective_configuration
-                        and effective_configuration.generation
-                        else None
-                    )
-                ),
-                prompt_id=(
-                    str(metadata.get("prompt_id"))
-                    if metadata.get("prompt_id") is not None
-                    else (
-                        effective_configuration.prompt.prompt_id
-                        if effective_configuration and effective_configuration.prompt
-                        else None
-                    )
-                ),
-                prompt_version=(
-                    str(metadata.get("prompt_version"))
-                    if metadata.get("prompt_version") is not None
-                    else (
-                        effective_configuration.prompt.prompt_version
-                        if effective_configuration and effective_configuration.prompt
-                        else None
-                    )
-                ),
-            )
+        generation = GenerationInfo(
+            model_id=(
+                str(generation_data.get("model_id"))
+                if isinstance(generation_data, dict)
+                and generation_data.get("model_id") is not None
+                else (
+                    effective_configuration.generation.model_id
+                    if effective_configuration and effective_configuration.generation
+                    else None
+                )
+            ),
+            prompt_id=(
+                str(metadata.get("prompt_id"))
+                if metadata.get("prompt_id") is not None
+                else (
+                    effective_configuration.prompt.prompt_id
+                    if effective_configuration and effective_configuration.prompt
+                    else None
+                )
+            ),
+            prompt_version=(
+                str(metadata.get("prompt_version"))
+                if metadata.get("prompt_version") is not None
+                else (
+                    effective_configuration.prompt.prompt_version
+                    if effective_configuration and effective_configuration.prompt
+                    else None
+                )
+            ),
         )
         trace_data = metadata.get("trace", [])
-        trace = [
-            TraceSpan.model_validate(item)
-            for item in trace_data
-            if isinstance(item, dict)
-        ] if isinstance(trace_data, list) else []
+        trace = (
+            [
+                TraceSpan.model_validate(item)
+                for item in trace_data
+                if isinstance(item, dict)
+            ]
+            if isinstance(trace_data, list)
+            else []
+        )
         usage_data = metadata.get("usage")
         usage = (
             RagUsage.model_validate(usage_data)
@@ -187,6 +193,16 @@ class ObservationBuilder:
             EmbeddingDiagnostics.model_validate(embedding_data)
             if isinstance(embedding_data, dict)
             else None
+        )
+        stage_data = metadata.get("stage_graph", [])
+        stages = (
+            [
+                StageSnapshot.model_validate(item)
+                for item in stage_data
+                if isinstance(item, dict)
+            ]
+            if isinstance(stage_data, list)
+            else []
         )
         return self.build(
             run_id=run_id,
@@ -212,6 +228,7 @@ class ObservationBuilder:
             ),
             embedding=embedding,
             usage=usage,
+            stages=stages,
         )
 
     @staticmethod
@@ -281,9 +298,7 @@ class ObservationBuilder:
                 )
                 citation_ids.append(citation_id)
             claims.append(
-                ClaimModel(
-                    claim_id=claim_id, text=claim.text, citations=citation_ids
-                )
+                ClaimModel(claim_id=claim_id, text=claim.text, citations=citation_ids)
             )
         return ObservationAnswer(
             text=payload.answer_text,
@@ -329,7 +344,7 @@ class ObservationBuilder:
 
     @staticmethod
     def _legacy_trace(
-        events: list[TraceEvent] | tuple[TraceEvent, ...]
+        events: list[TraceEvent] | tuple[TraceEvent, ...],
     ) -> list[TraceSpan]:
         """Represent existing append-only stage events in the canonical trace shape."""
         return [
