@@ -45,6 +45,9 @@ class PhaseOneApplication:
         repository: PostgresRepository,
         artifacts: ArtifactStore,
         summaries: DocumentSummaryService,
+        runner: BasicRagRunner | None = None,
+        architecture: ArchitectureConfig | None = None,
+        ingestion_config: IngestionConfig | None = None,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -58,6 +61,9 @@ class PhaseOneApplication:
             artifacts,
             summaries,
         )
+        self.runner = runner
+        self.architecture = architecture
+        self.ingestion_config = ingestion_config
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
@@ -139,4 +145,7 @@ def create_phase_one_application(
         repository,
         artifacts,
         summaries,
+        runner,
+        architecture,
+        ingestion_config,
     )

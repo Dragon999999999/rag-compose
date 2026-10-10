@@ -1,0 +1,247 @@
+"""Application service for the native ``/eval/v1`` protocol."""
+
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from llm_grounding.api.eval_schemas import EvalQueryRequest, EvalRetrieveRequest
+from llm_grounding.application.bootstrap import PhaseOneApplication
+from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest, Message
+from llm_grounding.observability.builder import ObservationBuilder
+from llm_grounding.observability.configuration import build_effective_configuration
+from llm_grounding.observability.models import RagRunObservation
+
+
+class EvalServiceError(ValueError):
+    """Report a protocol error with an HTTP-appropriate status and stable code."""
+
+    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+        """Retain safe client-facing error data."""
+        super().__init__(message)
+        self.code, self.message, self.status_code = code, message, status_code
+
+
+class EvalService:
+    """Orchestrate evaluation requests through the existing Basic RAG runner."""
+
+    def __init__(
+        self,
+        application: PhaseOneApplication,
+        builder: ObservationBuilder | None = None,
+    ) -> None:
+        """Inject the application composition and canonical observation builder."""
+        self._application = application
+        self._builder = builder or ObservationBuilder()
+
+    async def query(
+        self,
+        request: EvalQueryRequest,
+        *,
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> RagRunObservation:
+        """Run generation and persist the canonical observation."""
+        identifier = request_id or idempotency_key or str(uuid4())
+        existing = await self._existing(identifier)
+        if existing is not None:
+            return existing
+        runner = self._runner()
+        corpus_request = CorpusRequest(
+            request.corpus_id,
+            request.query,
+            document_ids=self._document_ids(request.filters),
+        )
+        history = self._history(request.history)
+        run_id, answer, metadata = await runner.run(corpus_request, history)
+        chunks = await self._hydrate_chunks(metadata)
+        observation = self._builder.from_basic_rag_metadata(
+            run_id=run_id,
+            request_id=identifier,
+            corpus_id=request.corpus_id,
+            architecture_name=self._architecture_name,
+            architecture_version=self._architecture_version,
+            request=corpus_request,
+            chunks=chunks,
+            answer=answer,
+            metadata=metadata,
+            effective_configuration=self._effective(request.corpus_id),
+        )
+        observation = observation.model_copy(
+            update={
+                "request": observation.request.model_copy(
+                    update={
+                        "parameters": request.parameters,
+                        "filters": request.filters,
+                    }
+                ),
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        await self._persist(observation, metadata)
+        return observation
+
+    async def retrieve(
+        self,
+        request: EvalRetrieveRequest,
+        *,
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> RagRunObservation:
+        """Run candidate/final-context retrieval without invoking generation."""
+        identifier = request_id or idempotency_key or str(uuid4())
+        existing = await self._existing(identifier)
+        if existing is not None:
+            return existing
+        runner = self._runner()
+        corpus_request = CorpusRequest(
+            request.corpus_id,
+            request.query,
+            document_ids=self._document_ids(request.filters),
+        )
+        chunks = await runner.retrieve(corpus_request)
+        observation = self._builder.build(
+            run_id=str(uuid4()),
+            request_id=identifier,
+            corpus_id=request.corpus_id,
+            architecture_name=self._architecture_name,
+            architecture_version=self._architecture_version,
+            request=corpus_request,
+            chunks=chunks,
+            effective_configuration=self._effective(request.corpus_id),
+        ).model_copy(
+            update={
+                "request": {
+                    "query": request.query,
+                    "history": request.history,
+                    "parameters": request.parameters,
+                    "filters": request.filters,
+                },
+                "answer": None,
+                "status": "retrieved",
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        await self._persist(observation, {})
+        return observation
+
+    async def by_request_id(self, request_id: str) -> RagRunObservation:
+        """Restore a persisted observation or raise a protocol 404 error."""
+        existing = await self._existing(request_id)
+        if existing is None:
+            raise EvalServiceError(
+                "request_not_found", "No observation has that request_id.", 404
+            )
+        return existing
+
+    def _runner(self):
+        """Return the configured runner or a clear composition error."""
+        if self._application.runner is None:
+            raise EvalServiceError(
+                "service_unavailable",
+                "The evaluation runner is not configured.",
+                503,
+            )
+        return self._application.runner
+
+    @property
+    def _architecture_name(self) -> str:
+        """Return configured architecture identity."""
+        return (
+            self._application.architecture.name
+            if self._application.architecture
+            else "basic_rag_v1"
+        )
+
+    @property
+    def _architecture_version(self) -> int:
+        """Return configured architecture version."""
+        return (
+            self._application.architecture.version
+            if self._application.architecture
+            else 1
+        )
+
+    def _effective(self, corpus_id: str):
+        """Build effective configuration when the composition root supplied it."""
+        if not self._application.architecture or not self._application.ingestion_config:
+            return None
+        return build_effective_configuration(
+            self._application.architecture,
+            self._application.ingestion_config,
+            corpus_id=corpus_id,
+        )
+
+    async def _existing(self, request_id: str) -> RagRunObservation | None:
+        """Load an idempotent result when the configured repository supports it."""
+        loader = getattr(
+            self._application.repository, "observation_by_request_id", None
+        )
+        if loader is None:
+            return None
+        return await loader(request_id)
+
+    async def _persist(
+        self, observation: RagRunObservation, metadata: dict[str, object]
+    ) -> None:
+        """Persist both the run index and canonical observation when available."""
+        record_run = getattr(self._application.repository, "record_run", None)
+        if record_run is not None:
+            await record_run(
+                observation.run_id,
+                observation.corpus_id,
+                observation.architecture_name,
+                int(observation.architecture_version),
+                observation.status,
+                metadata,
+            )
+        saver = getattr(self._application.repository, "save_observation", None)
+        if saver is not None:
+            await saver(observation)
+
+    async def _hydrate_chunks(
+        self, metadata: dict[str, object]
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Hydrate canonical chunks while retaining query rank and score."""
+        entries = metadata.get("retrieval_results", [])
+        if not isinstance(entries, list):
+            return ()
+        specs = [entry for entry in entries if isinstance(entry, dict)]
+        ids = tuple(str(entry["chunk_id"]) for entry in specs if "chunk_id" in entry)
+        chunks = await self._application.repository.chunks_by_ids(ids)
+        return tuple(
+            ChunkRetrievalResult(
+                chunks[chunk_id],
+                int(entry.get("rank", index)),
+                str(entry.get("retriever_id", "unknown")),
+                (
+                    float(entry["score"])
+                    if isinstance(entry.get("score"), (int, float))
+                    else None
+                ),
+            )
+            for index, entry in enumerate(specs, 1)
+            if (chunk_id := str(entry.get("chunk_id", ""))) in chunks
+        )
+
+    @staticmethod
+    def _document_ids(filters: dict[str, object]) -> tuple[str, ...]:
+        """Extract the optional document filter without accepting arbitrary fields."""
+        value = filters.get("document_ids", [])
+        return (
+            tuple(item for item in value if isinstance(item, str))
+            if isinstance(value, list)
+            else ()
+        )
+
+    @staticmethod
+    def _history(history: list[dict[str, object]]) -> tuple[Message, ...]:
+        """Convert protocol history into the existing domain message type."""
+        return tuple(
+            Message(
+                str(uuid4()),
+                "eval",
+                str(item.get("role", "user")),
+                str(item.get("content", "")),
+                datetime.now(UTC),
+            )
+            for item in history
+        )

@@ -34,10 +34,12 @@ from llm_grounding.infrastructure.database.models import (
     MessageRow,
     ProjectDocumentRow,
     ProjectRow,
+    RagRunObservationRow,
     RagRunRow,
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
+from llm_grounding.observability.models import RagRunObservation
 
 
 def _now() -> datetime:
@@ -838,3 +840,46 @@ class PostgresRepository:
             if row is None:
                 raise KeyError(f"Unknown RAG run: {run_id}")
             return dict(row.metadata_json)
+
+    async def save_observation(self, observation: RagRunObservation) -> None:
+        """Persist or replace one canonical observation by run identity."""
+        payload = observation.model_dump(mode="json")
+        async with self._sessions.begin() as session:
+            row = await session.get(RagRunObservationRow, observation.run_id)
+            if row is None:
+                session.add(
+                    RagRunObservationRow(
+                        run_id=observation.run_id,
+                        request_id=observation.request_id,
+                        observation_json=payload,
+                    )
+                )
+            else:
+                row.request_id = observation.request_id
+                row.observation_json = payload
+
+    async def get_observation(self, run_id: str) -> RagRunObservation | None:
+        """Load a canonical observation by its RAG run identifier."""
+        async with self._sessions() as session:
+            row = await session.get(RagRunObservationRow, run_id)
+            return (
+                None
+                if row is None
+                else RagRunObservation.model_validate(row.observation_json)
+            )
+
+    async def observation_by_request_id(
+        self, request_id: str
+    ) -> RagRunObservation | None:
+        """Load a canonical observation by idempotency/request identity."""
+        async with self._sessions() as session:
+            row = await session.scalar(
+                select(RagRunObservationRow).where(
+                    RagRunObservationRow.request_id == request_id
+                )
+            )
+            return (
+                None
+                if row is None
+                else RagRunObservation.model_validate(row.observation_json)
+            )

@@ -188,6 +188,20 @@ class RagRunRow(Base):
     )
 
 
+class RagRunObservationRow(Base):
+    """Persist the canonical evaluation observation for replay and re-scoring."""
+
+    __tablename__ = "rag_run_observations"
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("rag_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    request_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    observation_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class DocumentSummaryRow(Base):
     """Persist a grounded document overview and its validated RAG run."""
 

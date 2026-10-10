@@ -7,6 +7,7 @@ from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
 from llm_grounding.domain.answers import Answer, DecisionAction, DecisionResult
 from llm_grounding.domain.corpus import (
+    ChunkRetrievalResult,
     CorpusRequest,
     GroundingContext,
     Message,
@@ -45,11 +46,7 @@ class BasicRagRunner:
         generate_chat_name: bool = False,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute Basic RAG and retain metadata suitable for persistence."""
-        chunks = await (
-            self._summary.retrieve(request)
-            if request.task_type == TaskType.SUMMARY
-            else self._vector.retrieve(request)
-        )
+        chunks = await self.retrieve(request)
         if not chunks:
             self._diagnostics.report_empty_retrieval(
                 GroundingContext(request, (), history, generate_chat_name)
@@ -65,6 +62,7 @@ class BasicRagRunner:
                 {
                     "status": "completed",
                     "retrieved_chunk_ids": [],
+                    "retrieval_results": [],
                     "retrieval_stages": [
                         stage.model_dump(mode="json")
                         for stage in build_retrieval_stages((), run_id=str(uuid4()))
@@ -91,6 +89,15 @@ class BasicRagRunner:
             {
                 "status": "rejected" if rejected else "completed",
                 "retrieved_chunk_ids": [item.chunk.chunk_id for item in chunks],
+                "retrieval_results": [
+                    {
+                        "chunk_id": item.chunk.chunk_id,
+                        "rank": item.rank,
+                        "retriever_id": item.retriever_id,
+                        "score": item.score,
+                    }
+                    for item in chunks
+                ],
                 "assessment_labels": [item.label for item in assessments],
                 "decision": decision.action,
                 "generated_chat_name": reasoning.payload.get("chat_name"),
@@ -105,6 +112,16 @@ class BasicRagRunner:
                 ],
                 "created_at": datetime.now(UTC).isoformat(),
             },
+        )
+
+    async def retrieve(
+        self, request: CorpusRequest
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Retrieve the exact candidate set used by the query path."""
+        return await (
+            self._summary.retrieve(request)
+            if request.task_type == TaskType.SUMMARY
+            else self._vector.retrieve(request)
         )
 
     @staticmethod

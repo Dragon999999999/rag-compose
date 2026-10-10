@@ -14,10 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from llm_grounding.api.eval import create_eval_router
 from llm_grounding.application.bootstrap import (
     PhaseOneApplication,
     create_phase_one_application,
 )
+from llm_grounding.application.eval_service import EvalService
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import (
     Chat,
@@ -305,8 +307,14 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         allow_origins=origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Content-Type"],
+        allow_headers=[
+            "Content-Type",
+            "X-Request-ID",
+            "Idempotency-Key",
+            "X-Rag-Eval-Protocol",
+        ],
     )
+    app.include_router(create_eval_router(EvalService(application)))
 
     @app.get("/api/projects")
     async def list_projects() -> list[dict[str, object]]:
