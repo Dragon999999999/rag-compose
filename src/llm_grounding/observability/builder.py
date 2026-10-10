@@ -198,7 +198,9 @@ class ObservationBuilder:
             chunks=chunks,
             answer=answer,
             effective_configuration=effective_configuration,
-            status=str(metadata.get("status", "completed")),
+            status=str(
+                metadata.get("observation_status", metadata.get("status", "completed"))
+            ),
             created_at=self._datetime(metadata.get("created_at")),
             history=history,
             trace=trace,

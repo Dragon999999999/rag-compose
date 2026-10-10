@@ -129,6 +129,9 @@ class BasicRagRunner:
             answer,
             {
                 "status": (
+                    "rejected" if rejected else "completed"
+                ),
+                "observation_status": (
                     "rejected"
                     if rejected
                     else "abstained"
