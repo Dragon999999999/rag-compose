@@ -1,6 +1,7 @@
 """Basic RAG v1 query orchestration, separate from document ingestion and Baseline 0."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
@@ -51,13 +52,14 @@ class BasicRagRunner:
         history: tuple[Message, ...] = (),
         *,
         generate_chat_name: bool = False,
+        runtime_config: dict[str, Any] | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute Basic RAG and retain metadata suitable for persistence."""
         traces = TraceRecorder()
         usage = UsageAccumulator()
         total_span = traces.start("rag_e2e")
         retrieval_span = traces.start("retrieval")
-        chunks = await self.retrieve(request)
+        chunks = await self.retrieve(request, runtime_config=runtime_config)
         query_embedding = self._vector.last_query_embedding
         if query_embedding is not None:
             usage.add_embedding()
@@ -192,13 +194,33 @@ class BasicRagRunner:
         )
 
     async def retrieve(
-        self, request: CorpusRequest
+        self,
+        request: CorpusRequest,
+        *,
+        runtime_config: dict[str, Any] | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Retrieve the exact candidate set used by the query path."""
+        values = runtime_config or {}
+        top_k = values.get("top_k") if isinstance(values.get("top_k"), int) else None
+        context_chars = (
+            values.get("context_chars")
+            if isinstance(values.get("context_chars"), int)
+            else None
+        )
+        per_facet = (
+            values.get("summary_per_facet")
+            if isinstance(values.get("summary_per_facet"), int)
+            else None
+        )
         return await (
-            self._summary.retrieve(request)
+            self._summary.retrieve(
+                request,
+                top_k=top_k,
+                context_chars=context_chars,
+                per_facet=per_facet,
+            )
             if request.task_type == TaskType.SUMMARY
-            else self._vector.retrieve(request)
+            else self._vector.retrieve(request, top_k=top_k)
         )
 
     @staticmethod

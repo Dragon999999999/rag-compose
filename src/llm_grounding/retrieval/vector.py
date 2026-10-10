@@ -18,7 +18,7 @@ class VectorRetriever:
     """Embed a query explicitly and search a project-filtered derived vector index."""
 
     def __init__(self, embedder: Embedder, store: VectorStore, top_k: int = 8) -> None:
-        """Configure a compatible embedder, vector store, and positive candidate limit."""
+        """Configure an embedder, vector store, and positive candidate limit."""
         if top_k < 1:
             raise ValueError("top_k must be positive")
         self._embedder, self._store, self._top_k = embedder, store, top_k
@@ -30,18 +30,18 @@ class VectorRetriever:
         return self._last_query_embedding
 
     async def retrieve(
-        self, request: CorpusRequest
+        self, request: CorpusRequest, *, top_k: int | None = None
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Return query-relevant chunks scoped in the store by active project."""
         query = await self._embedder.embed_query(request.task)
         self._last_query_embedding = query
         return await self._store.search(
-            request.project_id, query, self._top_k, request.document_ids
+            request.project_id, query, top_k or self._top_k, request.document_ids
         )
 
 
 class SummaryRetriever:
-    """Use all fitting corpus chunks or retrieve across fixed deterministic summary facets."""
+    """Retrieve all fitting chunks or fixed deterministic summary facets."""
 
     def __init__(
         self,
@@ -57,15 +57,22 @@ class SummaryRetriever:
         self._context_chars, self._per_facet = context_chars, per_facet
 
     async def retrieve(
-        self, request: CorpusRequest
+        self,
+        request: CorpusRequest,
+        *,
+        top_k: int | None = None,
+        context_chars: int | None = None,
+        per_facet: int | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Avoid a naive single 'summarize' query that would bias coverage."""
         if request.task_type != TaskType.SUMMARY:
-            return await self._vector.retrieve(request)
+            return await self._vector.retrieve(request, top_k=top_k)
+        active_context_chars = context_chars or self._context_chars
+        active_per_facet = per_facet or self._per_facet
         all_chunks = await self._repository.chunks_for_project(
             request.project_id, request.document_ids
         )
-        if sum(len(chunk.text) for chunk in all_chunks) <= self._context_chars:
+        if sum(len(chunk.text) for chunk in all_chunks) <= active_context_chars:
             return tuple(
                 ChunkRetrievalResult(chunk, rank, "summary_all_chunks", None)
                 for rank, chunk in enumerate(all_chunks, 1)
@@ -78,9 +85,10 @@ class SummaryRetriever:
                     f"{facet}. {request.task}",
                     TaskType.QA,
                     request.document_ids,
-                )
+                ),
+                top_k=top_k,
             )
-            for result in results[: self._per_facet]:
+            for result in results[:active_per_facet]:
                 selected.setdefault(result.chunk.chunk_id, result)
         ordered = sorted(
             selected.values(),
@@ -89,7 +97,7 @@ class SummaryRetriever:
         bounded: list[ChunkRetrievalResult] = []
         size = 0
         for result in ordered:
-            if bounded and size + len(result.chunk.text) > self._context_chars:
+            if bounded and size + len(result.chunk.text) > active_context_chars:
                 continue
             bounded.append(result)
             size += len(result.chunk.text)

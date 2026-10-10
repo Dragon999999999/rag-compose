@@ -63,7 +63,14 @@ class EvalService:
         )
         history = self._history(request.history)
         try:
-            run_id, answer, metadata = await runner.run(corpus_request, history)
+            if request.config_overrides:
+                run_id, answer, metadata = await runner.run(
+                    corpus_request,
+                    history,
+                    runtime_config=request.config_overrides,
+                )
+            else:
+                run_id, answer, metadata = await runner.run(corpus_request, history)
         except Exception as exc:
             observation = await self._failure_observation(
                 request,
@@ -167,7 +174,12 @@ class EvalService:
             document_ids=self._document_ids(request.filters),
         )
         try:
-            chunks = await runner.retrieve(corpus_request)
+            if request.config_overrides:
+                chunks = await runner.retrieve(
+                    corpus_request, runtime_config=request.config_overrides
+                )
+            else:
+                chunks = await runner.retrieve(corpus_request)
         except Exception as exc:
             history = self._history(request.history)
             observation = await self._failure_observation(
