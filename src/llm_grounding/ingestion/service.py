@@ -1,9 +1,12 @@
 """Separate persistent document ingestion workflow, never invoked by query retrieval."""
 
 import re
+from collections.abc import Awaitable
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from time import monotonic
+from typing import TypeVar
 
 from llm_grounding.domain.corpus import (
     Document,
@@ -19,7 +22,12 @@ from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.protocol import Chunker
+from llm_grounding.observability.ingestion import build_ingestion_observation
+from llm_grounding.observability.models import StageType
+from llm_grounding.observability.trace import TraceRecorder
 from llm_grounding.parsing.protocol import DocumentParser
+
+StageResult = TypeVar("StageResult")
 
 _TEMPORARY_PDF_NAME = re.compile(r"^tmp[a-z0-9]{6,32}\.pdf$", re.IGNORECASE)
 _UUID_PDF_NAME = re.compile(
@@ -51,7 +59,7 @@ class DocumentIngestionService:
         embedder: Embedder,
         vectors: VectorStore,
     ) -> None:
-        """Inject independently replaceable persistence, extraction, and indexing dependencies."""
+        """Inject persistence, extraction, and indexing dependencies."""
         self._repository = repository
         self._artifacts = artifacts
         self._parser = parser
@@ -124,6 +132,11 @@ class DocumentIngestionService:
         Failures retain canonical metadata and a sanitized error type. The caller can
         explicitly re-run this same compatible ingestion later.
         """
+        traces = TraceRecorder()
+        total_span = traces.start("ingestion", stage_type=StageType.INGESTION)
+        started = monotonic()
+        evidence = ()
+        chunks = ()
         try:
             await self._vectors.delete_ingestion(ingestion.id)
             await self._repository.clear_ingestion_representation(ingestion.id)
@@ -131,8 +144,14 @@ class DocumentIngestionService:
                 ingestion.id, IngestionStatus.PARSING
             )
             path = await self._artifacts.path_for(document.artifact_key)
-            parsed = await self._parser.parse(DocumentSource(document.id, path))
-            knowledge = await self._knowledge_builder.build(parsed)
+            parsed = await self._traced(
+                traces,
+                "parse",
+                self._parser.parse(DocumentSource(document.id, path)),
+            )
+            knowledge = await self._traced(
+                traces, "extract", self._knowledge_builder.build(parsed)
+            )
             evidence = tuple(
                 replace(item, evidence_id=f"{ingestion.id}:{item.evidence_id}")
                 for item in knowledge.evidence
@@ -141,13 +160,19 @@ class DocumentIngestionService:
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.CHUNKING
             )
-            chunks = await self._chunker.chunk(evidence, ingestion.id, document.name)
+            chunks = await self._traced(
+                traces,
+                "chunk",
+                self._chunker.chunk(evidence, ingestion.id, document.name),
+            )
             await self._repository.store_chunks(chunks)
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.EMBEDDING
             )
-            vectors = await self._embedder.embed_documents(
-                [chunk.text for chunk in chunks]
+            vectors = await self._traced(
+                traces,
+                "embed",
+                self._embedder.embed_documents([chunk.text for chunk in chunks]),
             )
             if any(
                 vector.model_identity != ingestion.embedding_hash
@@ -155,12 +180,15 @@ class DocumentIngestionService:
                 for vector in vectors
             ):
                 raise ValueError(
-                    "Configured embedder is incompatible with ingestion embedding identity"
+                    "Configured embedder is incompatible with ingestion "
+                    "embedding identity"
                 )
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.INDEXING
             )
-            await self._vectors.upsert(project_id, chunks, vectors)
+            await self._traced(
+                traces, "index", self._vectors.upsert(project_id, chunks, vectors)
+            )
             # Re-indexing one shared representation must restore every project's
             # payload association without parsing or embedding its chunks again.
             for (
@@ -173,14 +201,63 @@ class DocumentIngestionService:
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.READY
             )
+            traces.end(total_span, status="completed", output_count=len(chunks))
+            await self._save_observation(
+                build_ingestion_observation(
+                    document,
+                    ingestion,
+                    config,
+                    evidence,
+                    chunks,
+                    status="ready",
+                    trace=traces.spans,
+                    latency_ms=(monotonic() - started) * 1000,
+                )
+            )
         except (OSError, RuntimeError, ValueError) as exc:
+            traces.end(total_span, status="failed", error=type(exc).__name__)
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.FAILED, type(exc).__name__
             )
+            await self._save_observation(
+                build_ingestion_observation(
+                    document,
+                    ingestion,
+                    config,
+                    evidence,
+                    chunks,
+                    status="failed",
+                    trace=traces.spans,
+                    latency_ms=(monotonic() - started) * 1000,
+                    error=type(exc).__name__,
+                )
+            )
             raise
 
+    async def _traced(
+        self,
+        recorder: TraceRecorder,
+        name: str,
+        operation: Awaitable[StageResult],
+    ) -> StageResult:
+        """Await one ingestion operation and preserve its failure span."""
+        span_id = recorder.start(name, stage_type=StageType.INGESTION)
+        try:
+            result = await operation
+        except Exception as exc:
+            recorder.end(span_id, status="failed", error=type(exc).__name__)
+            raise
+        recorder.end(span_id, status="completed")
+        return result
+
+    async def _save_observation(self, observation: object) -> None:
+        """Persist diagnostics when the repository implements the observability API."""
+        saver = getattr(self._repository, "save_ingestion_observation", None)
+        if saver is not None:
+            await saver(observation)
+
     async def _digest(self, source: Path) -> str:
-        """Hash file content off the event loop without loading project documents into memory."""
+        """Hash file content off the event loop without loading all data."""
         import asyncio
 
         def compute() -> str:

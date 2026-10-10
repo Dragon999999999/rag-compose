@@ -30,6 +30,7 @@ from llm_grounding.infrastructure.database.models import (
     DocumentRow,
     DocumentSummaryRow,
     EvidenceRow,
+    IngestionObservationRow,
     IngestionRow,
     MessageRow,
     ProjectDocumentRow,
@@ -39,6 +40,7 @@ from llm_grounding.infrastructure.database.models import (
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
+from llm_grounding.observability.ingestion import IngestionObservation
 from llm_grounding.observability.models import RagRunObservation
 
 
@@ -535,6 +537,20 @@ class PostgresRepository:
             chunks = [await self._chunk(session, row) for row in rows]
             return {chunk.chunk_id: chunk for chunk in chunks}
 
+    async def chunks_for_ingestion(
+        self, ingestion_id: str
+    ) -> tuple[RetrievalUnit, ...]:
+        """Load every chunk and source mapping for one ingestion in order."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(RetrievalUnitRow)
+                    .where(RetrievalUnitRow.ingestion_id == ingestion_id)
+                    .order_by(RetrievalUnitRow.ordering)
+                )
+            ).all()
+            return tuple(await self._chunk(session, row) for row in rows)
+
     async def evidence_by_ids(
         self, evidence_ids: tuple[str, ...]
     ) -> dict[str, EvidenceUnit]:
@@ -571,6 +587,34 @@ class PostgresRepository:
                 )
                 for row in rows
             }
+
+    async def evidence_for_ingestion(
+        self, ingestion_id: str
+    ) -> tuple[EvidenceUnit, ...]:
+        """Load all canonical evidence units for one ingestion in parser order."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(EvidenceRow)
+                    .where(EvidenceRow.ingestion_id == ingestion_id)
+                    .order_by(EvidenceRow.ordering)
+                )
+            ).all()
+            return tuple(
+                EvidenceUnit(
+                    row.id,
+                    row.document_id,
+                    EvidenceType(row.evidence_type),
+                    row.source_uri,
+                    row.ordering,
+                    row.page_number,
+                    row.block_index,
+                    tuple(row.bounding_box) if row.bounding_box else None,
+                    row.text,
+                    dict(row.metadata_json),
+                )
+                for row in rows
+            )
 
     async def project_ids_for_ingestion(self, ingestion_id: str) -> tuple[str, ...]:
         """Return every project selecting an ingestion for index-membership repair."""
@@ -882,4 +926,33 @@ class PostgresRepository:
                 None
                 if row is None
                 else RagRunObservation.model_validate(row.observation_json)
+            )
+
+    async def save_ingestion_observation(
+        self, observation: IngestionObservation
+    ) -> None:
+        """Persist or replace the inventory associated with an ingestion."""
+        payload = observation.model_dump(mode="json")
+        async with self._sessions.begin() as session:
+            row = await session.get(IngestionObservationRow, observation.ingestion_id)
+            if row is None:
+                session.add(
+                    IngestionObservationRow(
+                        ingestion_id=observation.ingestion_id,
+                        observation_json=payload,
+                    )
+                )
+            else:
+                row.observation_json = payload
+
+    async def get_ingestion_observation(
+        self, ingestion_id: str
+    ) -> IngestionObservation | None:
+        """Load a persisted ingestion inventory by ingestion identity."""
+        async with self._sessions() as session:
+            row = await session.get(IngestionObservationRow, ingestion_id)
+            return (
+                None
+                if row is None
+                else IngestionObservation.model_validate(row.observation_json)
             )

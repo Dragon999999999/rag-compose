@@ -100,6 +100,19 @@ class IngestionRow(Base):
     )
 
 
+class IngestionObservationRow(Base):
+    """Persist the derived evidence/chunk inventory for an ingestion."""
+
+    __tablename__ = "ingestion_observations"
+    ingestion_id: Mapped[str] = mapped_column(
+        ForeignKey("document_ingestions.id", ondelete="CASCADE"), primary_key=True
+    )
+    observation_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class EvidenceRow(Base):
     """Persist canonical text evidence and source provenance for an ingestion."""
 
