@@ -123,9 +123,7 @@ class EvaluationCorpusRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     documents_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
     chunks_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
-    perturbation_metadata: Mapped[dict[str, object]] = mapped_column(
-        JSON, default=dict
-    )
+    perturbation_metadata: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -227,6 +225,9 @@ class RagRunObservationRow(Base):
         ForeignKey("rag_runs.id", ondelete="CASCADE"), primary_key=True
     )
     request_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    benchmark_case_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     observation_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

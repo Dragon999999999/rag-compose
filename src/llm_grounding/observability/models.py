@@ -71,6 +71,8 @@ class GenerationInfo(ObservationModel):
     model_id: str | None = None
     prompt_id: str | None = None
     prompt_version: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
 
 
 class Score(ObservationModel):
@@ -129,6 +131,20 @@ class RetrievalStageSnapshot(ObservationModel):
     query_embedding_id: str | None = None
 
 
+class StageSnapshot(ObservationModel):
+    """One node in an arbitrary retrieval or generation processing DAG."""
+
+    stage_id: str
+    stage_type: StageType | str
+    component_name: str
+    parent_stage_ids: list[str] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    input_item_ids: list[str] = Field(default_factory=list)
+    output_item_ids: list[str] = Field(default_factory=list)
+    trace_span_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class TraceSpan(ObservationModel):
     """Wall-clock and monotonic timing for one nested execution span."""
 
@@ -144,6 +160,24 @@ class TraceSpan(ObservationModel):
     output_count: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    resource_usage: "ResourceUsage | None" = None
+
+
+class ResourceUsage(ObservationModel):
+    """Process or provider-reported resource measurements with explicit scope."""
+
+    component_id: str
+    span_id: str | None = None
+    cpu_time_ms: float | None = Field(default=None, ge=0)
+    cpu_utilization_percent: float | None = Field(default=None, ge=0, le=100)
+    memory_peak_bytes: int | None = Field(default=None, ge=0)
+    memory_average_bytes: int | None = Field(default=None, ge=0)
+    gpu_id: str | None = None
+    gpu_utilization_percent: float | None = Field(default=None, ge=0, le=100)
+    gpu_memory_peak_bytes: int | None = Field(default=None, ge=0)
+    measurement_scope: str
+    measurement_source: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMUsage(ObservationModel):
@@ -173,6 +207,7 @@ class RagUsage(ObservationModel):
     total_output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
     usage_origin: UsageOrigin = UsageOrigin.UNAVAILABLE
+    resource_usage: list[ResourceUsage] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -370,6 +405,7 @@ class RagRunObservation(ObservationModel):
     schema_version: str = "1"
     run_id: str
     request_id: str
+    target_run_id: str | None = None
     corpus_id: str
     architecture_name: str
     architecture_version: str | int
@@ -378,6 +414,7 @@ class RagRunObservation(ObservationModel):
     generation: GenerationInfo = Field(default_factory=GenerationInfo)
     answer: ObservationAnswer | None = None
     retrieval: list[RetrievalStageSnapshot] = Field(default_factory=list)
+    stages: list[StageSnapshot] = Field(default_factory=list)
     query_embedding_id: str | None = None
     document_embedding_ids: list[str] = Field(default_factory=list)
     embedding: EmbeddingDiagnostics | None = None

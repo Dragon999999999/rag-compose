@@ -19,7 +19,12 @@ def upgrade() -> None:
             sa.ForeignKey("rag_runs.id", ondelete="CASCADE"),
             primary_key=True,
         ),
-        sa.Column("request_id", sa.String(255), nullable=False, unique=True),
+        sa.Column(
+            "request_id", sa.String(255), nullable=False, unique=True, index=True
+        ),
+        sa.Column("benchmark_case_id", sa.String(255), nullable=True, index=True),
+        sa.Column("experiment_id", sa.String(255), nullable=True, index=True),
+        sa.Column("status", sa.String(32), nullable=False, index=True),
         sa.Column("observation_json", sa.JSON(), nullable=False),
         sa.Column(
             "created_at",

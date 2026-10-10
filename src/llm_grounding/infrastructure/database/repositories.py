@@ -899,11 +899,17 @@ class PostgresRepository:
                     RagRunObservationRow(
                         run_id=observation.run_id,
                         request_id=observation.request_id,
+                        benchmark_case_id=observation.benchmark_case_id,
+                        experiment_id=observation.experiment_id,
+                        status=observation.status,
                         observation_json=payload,
                     )
                 )
             else:
                 row.request_id = observation.request_id
+                row.benchmark_case_id = observation.benchmark_case_id
+                row.experiment_id = observation.experiment_id
+                row.status = observation.status
                 row.observation_json = payload
 
     async def get_observation(self, run_id: str) -> RagRunObservation | None:
@@ -930,6 +936,40 @@ class PostgresRepository:
                 None
                 if row is None
                 else RagRunObservation.model_validate(row.observation_json)
+            )
+
+    async def observations_by_benchmark_case(
+        self, benchmark_case_id: str
+    ) -> tuple[RagRunObservation, ...]:
+        """Load all persisted observations for one benchmark case."""
+        return await self._observations_where(
+            RagRunObservationRow.benchmark_case_id == benchmark_case_id
+        )
+
+    async def observations_by_experiment(
+        self, experiment_id: str
+    ) -> tuple[RagRunObservation, ...]:
+        """Load all persisted observations for one statistical experiment."""
+        return await self._observations_where(
+            RagRunObservationRow.experiment_id == experiment_id
+        )
+
+    async def observations_by_status(
+        self, status: str
+    ) -> tuple[RagRunObservation, ...]:
+        """Load observations with one explicit completed/abstained/failed status."""
+        return await self._observations_where(RagRunObservationRow.status == status)
+
+    async def _observations_where(
+        self, predicate: object
+    ) -> tuple[RagRunObservation, ...]:
+        """Hydrate canonical observations from an indexed observation predicate."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(select(RagRunObservationRow).where(predicate))
+            ).all()
+            return tuple(
+                RagRunObservation.model_validate(row.observation_json) for row in rows
             )
 
     async def save_ingestion_observation(
@@ -961,9 +1001,7 @@ class PostgresRepository:
                 else IngestionObservation.model_validate(row.observation_json)
             )
 
-    async def save_evaluation_corpus(
-        self, corpus: EvaluationCorpusReference
-    ) -> None:
+    async def save_evaluation_corpus(self, corpus: EvaluationCorpusReference) -> None:
         """Persist an isolated evaluation corpus without project-table writes."""
         async with self._sessions.begin() as session:
             row = await session.get(EvaluationCorpusRow, corpus.corpus_id)
