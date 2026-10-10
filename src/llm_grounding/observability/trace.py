@@ -7,15 +7,21 @@ from time import monotonic
 from uuid import uuid4
 
 from llm_grounding.observability.models import StageType, TraceSpan
+from llm_grounding.observability.telemetry import (
+    ProcessSample,
+    capture_process_usage,
+    process_sample,
+)
 
 
 class TraceRecorder:
     """Record nested spans with wall-clock timestamps and monotonic durations."""
 
-    def __init__(self) -> None:
-        """Create an empty recorder."""
+    def __init__(self, *, capture_resources: bool = True) -> None:
+        """Create an empty recorder, optionally attaching local process usage."""
         self._spans: list[TraceSpan] = []
-        self._active: list[tuple[str, float]] = []
+        self._active: list[tuple[str, float, ProcessSample | None]] = []
+        self._capture_resources = capture_resources
 
     @property
     def spans(self) -> tuple[TraceSpan, ...]:
@@ -43,7 +49,13 @@ class TraceRecorder:
                 metadata=metadata or {},
             )
         )
-        self._active.append((span_id, monotonic()))
+        self._active.append(
+            (
+                span_id,
+                monotonic(),
+                process_sample() if self._capture_resources else None,
+            )
+        )
         return span_id
 
     def end(
@@ -66,14 +78,12 @@ class TraceRecorder:
         if index is None:
             raise KeyError(f"Unknown trace span: {span_id}")
         if self._active and self._active[-1][0] == span_id:
-            _, started_monotonic = self._active.pop()
+            _, started_monotonic, started_process = self._active.pop()
         else:
             active_index = next(
-                index
-                for index, item in enumerate(self._active)
-                if item[0] == span_id
+                index for index, item in enumerate(self._active) if item[0] == span_id
             )
-            _, started_monotonic = self._active.pop(active_index)
+            _, started_monotonic, started_process = self._active.pop(active_index)
         span = self._spans[index]
         updated = span.model_copy(
             update={
@@ -82,6 +92,13 @@ class TraceRecorder:
                 "status": status,
                 "output_count": output_count,
                 "error": error,
+                "resource_usage": (
+                    capture_process_usage(
+                        span.name, span_id=span_id, started=started_process
+                    )
+                    if self._capture_resources
+                    else None
+                ),
             }
         )
         self._spans[index] = updated

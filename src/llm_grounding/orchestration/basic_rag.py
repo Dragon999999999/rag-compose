@@ -14,7 +14,7 @@ from llm_grounding.domain.corpus import (
     TaskType,
 )
 from llm_grounding.observability.embedding import embedding_diagnostics
-from llm_grounding.observability.models import LLMUsage
+from llm_grounding.observability.models import LLMUsage, RagUsage
 from llm_grounding.observability.trace import TraceRecorder
 from llm_grounding.observability.usage import UsageAccumulator
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
@@ -90,7 +90,9 @@ class BasicRagRunner:
                         )
                     ],
                     "trace": [span.model_dump(mode="json") for span in traces.spans],
-                    "usage": usage.build().model_dump(mode="json"),
+                    "usage": self._usage_with_trace(usage, traces).model_dump(
+                        mode="json"
+                    ),
                     "query_embedding_id": (
                         query_embedding.embedding_id
                         if query_embedding is not None
@@ -174,7 +176,7 @@ class BasicRagRunner:
                     )
                 ],
                 "trace": [span.model_dump(mode="json") for span in traces.spans],
-                "usage": usage.build().model_dump(mode="json"),
+                "usage": self._usage_with_trace(usage, traces).model_dump(mode="json"),
                 "query_embedding_id": (
                     query_embedding.embedding_id
                     if query_embedding is not None
@@ -198,6 +200,14 @@ class BasicRagRunner:
             if request.task_type == TaskType.SUMMARY
             else self._vector.retrieve(request)
         )
+
+    @staticmethod
+    def _usage_with_trace(usage: UsageAccumulator, traces: TraceRecorder) -> RagUsage:
+        """Include scoped local telemetry captured by completed execution spans."""
+        for span in traces.spans:
+            if span.resource_usage is not None:
+                usage.add_resource_usage(span.resource_usage)
+        return usage.build()
 
     @staticmethod
     def _rejected_answer(decision: DecisionResult) -> Answer:

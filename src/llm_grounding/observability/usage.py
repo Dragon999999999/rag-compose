@@ -1,6 +1,11 @@
 """Aggregation of provider-reported and locally measured pipeline usage."""
 
-from llm_grounding.observability.models import LLMUsage, RagUsage, UsageOrigin
+from llm_grounding.observability.models import (
+    LLMUsage,
+    RagUsage,
+    ResourceUsage,
+    UsageOrigin,
+)
 
 
 class UsageAccumulator:
@@ -13,6 +18,7 @@ class UsageAccumulator:
         self._retrieval_calls = 0
         self._reranker_calls = 0
         self._context_tokens: int | None = None
+        self._resources: list[ResourceUsage] = []
 
     def add_llm(self, usage: LLMUsage) -> None:
         """Add one model invocation, including evaluator roles for diagnostics."""
@@ -33,6 +39,10 @@ class UsageAccumulator:
     def set_context_tokens(self, count: int | None) -> None:
         """Record context token count when a tokenizer actually measured it."""
         self._context_tokens = count
+
+    def add_resource_usage(self, usage: ResourceUsage) -> None:
+        """Retain an explicitly scoped local or provider-reported measurement."""
+        self._resources.append(usage)
 
     def build(self) -> RagUsage:
         """Return an aggregate without inventing unavailable token values."""
@@ -73,6 +83,7 @@ class UsageAccumulator:
             total_output_tokens=output_tokens,
             total_tokens=total_tokens,
             usage_origin=origin,
+            resource_usage=list(self._resources),
             metadata={
                 "llm_usage": [item.model_dump(mode="json") for item in self._llm],
                 "evaluator_llm_calls": len(self._llm) - len(target),
