@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
 from llm_grounding.application.document_summary_service import DocumentSummaryService
+from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
@@ -61,6 +62,7 @@ class PhaseOneApplication:
             artifacts,
             summaries,
         )
+        self.evaluation = EvalApplication(EvalCorpusService(repository), vectors)
         self.runner = runner
         self.architecture = architecture
         self.ingestion_config = ingestion_config
@@ -70,6 +72,17 @@ class PhaseOneApplication:
         await self.summaries.close()
         await self._vectors.close()
         await self._engine.dispose()
+
+
+class EvalApplication:
+    """Evaluation-only services and derived-index access isolated from projects."""
+
+    def __init__(
+        self, corpus_service: EvalCorpusService, embedding_store: QdrantVectorStore
+    ) -> None:
+        """Expose corpus lifecycle and optional evaluation vector access."""
+        self.corpus_service = corpus_service
+        self.embedding_store = embedding_store
 
 
 def create_phase_one_application(

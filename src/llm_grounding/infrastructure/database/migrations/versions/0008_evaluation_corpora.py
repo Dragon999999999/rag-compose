@@ -29,8 +29,45 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
+    op.create_table(
+        "evaluation_corpus_documents",
+        sa.Column("id", sa.String(255), primary_key=True),
+        sa.Column(
+            "corpus_id",
+            sa.String(255),
+            sa.ForeignKey("evaluation_corpora.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("document_json", sa.JSON(), nullable=False),
+    )
+    op.create_table(
+        "evaluation_corpus_chunks",
+        sa.Column("id", sa.String(255), primary_key=True),
+        sa.Column(
+            "corpus_id",
+            sa.String(255),
+            sa.ForeignKey("evaluation_corpora.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("chunk_json", sa.JSON(), nullable=False),
+    )
+    op.create_table(
+        "evaluation_corpus_operations",
+        sa.Column("id", sa.String(255), primary_key=True),
+        sa.Column("corpus_id", sa.String(255), nullable=False, index=True),
+        sa.Column("status", sa.String(32), nullable=False, index=True),
+        sa.Column("operation_json", sa.JSON(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now()
+        ),
+    )
 
 
 def downgrade() -> None:
     """Remove isolated evaluation corpus storage."""
+    op.drop_table("evaluation_corpus_operations")
+    op.drop_table("evaluation_corpus_chunks")
+    op.drop_table("evaluation_corpus_documents")
     op.drop_table("evaluation_corpora")

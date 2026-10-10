@@ -29,6 +29,9 @@ from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
     DocumentSummaryRow,
+    EvaluationCorpusChunkRow,
+    EvaluationCorpusDocumentRow,
+    EvaluationCorpusOperationRow,
     EvaluationCorpusRow,
     EvidenceRow,
     IngestionObservationRow,
@@ -1018,6 +1021,32 @@ class PostgresRepository:
             else:
                 for key, value in values.items():
                     setattr(row, key, value)
+            await session.execute(
+                delete(EvaluationCorpusDocumentRow).where(
+                    EvaluationCorpusDocumentRow.corpus_id == corpus.corpus_id
+                )
+            )
+            await session.execute(
+                delete(EvaluationCorpusChunkRow).where(
+                    EvaluationCorpusChunkRow.corpus_id == corpus.corpus_id
+                )
+            )
+            session.add_all(
+                EvaluationCorpusDocumentRow(
+                    id=str(item.get("id", f"document-{index}")),
+                    corpus_id=corpus.corpus_id,
+                    document_json=item,
+                )
+                for index, item in enumerate(corpus.documents)
+            )
+            session.add_all(
+                EvaluationCorpusChunkRow(
+                    id=str(item.get("id", f"chunk-{index}")),
+                    corpus_id=corpus.corpus_id,
+                    chunk_json=item,
+                )
+                for index, item in enumerate(corpus.chunks)
+            )
 
     async def get_evaluation_corpus(
         self, corpus_id: str
@@ -1036,3 +1065,38 @@ class PostgresRepository:
                 chunks=list(row.chunks_json),
                 perturbation_metadata=dict(row.perturbation_metadata),
             )
+
+    async def delete_evaluation_corpus(self, corpus_id: str) -> bool:
+        """Delete only isolated evaluation tables, never production projects."""
+        async with self._sessions.begin() as session:
+            row = await session.get(EvaluationCorpusRow, corpus_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            return True
+
+    async def save_evaluation_operation(
+        self,
+        operation_id: str,
+        corpus_id: str,
+        status: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Persist one isolated corpus lifecycle operation."""
+        async with self._sessions.begin() as session:
+            session.add(
+                EvaluationCorpusOperationRow(
+                    id=operation_id,
+                    corpus_id=corpus_id,
+                    status=status,
+                    operation_json=payload,
+                )
+            )
+
+    async def get_evaluation_operation(
+        self, operation_id: str
+    ) -> dict[str, object] | None:
+        """Load a corpus-operation status payload."""
+        async with self._sessions() as session:
+            row = await session.get(EvaluationCorpusOperationRow, operation_id)
+            return None if row is None else dict(row.operation_json)

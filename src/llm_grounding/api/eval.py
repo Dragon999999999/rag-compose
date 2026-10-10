@@ -9,6 +9,7 @@ from llm_grounding.api.eval_schemas import (
     EvalConfigOverrides,
     EvalCorpusRequest,
     EvalError,
+    EvalInventoryUpload,
     EvalQueryRequest,
     EvalRetrieveRequest,
 )
@@ -91,6 +92,68 @@ def create_eval_router(service: EvalService) -> APIRouter:
             return _error_response(EvalServiceError("corpus_not_found", str(exc), 404))
         return corpus.model_dump(mode="json")
 
+    @router.delete("/corpora/{corpus_id}", status_code=204)
+    async def delete_corpus(corpus_id: str) -> None | JSONResponse:
+        """Delete only the isolated benchmark namespace."""
+        try:
+            await service.delete_corpus(corpus_id)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+        return None
+
+    @router.post("/corpora/{corpus_id}/documents")
+    async def upload_documents(
+        corpus_id: str, body: EvalInventoryUpload
+    ) -> dict[str, Any] | JSONResponse:
+        """Append source-document inventory and return its operation identity."""
+        try:
+            return await service.upload_corpus_documents(corpus_id, body.items)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+
+    @router.post("/corpora/{corpus_id}/chunks")
+    async def upload_chunks(
+        corpus_id: str, body: EvalInventoryUpload
+    ) -> dict[str, Any] | JSONResponse:
+        """Append canonical chunks to the isolated benchmark inventory."""
+        try:
+            return await service.upload_corpus_chunks(corpus_id, body.items)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+
+    @router.get("/corpora/{corpus_id}/documents")
+    async def corpus_documents(corpus_id: str) -> dict[str, Any] | JSONResponse:
+        """Read isolated source-document inventory."""
+        return await _corpus_inventory(service, corpus_id, "documents")
+
+    @router.get("/corpora/{corpus_id}/chunks")
+    async def corpus_chunks(corpus_id: str) -> dict[str, Any] | JSONResponse:
+        """Read isolated canonical chunk inventory."""
+        return await _corpus_inventory(service, corpus_id, "chunks")
+
+    @router.get("/corpora/{corpus_id}/evidence")
+    async def corpus_evidence(corpus_id: str) -> dict[str, Any] | JSONResponse:
+        """Read evidence/source spans supplied with the isolated chunk inventory."""
+        try:
+            corpus = await service.get_corpus(corpus_id)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+        evidence = [
+            item
+            for chunk in corpus.chunks
+            for item in chunk.get("evidence", chunk.get("source_spans", []))
+            if isinstance(item, dict)
+        ]
+        return {"corpus_id": corpus_id, "evidence": evidence}
+
+    @router.get("/operations/{operation_id}")
+    async def operation(operation_id: str) -> dict[str, Any] | JSONResponse:
+        """Return isolated ingestion/upload operation status."""
+        try:
+            return await service.operation(operation_id)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+
     @router.post("/query")
     async def query(
         body: EvalQueryRequest,
@@ -147,6 +210,17 @@ def _validate_protocol(value: str | None) -> None:
         raise EvalServiceError(
             "unsupported_protocol", "X-Rag-Eval-Protocol must be '1'.", 400
         )
+
+
+async def _corpus_inventory(
+    service: EvalService, corpus_id: str, key: str
+) -> dict[str, Any] | JSONResponse:
+    """Serialize one corpus inventory collection with a stable envelope."""
+    try:
+        corpus = await service.get_corpus(corpus_id)
+    except EvalServiceError as exc:
+        return _error_response(exc)
+    return {"corpus_id": corpus_id, key: getattr(corpus, key)}
 
 
 def _error_response(exc: EvalServiceError) -> JSONResponse:

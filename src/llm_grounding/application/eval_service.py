@@ -62,7 +62,29 @@ class EvalService:
             document_ids=self._document_ids(request.filters),
         )
         history = self._history(request.history)
-        run_id, answer, metadata = await runner.run(corpus_request, history)
+        try:
+            run_id, answer, metadata = await runner.run(corpus_request, history)
+        except Exception as exc:
+            observation = await self._failure_observation(
+                request,
+                corpus_request,
+                history,
+                identifier,
+                fingerprint,
+                effective,
+                exc,
+            )
+            await self._persist(
+                observation,
+                {"error": type(exc).__name__},
+                await self._is_evaluation_corpus_id(request.corpus_id),
+            )
+            status = "timeout" if isinstance(exc, TimeoutError) else "failed"
+            raise EvalServiceError(
+                "evaluation_timeout" if status == "timeout" else "evaluation_failed",
+                "The evaluation request did not complete successfully.",
+                504 if status == "timeout" else 502,
+            ) from exc
         chunks = await self._hydrate_chunks(metadata)
         observation = self._builder.from_basic_rag_metadata(
             run_id=run_id,
@@ -144,7 +166,30 @@ class EvalService:
             request.query,
             document_ids=self._document_ids(request.filters),
         )
-        chunks = await runner.retrieve(corpus_request)
+        try:
+            chunks = await runner.retrieve(corpus_request)
+        except Exception as exc:
+            history = self._history(request.history)
+            observation = await self._failure_observation(
+                request,
+                corpus_request,
+                history,
+                identifier,
+                fingerprint,
+                effective,
+                exc,
+            )
+            await self._persist(
+                observation,
+                {"error": type(exc).__name__},
+                await self._is_evaluation_corpus_id(request.corpus_id),
+            )
+            status = "timeout" if isinstance(exc, TimeoutError) else "failed"
+            raise EvalServiceError(
+                "evaluation_timeout" if status == "timeout" else "evaluation_failed",
+                "The evaluation request did not complete successfully.",
+                504 if status == "timeout" else 502,
+            ) from exc
         evaluation_corpus = await self._evaluation_corpus(request.corpus_id)
         observation = self._builder.build(
             run_id=str(uuid4()),
@@ -198,7 +243,85 @@ class EvalService:
 
     async def get_corpus(self, corpus_id: str):
         """Load an isolated evaluation corpus inventory."""
-        return await self._corpora.get(corpus_id)
+        try:
+            return await self._corpora.get(corpus_id)
+        except KeyError as exc:
+            raise EvalServiceError("corpus_not_found", str(exc), 404) from exc
+
+    async def delete_corpus(self, corpus_id: str) -> None:
+        """Delete an isolated evaluation corpus."""
+        try:
+            await self._corpora.delete(corpus_id)
+        except KeyError as exc:
+            raise EvalServiceError("corpus_not_found", str(exc), 404) from exc
+
+    async def upload_corpus_documents(
+        self, corpus_id: str, documents: list[dict[str, object]]
+    ) -> dict[str, object]:
+        """Append isolated source-document inventory."""
+        try:
+            return await self._corpora.upload_documents(corpus_id, documents)
+        except KeyError as exc:
+            raise EvalServiceError("corpus_not_found", str(exc), 404) from exc
+
+    async def upload_corpus_chunks(
+        self, corpus_id: str, chunks: list[dict[str, object]]
+    ) -> dict[str, object]:
+        """Append isolated canonical chunk inventory."""
+        try:
+            return await self._corpora.upload_chunks(corpus_id, chunks)
+        except KeyError as exc:
+            raise EvalServiceError("corpus_not_found", str(exc), 404) from exc
+
+    async def operation(self, operation_id: str) -> dict[str, object]:
+        """Load an isolated corpus operation status."""
+        try:
+            return await self._corpora.operation(operation_id)
+        except KeyError as exc:
+            raise EvalServiceError("operation_not_found", str(exc), 404) from exc
+
+    async def _failure_observation(
+        self,
+        request: EvalQueryRequest,
+        corpus_request: CorpusRequest,
+        history: tuple[Message, ...],
+        request_id: str,
+        fingerprint: str,
+        effective: object,
+        error: Exception,
+    ) -> RagRunObservation:
+        """Persist a failed or timed-out attempt with its request identity."""
+        status = "timeout" if isinstance(error, TimeoutError) else "failed"
+        observation = self._builder.build(
+            run_id=str(uuid4()),
+            request_id=request_id,
+            corpus_id=request.corpus_id,
+            architecture_name=self._architecture_name,
+            architecture_version=self._architecture_version,
+            request=corpus_request,
+            history=history,
+            effective_configuration=effective,
+            status=status,
+            error=type(error).__name__,
+        )
+        return observation.model_copy(
+            update={
+                "request_fingerprint": fingerprint,
+                "completed_at": datetime.now(UTC),
+                "benchmark_case_id": request.benchmark_case_id,
+                "experiment_id": request.experiment_id,
+                "seed": request.seed,
+                "perturbation_metadata": request.perturbation_metadata,
+            }
+        )
+
+    async def _is_evaluation_corpus_id(self, corpus_id: str) -> bool:
+        """Identify isolated IDs without treating production projects as eval data."""
+        try:
+            await self._corpora.get(corpus_id)
+        except KeyError:
+            return False
+        return True
 
     def _runner(self):
         """Return the configured runner or a clear composition error."""

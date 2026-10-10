@@ -79,6 +79,7 @@ class ObservationBuilder:
         return RagRunObservation(
             run_id=run_id,
             request_id=request_id,
+            target_run_id=run_id,
             corpus_id=corpus_id,
             architecture_name=architecture_name,
             architecture_version=architecture_version,

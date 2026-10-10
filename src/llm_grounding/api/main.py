@@ -316,8 +316,16 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             "X-Eval-Embedding-Token",
         ],
     )
-    app.include_router(create_eval_router(EvalService(application)))
-    app.include_router(create_eval_embeddings_router(application._vectors))  # noqa: SLF001
+    app.include_router(
+        create_eval_router(
+            EvalService(
+                application, corpus_service=application.evaluation.corpus_service
+            )
+        )
+    )
+    app.include_router(
+        create_eval_embeddings_router(application.evaluation.embedding_store)
+    )
 
     @app.get("/api/projects")
     async def list_projects() -> list[dict[str, object]]:

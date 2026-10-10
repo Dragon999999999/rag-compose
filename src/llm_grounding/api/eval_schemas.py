@@ -84,3 +84,9 @@ class EvalConfigOverrides(BaseModel):
     summary_per_facet: int | None = Field(default=None, ge=1, le=20)
     prompt_id: str | None = None
     model_name: str | None = None
+
+
+class EvalInventoryUpload(BaseModel):
+    """Upload isolated document or canonical chunk metadata."""
+
+    items: list[dict[str, Any]] = Field(min_length=1, max_length=100_000)

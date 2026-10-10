@@ -73,6 +73,63 @@ class EvalCorpusService:
             version=current.version + 1,
         )
 
+    async def delete(self, corpus_id: str) -> None:
+        """Delete an isolated corpus and all of its evaluation-only inventory."""
+        deleted = await self._repository.delete_evaluation_corpus(corpus_id)
+        if not deleted:
+            raise KeyError(f"Unknown evaluation corpus: {corpus_id}")
+
+    async def upload_documents(
+        self, corpus_id: str, documents: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Append source-document metadata and record a completed upload operation."""
+        current = await self.get(corpus_id)
+        corpus = await self.replace_inventory(
+            corpus_id,
+            documents=[*current.documents, *documents],
+            chunks=current.chunks,
+        )
+        return await self._operation(corpus, "documents", len(documents))
+
+    async def upload_chunks(
+        self, corpus_id: str, chunks: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Append canonical chunks without touching production ingestion or vectors."""
+        current = await self.get(corpus_id)
+        corpus = await self.replace_inventory(
+            corpus_id,
+            documents=current.documents,
+            chunks=[*current.chunks, *chunks],
+        )
+        return await self._operation(corpus, "chunks", len(chunks))
+
+    async def operation(self, operation_id: str) -> dict[str, Any]:
+        """Return one persisted upload-operation status."""
+        loader = getattr(self._repository, "get_evaluation_operation", None)
+        payload = await loader(operation_id) if loader is not None else None
+        if payload is None:
+            raise KeyError(f"Unknown evaluation operation: {operation_id}")
+        return payload
+
+    async def _operation(
+        self, corpus: EvaluationCorpusReference, kind: str, count: int
+    ) -> dict[str, Any]:
+        """Persist a synchronous operation in the same shape as future async jobs."""
+        operation_id = f"eval-op-{uuid4()}"
+        payload: dict[str, Any] = {
+            "operation_id": operation_id,
+            "corpus_id": corpus.corpus_id,
+            "operation": kind,
+            "status": "completed",
+            "count": count,
+            "version": corpus.version,
+            "corpus_hash": corpus.corpus_hash,
+        }
+        saver = getattr(self._repository, "save_evaluation_operation", None)
+        if saver is not None:
+            await saver(operation_id, corpus.corpus_id, "completed", payload)
+        return payload
+
     @staticmethod
     def deterministic_request_id(
         *,

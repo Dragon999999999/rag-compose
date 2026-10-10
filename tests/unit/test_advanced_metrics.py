@@ -31,11 +31,11 @@ def test_ingestion_inventory_preserves_chunk_spans_and_counts() -> None:
     now = datetime.now(UTC)
     document = Document("document", "paper.pdf", "a" * 64, "pdf/paper.pdf", now)
     ingestion = DocumentIngestion(
-            "ingestion",
-            document.id,
-            "config",
-            "{}",
-            "embedding",
+        "ingestion",
+        document.id,
+        "config",
+        "{}",
+        "embedding",
         2,
         IngestionStatus.READY,
         now,
@@ -88,6 +88,7 @@ class MemoryEvalCorpusRepository:
     def __init__(self) -> None:
         """Initialize an isolated in-memory corpus store."""
         self.corpora = {}
+        self.operations = {}
 
     async def save_evaluation_corpus(self, corpus):
         """Persist only the isolated corpus reference."""
@@ -96,6 +97,18 @@ class MemoryEvalCorpusRepository:
     async def get_evaluation_corpus(self, corpus_id):
         """Load one isolated corpus reference."""
         return self.corpora.get(corpus_id)
+
+    async def delete_evaluation_corpus(self, corpus_id):
+        """Delete only the isolated corpus namespace."""
+        return self.corpora.pop(corpus_id, None) is not None
+
+    async def save_evaluation_operation(self, operation_id, corpus_id, status, payload):
+        """Persist a test operation without project state."""
+        self.operations[operation_id] = payload
+
+    async def get_evaluation_operation(self, operation_id):
+        """Load a test operation."""
+        return self.operations.get(operation_id)
 
 
 async def test_eval_corpus_service_is_deterministic_and_isolated() -> None:
@@ -110,17 +123,36 @@ async def test_eval_corpus_service_is_deterministic_and_isolated() -> None:
 
     assert len(corpus.corpus_hash) == 64
     assert corpus.parent_corpus_id == "production-project"
-    assert (
-        EvalCorpusService.deterministic_request_id(
-            corpus_id="eval-1",
-            benchmark_case_id="case-1",
-            experiment_id="exp-1",
-            query="question",
-        )
-        == EvalCorpusService.deterministic_request_id(
-            corpus_id="eval-1",
-            benchmark_case_id="case-1",
-            experiment_id="exp-1",
-            query="question",
-        )
+    assert EvalCorpusService.deterministic_request_id(
+        corpus_id="eval-1",
+        benchmark_case_id="case-1",
+        experiment_id="exp-1",
+        query="question",
+    ) == EvalCorpusService.deterministic_request_id(
+        corpus_id="eval-1",
+        benchmark_case_id="case-1",
+        experiment_id="exp-1",
+        query="question",
     )
+
+
+async def test_eval_corpus_uploads_and_delete_are_isolated() -> None:
+    """Controlled inventory operations never require production project storage."""
+    repository = MemoryEvalCorpusRepository()
+    service = EvalCorpusService(repository)
+    await service.create(corpus_id="eval-2")
+
+    document_operation = await service.upload_documents(
+        "eval-2", [{"id": "doc-1", "name": "perturbed.pdf"}]
+    )
+    chunk_operation = await service.upload_chunks(
+        "eval-2", [{"id": "chunk-1", "document_id": "doc-1", "text": "text"}]
+    )
+
+    assert document_operation["status"] == "completed"
+    assert (await service.operation(chunk_operation["operation_id"]))[
+        "operation"
+    ] == "chunks"
+    assert (await service.get("eval-2")).chunks[0]["id"] == "chunk-1"
+    await service.delete("eval-2")
+    assert repository.corpora == {}

@@ -129,6 +129,44 @@ class EvaluationCorpusRow(Base):
     )
 
 
+class EvaluationCorpusDocumentRow(Base):
+    """Store isolated evaluation source-document metadata in its own namespace."""
+
+    __tablename__ = "evaluation_corpus_documents"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    corpus_id: Mapped[str] = mapped_column(
+        ForeignKey("evaluation_corpora.id", ondelete="CASCADE"), index=True
+    )
+    document_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+
+
+class EvaluationCorpusChunkRow(Base):
+    """Store canonical benchmark chunks independently from production chunks."""
+
+    __tablename__ = "evaluation_corpus_chunks"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    corpus_id: Mapped[str] = mapped_column(
+        ForeignKey("evaluation_corpora.id", ondelete="CASCADE"), index=True
+    )
+    chunk_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+
+
+class EvaluationCorpusOperationRow(Base):
+    """Track controlled corpus uploads and deletion operations."""
+
+    __tablename__ = "evaluation_corpus_operations"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    corpus_id: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    operation_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class EvidenceRow(Base):
     """Persist canonical text evidence and source provenance for an ingestion."""
 
