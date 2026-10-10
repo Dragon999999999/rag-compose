@@ -295,6 +295,9 @@ class BasicGroundedReasoner:
             "source_ref_resolutions": resolution_metadata,
             "unresolved_source_refs": unresolved_metadata,
             "generation": generation_usage,
+            "model_id": generation.model_id
+            if isinstance(generation, GenerationResult)
+            else None,
         }
         return ReasoningResult(
             result_id=str(uuid4()),

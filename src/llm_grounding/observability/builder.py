@@ -17,6 +17,8 @@ from llm_grounding.observability.models import (
     ClaimModel,
     DecisionModel,
     EffectiveConfiguration,
+    EmbeddingDiagnostics,
+    GenerationInfo,
     ObservationAnswer,
     ObservationRequest,
     RagRunObservation,
@@ -55,6 +57,17 @@ class ObservationBuilder:
         created_at: datetime | None = None,
         completed_at: datetime | None = None,
         error: str | None = None,
+        generation: GenerationInfo | None = None,
+        query_embedding_id: str | None = None,
+        embedding: EmbeddingDiagnostics | None = None,
+        conversation_id: str | None = None,
+        turn_id: str | None = None,
+        turn_index: int | None = None,
+        conversation_state: Any | None = None,
+        benchmark_case_id: str | None = None,
+        experiment_id: str | None = None,
+        seed: int | None = None,
+        perturbation_metadata: dict[str, Any] | None = None,
     ) -> RagRunObservation:
         """Build an observation while preserving whatever partial state exists."""
         payload = self._payload(answer, reasoning)
@@ -69,11 +82,18 @@ class ObservationBuilder:
             request=ObservationRequest(
                 query=request.task,
                 history=[self._history_item(item) for item in history],
+                conversation_history=[self._history_item(item) for item in history],
+                included_history_turn_ids=[
+                    str(item.id) for item in history if hasattr(item, "id")
+                ],
                 parameters={"task_type": request.task_type.value},
                 filters={"document_ids": list(request.document_ids)},
             ),
-            answer=self._answer(payload, chunks),
+            answer=self._answer(payload, chunks, status),
+            generation=generation or GenerationInfo(),
             retrieval=list(stages),
+            query_embedding_id=query_embedding_id,
+            embedding=embedding,
             assessments=[
                 self._assessment(item, index)
                 for index, item in enumerate(assessments, 1)
@@ -85,6 +105,19 @@ class ObservationBuilder:
             created_at=created_at or datetime.now(UTC),
             completed_at=completed_at,
             error=error,
+            configuration_hash=(
+                effective_configuration.architecture.config_hash
+                if effective_configuration is not None
+                else None
+            ),
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            turn_index=turn_index,
+            conversation_state=conversation_state,
+            benchmark_case_id=benchmark_case_id,
+            experiment_id=experiment_id,
+            seed=seed,
+            perturbation_metadata=perturbation_metadata or {},
         )
 
     def from_basic_rag_metadata(
@@ -100,8 +133,61 @@ class ObservationBuilder:
         answer: Answer | None,
         metadata: dict[str, object],
         effective_configuration: EffectiveConfiguration | None = None,
+        history: tuple[Any, ...] = (),
     ) -> RagRunObservation:
         """Build from the metadata returned by ``BasicRagRunner.run``."""
+        generation_data = metadata.get("generation")
+        generation = (
+            GenerationInfo(
+                model_id=(
+                    str(generation_data.get("model_id"))
+                    if isinstance(generation_data, dict)
+                    and generation_data.get("model_id") is not None
+                    else (
+                        effective_configuration.generation.model_id
+                        if effective_configuration
+                        and effective_configuration.generation
+                        else None
+                    )
+                ),
+                prompt_id=(
+                    str(metadata.get("prompt_id"))
+                    if metadata.get("prompt_id") is not None
+                    else (
+                        effective_configuration.prompt.prompt_id
+                        if effective_configuration and effective_configuration.prompt
+                        else None
+                    )
+                ),
+                prompt_version=(
+                    str(metadata.get("prompt_version"))
+                    if metadata.get("prompt_version") is not None
+                    else (
+                        effective_configuration.prompt.prompt_version
+                        if effective_configuration and effective_configuration.prompt
+                        else None
+                    )
+                ),
+            )
+        )
+        trace_data = metadata.get("trace", [])
+        trace = [
+            TraceSpan.model_validate(item)
+            for item in trace_data
+            if isinstance(item, dict)
+        ] if isinstance(trace_data, list) else []
+        usage_data = metadata.get("usage")
+        usage = (
+            RagUsage.model_validate(usage_data)
+            if isinstance(usage_data, dict)
+            else None
+        )
+        embedding_data = metadata.get("embedding")
+        embedding = (
+            EmbeddingDiagnostics.model_validate(embedding_data)
+            if isinstance(embedding_data, dict)
+            else None
+        )
         return self.build(
             run_id=run_id,
             request_id=request_id,
@@ -114,6 +200,16 @@ class ObservationBuilder:
             effective_configuration=effective_configuration,
             status=str(metadata.get("status", "completed")),
             created_at=self._datetime(metadata.get("created_at")),
+            history=history,
+            trace=trace,
+            generation=generation,
+            query_embedding_id=(
+                str(metadata["query_embedding_id"])
+                if metadata.get("query_embedding_id") is not None
+                else None
+            ),
+            embedding=embedding,
+            usage=usage,
         )
 
     @staticmethod
@@ -146,6 +242,7 @@ class ObservationBuilder:
     def _answer(
         payload: GroundedResponsePayload | None,
         chunks: tuple[ChunkRetrievalResult, ...],
+        run_status: str,
     ) -> ObservationAnswer | None:
         """Map claims and source IDs while retaining unresolved references."""
         if payload is None:
@@ -170,6 +267,14 @@ class ObservationBuilder:
                         start_char=source.start_char if source else None,
                         end_char=source.end_char if source else None,
                         resolved=item is not None,
+                        source_text=item.text if item else None,
+                        source_evidence_id=(
+                            str(item.metadata["evidence_ids"][0])
+                            if item
+                            and isinstance(item.metadata.get("evidence_ids"), list)
+                            and item.metadata["evidence_ids"]
+                            else None
+                        ),
                     )
                 )
                 citation_ids.append(citation_id)
@@ -183,6 +288,8 @@ class ObservationBuilder:
             claims=claims,
             citations=citations,
             insufficient_evidence=payload.insufficient_evidence,
+            status=run_status,
+            generation_status=run_status,
         )
 
     @staticmethod

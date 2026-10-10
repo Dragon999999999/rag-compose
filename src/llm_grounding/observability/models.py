@@ -16,6 +16,10 @@ class StageType(StrEnum):
     DECISION = "decision"
     RENDER = "render"
     INGESTION = "ingestion"
+    RERANK = "rerank"
+    FUSION = "fusion"
+    FILTER = "filter"
+    COMPRESSION = "compression"
 
 
 class RetrievalStageType(StrEnum):
@@ -38,10 +42,35 @@ class UsageOrigin(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class ConfidenceOrigin(StrEnum):
+    """Identify a confidence source without implying unsupported calibration."""
+
+    MODEL = "model"
+    CALIBRATION_MODEL = "calibration_model"
+    UNAVAILABLE = "unavailable"
+
+
 class ObservationModel(BaseModel):
     """Base configuration shared by canonical observation records."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class Confidence(ObservationModel):
+    """Optional confidence with explicit interpretation and origin."""
+
+    value: float | None = Field(default=None, ge=0, le=1)
+    range: str = "[0,1]"
+    interpretation: str | None = None
+    origin: ConfidenceOrigin = ConfidenceOrigin.UNAVAILABLE
+
+
+class GenerationInfo(ObservationModel):
+    """Generation identity required to reproduce semantic-judge inputs."""
+
+    model_id: str | None = None
+    prompt_id: str | None = None
+    prompt_version: str | None = None
 
 
 class Score(ObservationModel):
@@ -92,6 +121,12 @@ class RetrievalStageSnapshot(ObservationModel):
     removed_item_ids: list[str] = Field(default_factory=list)
     truncated: bool = False
     context_budget: int | None = None
+    input_item_ids: list[str] = Field(default_factory=list)
+    output_item_ids: list[str] = Field(default_factory=list)
+    removed_items: list[RetrievedItem] = Field(default_factory=list)
+    trace_span_id: str | None = None
+    component_config: dict[str, Any] = Field(default_factory=dict)
+    query_embedding_id: str | None = None
 
 
 class TraceSpan(ObservationModel):
@@ -146,6 +181,8 @@ class ObservationRequest(ObservationModel):
 
     query: str
     history: list[dict[str, Any]] = Field(default_factory=list)
+    conversation_history: list[dict[str, Any]] = Field(default_factory=list)
+    included_history_turn_ids: list[str] = Field(default_factory=list)
     parameters: dict[str, Any] = Field(default_factory=dict)
     filters: dict[str, Any] = Field(default_factory=dict)
 
@@ -157,7 +194,9 @@ class ObservationAnswer(ObservationModel):
     claims: list["ClaimModel"] = Field(default_factory=list)
     citations: list["CitationModel"] = Field(default_factory=list)
     insufficient_evidence: bool | None = None
-    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: str = "completed"
+    generation_status: str = "completed"
+    confidence: Confidence = Field(default_factory=Confidence)
 
 
 class ClaimModel(ObservationModel):
@@ -167,6 +206,8 @@ class ClaimModel(ObservationModel):
     text: str
     citations: list[str] = Field(default_factory=list)
     source_answer_span: dict[str, Any] | None = None
+    answer_span: dict[str, Any] | None = None
+    confidence: Confidence = Field(default_factory=Confidence)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -181,6 +222,8 @@ class CitationModel(ObservationModel):
     start_char: int | None = None
     end_char: int | None = None
     resolved: bool = False
+    source_text: str | None = None
+    source_evidence_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -202,7 +245,47 @@ class DecisionModel(ObservationModel):
     action: str
     reason: str | None = None
     assessment_ids: list[str] = Field(default_factory=list)
+    confidence: Confidence = Field(default_factory=Confidence)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmbeddingDiagnostics(ObservationModel):
+    """Query or document embedding identity and measured diagnostics."""
+
+    embedding_id: str
+    model_id: str
+    model_version: str | None = None
+    dimension: int
+    normalization: bool | None = None
+    distance_metric: str = "cosine"
+    configuration_hash: str | None = None
+    vector_norm: float | None = Field(default=None, ge=0)
+    vector: list[float] | None = None
+    source_id: str | None = None
+    source_type: str | None = None
+    latency_ms: float | None = Field(default=None, ge=0)
+    invocation_count: int = Field(default=1, ge=0)
+
+
+class ConversationState(ObservationModel):
+    """State needed to reproduce a multi-turn evaluation turn."""
+
+    prior_turn_ids: list[str] = Field(default_factory=list)
+    included_history_turn_ids: list[str] = Field(default_factory=list)
+    memory_state_id: str | None = None
+    context_summary: str | None = None
+
+
+class EvaluationCorpusReference(ObservationModel):
+    """Isolated corpus identity used by robustness experiments."""
+
+    corpus_id: str
+    parent_corpus_id: str | None = None
+    corpus_hash: str
+    version: int = 1
+    documents: list[dict[str, Any]] = Field(default_factory=list)
+    chunks: list[dict[str, Any]] = Field(default_factory=list)
+    perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ArchitectureConfiguration(ObservationModel):
@@ -292,13 +375,28 @@ class RagRunObservation(ObservationModel):
     architecture_version: str | int
     status: str
     request: ObservationRequest
+    generation: GenerationInfo = Field(default_factory=GenerationInfo)
     answer: ObservationAnswer | None = None
     retrieval: list[RetrievalStageSnapshot] = Field(default_factory=list)
+    query_embedding_id: str | None = None
+    document_embedding_ids: list[str] = Field(default_factory=list)
+    embedding: EmbeddingDiagnostics | None = None
+    ingestion: list[TraceSpan] = Field(default_factory=list)
     assessments: list[AssessmentModel] = Field(default_factory=list)
     decision: DecisionModel | None = None
     trace: list[TraceSpan] = Field(default_factory=list)
     usage: RagUsage = Field(default_factory=RagUsage)
     effective_configuration: EffectiveConfiguration | None = None
+    configuration_hash: str | None = None
+    conversation_id: str | None = None
+    turn_id: str | None = None
+    turn_index: int | None = Field(default=None, ge=0)
+    conversation_state: ConversationState | None = None
+    evaluation_corpus: EvaluationCorpusReference | None = None
+    benchmark_case_id: str | None = None
+    experiment_id: str | None = None
+    seed: int | None = None
+    perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     completed_at: datetime | None = None
     error: str | None = None

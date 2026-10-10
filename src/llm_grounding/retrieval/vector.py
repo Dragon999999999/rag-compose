@@ -22,12 +22,19 @@ class VectorRetriever:
         if top_k < 1:
             raise ValueError("top_k must be positive")
         self._embedder, self._store, self._top_k = embedder, store, top_k
+        self._last_query_embedding = None
+
+    @property
+    def last_query_embedding(self):
+        """Return the most recent query vector for observation instrumentation."""
+        return self._last_query_embedding
 
     async def retrieve(
         self, request: CorpusRequest
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Return query-relevant chunks scoped in the store by active project."""
         query = await self._embedder.embed_query(request.task)
+        self._last_query_embedding = query
         return await self._store.search(
             request.project_id, query, self._top_k, request.document_ids
         )

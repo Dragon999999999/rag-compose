@@ -13,7 +13,10 @@ from llm_grounding.domain.corpus import (
     Message,
     TaskType,
 )
+from llm_grounding.observability.embedding import embedding_diagnostics
+from llm_grounding.observability.models import LLMUsage
 from llm_grounding.observability.trace import TraceRecorder
+from llm_grounding.observability.usage import UsageAccumulator
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
 from llm_grounding.orchestration.retrieval_stages import build_retrieval_stages
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
@@ -48,9 +51,13 @@ class BasicRagRunner:
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute Basic RAG and retain metadata suitable for persistence."""
         traces = TraceRecorder()
+        usage = UsageAccumulator()
         total_span = traces.start("rag_e2e")
         retrieval_span = traces.start("retrieval")
         chunks = await self.retrieve(request)
+        query_embedding = self._vector.last_query_embedding
+        if query_embedding is not None:
+            usage.add_embedding()
         traces.end(retrieval_span, output_count=len(chunks))
         if not chunks:
             traces.end(total_span, output_count=0)
@@ -74,6 +81,17 @@ class BasicRagRunner:
                         for stage in build_retrieval_stages((), run_id=str(uuid4()))
                     ],
                     "trace": [span.model_dump(mode="json") for span in traces.spans],
+                    "usage": usage.build().model_dump(mode="json"),
+                    "query_embedding_id": (
+                        query_embedding.embedding_id
+                        if query_embedding is not None
+                        else None
+                    ),
+                    "embedding": (
+                        embedding_diagnostics(query_embedding).model_dump(mode="json")
+                        if query_embedding is not None
+                        else None
+                    ),
                     "answer_payload": {},
                     "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
@@ -84,6 +102,11 @@ class BasicRagRunner:
         traces.end(context_span, output_count=len(context.chunks))
         reasoning_span = traces.start("generation", input_count=len(context.chunks))
         reasoning = await self._reasoner.reason(context)
+        generation_data = reasoning.metadata.get("generation")
+        if isinstance(generation_data, dict):
+            generation_usage = generation_data.get("usage")
+            if isinstance(generation_usage, dict):
+                usage.add_llm(LLMUsage.model_validate(generation_usage))
         traces.end(reasoning_span, output_count=1)
         assessment_span = traces.start("assessment")
         assessments = await self._assessor.assess_context(reasoning, context)
@@ -105,7 +128,13 @@ class BasicRagRunner:
             reasoning.result_id,
             answer,
             {
-                "status": "rejected" if rejected else "completed",
+                "status": (
+                    "rejected"
+                    if rejected
+                    else "abstained"
+                    if decision.action == DecisionAction.ABSTAIN
+                    else "completed"
+                ),
                 "retrieved_chunk_ids": [item.chunk.chunk_id for item in chunks],
                 "retrieval_results": [
                     {
@@ -129,6 +158,17 @@ class BasicRagRunner:
                     )
                 ],
                 "trace": [span.model_dump(mode="json") for span in traces.spans],
+                "usage": usage.build().model_dump(mode="json"),
+                "query_embedding_id": (
+                    query_embedding.embedding_id
+                    if query_embedding is not None
+                    else None
+                ),
+                "embedding": (
+                    embedding_diagnostics(query_embedding).model_dump(mode="json")
+                    if query_embedding is not None
+                    else None
+                ),
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )
