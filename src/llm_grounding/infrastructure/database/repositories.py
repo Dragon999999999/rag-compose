@@ -29,6 +29,7 @@ from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
     DocumentSummaryRow,
+    EvaluationCorpusRow,
     EvidenceRow,
     IngestionObservationRow,
     IngestionRow,
@@ -41,7 +42,10 @@ from llm_grounding.infrastructure.database.models import (
     RetrievalUnitRow,
 )
 from llm_grounding.observability.ingestion import IngestionObservation
-from llm_grounding.observability.models import RagRunObservation
+from llm_grounding.observability.models import (
+    EvaluationCorpusReference,
+    RagRunObservation,
+)
 
 
 def _now() -> datetime:
@@ -955,4 +959,42 @@ class PostgresRepository:
                 None
                 if row is None
                 else IngestionObservation.model_validate(row.observation_json)
+            )
+
+    async def save_evaluation_corpus(
+        self, corpus: EvaluationCorpusReference
+    ) -> None:
+        """Persist an isolated evaluation corpus without project-table writes."""
+        async with self._sessions.begin() as session:
+            row = await session.get(EvaluationCorpusRow, corpus.corpus_id)
+            values = {
+                "parent_corpus_id": corpus.parent_corpus_id,
+                "corpus_hash": corpus.corpus_hash,
+                "version": corpus.version,
+                "documents_json": corpus.documents,
+                "chunks_json": corpus.chunks,
+                "perturbation_metadata": corpus.perturbation_metadata,
+            }
+            if row is None:
+                session.add(EvaluationCorpusRow(id=corpus.corpus_id, **values))
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+
+    async def get_evaluation_corpus(
+        self, corpus_id: str
+    ) -> EvaluationCorpusReference | None:
+        """Load an isolated evaluation corpus inventory."""
+        async with self._sessions() as session:
+            row = await session.get(EvaluationCorpusRow, corpus_id)
+            if row is None:
+                return None
+            return EvaluationCorpusReference(
+                corpus_id=row.id,
+                parent_corpus_id=row.parent_corpus_id,
+                corpus_hash=row.corpus_hash,
+                version=row.version,
+                documents=list(row.documents_json),
+                chunks=list(row.chunks_json),
+                perturbation_metadata=dict(row.perturbation_metadata),
             )

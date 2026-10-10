@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 
 from llm_grounding.api.eval_schemas import (
+    EvalCorpusRequest,
     EvalError,
     EvalQueryRequest,
     EvalRetrieveRequest,
@@ -59,6 +60,23 @@ def create_eval_router(service: EvalService) -> APIRouter:
             "protocol_version": "1",
             "schema": EffectiveConfiguration.model_json_schema(),
         }
+
+    @router.post("/corpora")
+    async def create_corpus(body: EvalCorpusRequest) -> dict[str, Any]:
+        """Create an isolated benchmark corpus inventory."""
+        corpus = await service.create_corpus(**body.model_dump())
+        return corpus.model_dump(mode="json")
+
+    @router.get("/corpora/{corpus_id}")
+    async def get_corpus(corpus_id: str) -> dict[str, Any] | JSONResponse:
+        """Return an isolated benchmark corpus inventory."""
+        try:
+            corpus = await service.get_corpus(corpus_id)
+        except KeyError as exc:
+            return _error_response(
+                EvalServiceError("corpus_not_found", str(exc), 404)
+            )
+        return corpus.model_dump(mode="json")
 
     @router.post("/query")
     async def query(

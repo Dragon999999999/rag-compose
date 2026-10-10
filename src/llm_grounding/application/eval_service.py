@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from llm_grounding.api.eval_schemas import EvalQueryRequest, EvalRetrieveRequest
 from llm_grounding.application.bootstrap import PhaseOneApplication
+from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest, Message
 from llm_grounding.observability.builder import ObservationBuilder
 from llm_grounding.observability.configuration import build_effective_configuration
@@ -27,10 +28,12 @@ class EvalService:
         self,
         application: PhaseOneApplication,
         builder: ObservationBuilder | None = None,
+        corpus_service: EvalCorpusService | None = None,
     ) -> None:
         """Inject the application composition and canonical observation builder."""
         self._application = application
         self._builder = builder or ObservationBuilder()
+        self._corpora = corpus_service or EvalCorpusService(application.repository)
 
     async def query(
         self,
@@ -40,7 +43,16 @@ class EvalService:
         idempotency_key: str | None = None,
     ) -> RagRunObservation:
         """Run generation and persist the canonical observation."""
-        identifier = request_id or idempotency_key or str(uuid4())
+        identifier = request_id or idempotency_key
+        if identifier is None and request.benchmark_case_id:
+            identifier = EvalCorpusService.deterministic_request_id(
+                corpus_id=request.corpus_id,
+                benchmark_case_id=request.benchmark_case_id,
+                experiment_id=request.experiment_id,
+                query=request.query,
+                turn_index=request.turn_index,
+            )
+        identifier = identifier or str(uuid4())
         existing = await self._existing(identifier)
         if existing is not None:
             return existing
@@ -64,19 +76,34 @@ class EvalService:
             answer=answer,
             metadata=metadata,
             effective_configuration=self._effective(request.corpus_id),
+            history=history,
         )
+        evaluation_corpus = await self._evaluation_corpus(request.corpus_id)
         observation = observation.model_copy(
             update={
                 "request": observation.request.model_copy(
                     update={
+                        "conversation_history": request.history,
+                        "included_history_turn_ids": [
+                            str(item["id"])
+                            for item in request.history
+                            if isinstance(item, dict) and item.get("id") is not None
+                        ],
                         "parameters": request.parameters,
                         "filters": request.filters,
                     }
                 ),
                 "completed_at": datetime.now(UTC),
+                "conversation_id": request.conversation_id,
+                "turn_index": request.turn_index,
+                "evaluation_corpus": evaluation_corpus,
+                "benchmark_case_id": request.benchmark_case_id,
+                "experiment_id": request.experiment_id,
+                "seed": request.seed,
+                "perturbation_metadata": request.perturbation_metadata,
             }
         )
-        await self._persist(observation, metadata)
+        await self._persist(observation, metadata, evaluation_corpus is not None)
         return observation
 
     async def retrieve(
@@ -132,6 +159,14 @@ class EvalService:
             )
         return existing
 
+    async def create_corpus(self, **kwargs: object):
+        """Create an isolated evaluation corpus inventory."""
+        return await self._corpora.create(**kwargs)
+
+    async def get_corpus(self, corpus_id: str):
+        """Load an isolated evaluation corpus inventory."""
+        return await self._corpora.get(corpus_id)
+
     def _runner(self):
         """Return the configured runner or a clear composition error."""
         if self._application.runner is None:
@@ -180,14 +215,17 @@ class EvalService:
         return await loader(request_id)
 
     async def _persist(
-        self, observation: RagRunObservation, metadata: dict[str, object]
+        self,
+        observation: RagRunObservation,
+        metadata: dict[str, object],
+        isolated_corpus: bool = False,
     ) -> None:
         """Persist both the run index and canonical observation when available."""
         record_run = getattr(self._application.repository, "record_run", None)
         if record_run is not None:
             await record_run(
                 observation.run_id,
-                observation.corpus_id,
+                None if isolated_corpus else observation.corpus_id,
                 observation.architecture_name,
                 int(observation.architecture_version),
                 observation.status,
@@ -196,6 +234,13 @@ class EvalService:
         saver = getattr(self._application.repository, "save_observation", None)
         if saver is not None:
             await saver(observation)
+
+    async def _evaluation_corpus(self, corpus_id: str):
+        """Return an isolated corpus reference when this ID belongs to one."""
+        try:
+            return await self._corpora.get(corpus_id)
+        except KeyError:
+            return None
 
     async def _hydrate_chunks(
         self, metadata: dict[str, object]

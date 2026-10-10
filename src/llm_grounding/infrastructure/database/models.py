@@ -113,6 +113,24 @@ class IngestionObservationRow(Base):
     )
 
 
+class EvaluationCorpusRow(Base):
+    """Persist isolated benchmark corpus inventories outside production projects."""
+
+    __tablename__ = "evaluation_corpora"
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    parent_corpus_id: Mapped[str | None] = mapped_column(String(255))
+    corpus_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    documents_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    chunks_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    perturbation_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class EvidenceRow(Base):
     """Persist canonical text evidence and source provenance for an ingestion."""
 

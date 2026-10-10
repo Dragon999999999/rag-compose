@@ -18,6 +18,12 @@ class EvalQueryRequest(BaseModel):
     include: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    conversation_id: str | None = None
+    turn_index: int = Field(default=0, ge=0)
+    benchmark_case_id: str | None = None
+    experiment_id: str | None = None
+    seed: int | None = None
+    perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvalRetrieveRequest(EvalQueryRequest):
@@ -48,3 +54,16 @@ class ProtocolHeaders(BaseModel):
     request_id: str | None = None
     idempotency_key: str | None = None
     protocol: Literal["1"] = "1"
+
+
+class EvalCorpusRequest(BaseModel):
+    """Create or replace an isolated evaluation corpus inventory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    corpus_id: str | None = None
+    parent_corpus_id: str | None = None
+    documents: list[dict[str, Any]] = Field(default_factory=list)
+    chunks: list[dict[str, Any]] = Field(default_factory=list)
+    perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
+    version: int = Field(default=1, ge=1)
