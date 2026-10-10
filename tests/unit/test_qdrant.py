@@ -192,3 +192,21 @@ async def test_qdrant_association_reports_missing_ingestion_vectors() -> None:
     assert not await store.associate_ingestion("project", "ingestion")
     fake.exists = True
     assert not await store.associate_ingestion("project", "ingestion")
+
+
+async def test_qdrant_fetch_vectors_is_bounded_and_keeps_stable_identity() -> None:
+    """Evaluation sampling can read vectors without affecting retrieval filters."""
+    chunk = _chunk("chunk", "document", "ingestion")
+    fake = FakeQdrantClient()
+    store = object.__new__(QdrantVectorStore)
+    store._collection = "test"
+    store._repository = ChunkRepository((chunk,))  # type: ignore[assignment]
+    store._client = fake  # type: ignore[assignment]
+    vector = EmbeddingVector((3.0, 4.0), "test-space")
+    await store.upsert("project", (chunk,), (vector,))
+
+    records = await store.fetch_vectors((chunk.chunk_id,), limit=1)
+
+    assert records[0].source_id == chunk.chunk_id
+    assert records[0].vector_norm == 5.0
+    assert records[0].embedding_id == vector.embedding_id

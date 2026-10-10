@@ -13,6 +13,7 @@ from llm_grounding.domain.corpus import ChunkRetrievalResult, RetrievalUnit
 from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.infrastructure.config.settings import QdrantSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.observability.embedding import EmbeddingRecord
 
 _PROJECT_IDS = "project_ids"
 _DOCUMENT_ID = "document_id"
@@ -295,6 +296,63 @@ class QdrantVectorStore:
             for rank, (point, chunk_id) in enumerate(matched, 1)
             if chunk_id in chunks
         )
+
+    async def fetch_vectors(
+        self, chunk_ids: tuple[str, ...], *, limit: int = 128
+    ) -> tuple[EmbeddingRecord, ...]:
+        """Fetch sampled raw vectors for evaluation-only diagnostics.
+
+        This path is intentionally separate from retrieval and bounded by the
+        caller-provided limit. It does not expose provider or project secrets.
+        """
+        if not chunk_ids:
+            return ()
+        if limit < 1 or limit > 128:
+            raise ValueError("Embedding sampling limit must be in [1, 128]")
+        selected = tuple(dict.fromkeys(chunk_ids))[:limit]
+        predicate = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key=_CHUNK_ID,
+                    match=models.MatchAny(any=list(selected)),
+                )
+            ]
+        )
+        try:
+            records, _ = await self._client.scroll(
+                self._collection,
+                scroll_filter=predicate,
+                with_payload=[_CHUNK_ID, _MODEL_IDENTITY],
+                with_vectors=True,
+                limit=limit,
+            )
+        except Exception as exc:
+            raise RuntimeError("Qdrant could not fetch evaluation vectors") from exc
+        output: list[EmbeddingRecord] = []
+        for record in records:
+            values = record.vector
+            if not isinstance(values, list):
+                continue
+            payload = record.payload or {}
+            vector = EmbeddingVector(
+                tuple(float(value) for value in values),
+                str(payload.get(_MODEL_IDENTITY, "unknown")),
+            )
+            output.append(
+                EmbeddingRecord(
+                    vector=list(vector.values),
+                    vector_norm=vector.vector_norm,
+                    embedding_id=vector.embedding_id,
+                    source_id=(
+                        str(payload[_CHUNK_ID])
+                        if payload.get(_CHUNK_ID) is not None
+                        else None
+                    ),
+                    source_type="document_chunk",
+                    model_id=vector.model_identity,
+                )
+            )
+        return tuple(output)
 
     async def close(self) -> None:
         """Release Qdrant HTTP/gRPC client resources during application shutdown."""

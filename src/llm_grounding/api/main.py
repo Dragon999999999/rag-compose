@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from llm_grounding.api.eval import create_eval_router
+from llm_grounding.api.eval_embeddings import create_eval_embeddings_router
 from llm_grounding.application.bootstrap import (
     PhaseOneApplication,
     create_phase_one_application,
@@ -312,9 +313,11 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             "X-Request-ID",
             "Idempotency-Key",
             "X-Rag-Eval-Protocol",
+            "X-Eval-Embedding-Token",
         ],
     )
     app.include_router(create_eval_router(EvalService(application)))
+    app.include_router(create_eval_embeddings_router(application._vectors))  # noqa: SLF001
 
     @app.get("/api/projects")
     async def list_projects() -> list[dict[str, object]]:
