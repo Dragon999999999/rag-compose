@@ -13,6 +13,7 @@ from llm_grounding.domain.corpus import (
     TaskType,
 )
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
+from llm_grounding.orchestration.retrieval_stages import build_retrieval_stages
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
@@ -64,6 +65,10 @@ class BasicRagRunner:
                 {
                     "status": "completed",
                     "retrieved_chunk_ids": [],
+                    "retrieval_stages": [
+                        stage.model_dump(mode="json")
+                        for stage in build_retrieval_stages((), run_id=str(uuid4()))
+                    ],
                     "answer_payload": {},
                     "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
@@ -92,6 +97,12 @@ class BasicRagRunner:
                 "answer_payload": answer.payload,
                 "evidence_ids": list(answer.evidence_ids),
                 "answer_metadata": answer.metadata,
+                "retrieval_stages": [
+                    stage.model_dump(mode="json")
+                    for stage in build_retrieval_stages(
+                        chunks, run_id=reasoning.result_id
+                    )
+                ],
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )
