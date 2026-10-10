@@ -5,6 +5,7 @@ before any provider is constructed. Provider and model settings stay outside
 domain models; only sanitized JSON configuration is retained in run metadata.
 """
 
+from hashlib import sha256
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
@@ -87,3 +88,15 @@ class ArchitectureConfig(BaseModel):
     decision_policy: ComponentConfig
     renderer: ComponentConfig
     chat_history: ChatHistoryConfig | None = None
+
+    def identity(self) -> str:
+        """Hash architecture semantics without including endpoint credentials."""
+        data = self.model_dump(mode="json")
+        data["reasoner"]["model"].pop("base_url", None)
+        canonical = self.__class__.model_validate(data).model_dump_json()
+        return sha256(canonical.encode()).hexdigest()
+
+    @property
+    def config_hash(self) -> str:
+        """Return the deterministic architecture configuration hash."""
+        return self.identity()

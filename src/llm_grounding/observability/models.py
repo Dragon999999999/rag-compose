@@ -1,0 +1,304 @@
+"""Versioned, provider-neutral schemas for RAG run observations."""
+
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class StageType(StrEnum):
+    """Identify a broad execution stage in a RAG run."""
+
+    RETRIEVAL = "retrieval"
+    GENERATION = "generation"
+    ASSESSMENT = "assessment"
+    DECISION = "decision"
+    RENDER = "render"
+    INGESTION = "ingestion"
+
+
+class RetrievalStageType(StrEnum):
+    """Identify retrieval outputs that evaluation can compare."""
+
+    CANDIDATE_RETRIEVAL = "CANDIDATE_RETRIEVAL"
+    FINAL_CONTEXT = "FINAL_CONTEXT"
+    FUSION = "FUSION"
+    RERANK = "RERANK"
+    FILTER = "FILTER"
+    COMPRESSION = "COMPRESSION"
+
+
+class UsageOrigin(StrEnum):
+    """Describe how a usage value was obtained."""
+
+    PROVIDER_REPORTED = "provider_reported"
+    TOKENIZER_CALCULATED = "tokenizer_calculated"
+    ESTIMATED = "estimated"
+    UNAVAILABLE = "unavailable"
+
+
+class ObservationModel(BaseModel):
+    """Base configuration shared by canonical observation records."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class Score(ObservationModel):
+    """Query-specific score attached to one retrieved item."""
+
+    value: float | None = None
+    type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceRef(ObservationModel):
+    """Persistent source identity and optional source coordinates."""
+
+    document_id: str | None = None
+    chunk_id: str | None = None
+    ingestion_id: str | None = None
+    page: int | None = None
+    start_char: int | None = None
+    end_char: int | None = None
+    section: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievedItem(ObservationModel):
+    """One ordered retrieval result with text, score, and provenance."""
+
+    retrieval_id: str
+    rank: int = Field(ge=1)
+    text: str | None = None
+    source: SourceRef = Field(default_factory=SourceRef)
+    score: Score = Field(default_factory=Score)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievalStageSnapshot(ObservationModel):
+    """Persisted snapshot of one retrieval stage and its ordered items."""
+
+    stage_id: str
+    stage_type: RetrievalStageType
+    component_name: str | None = None
+    parent_stage_ids: list[str] = Field(default_factory=list)
+    items: list[RetrievedItem] = Field(default_factory=list)
+    status: str = "complete"
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_ms: float | None = Field(default=None, ge=0)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    removed_item_ids: list[str] = Field(default_factory=list)
+    truncated: bool = False
+    context_budget: int | None = None
+
+
+class TraceSpan(ObservationModel):
+    """Wall-clock and monotonic timing for one nested execution span."""
+
+    span_id: str
+    name: str
+    stage_type: StageType | None = None
+    parent_span_id: str | None = None
+    started_at: datetime
+    ended_at: datetime | None = None
+    duration_ms: float | None = Field(default=None, ge=0)
+    status: str = "running"
+    input_count: int | None = None
+    output_count: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class LLMUsage(ObservationModel):
+    """Usage reported or estimated for one model invocation."""
+
+    model_id: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    requests: int | None = Field(default=None, ge=0)
+    tool_calls: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    usage_origin: UsageOrigin = UsageOrigin.UNAVAILABLE
+    role: str = "target"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RagUsage(ObservationModel):
+    """Aggregated target-pipeline usage for one RAG execution."""
+
+    llm_calls: int = Field(default=0, ge=0)
+    embedding_calls: int = Field(default=0, ge=0)
+    retrieval_calls: int = Field(default=0, ge=0)
+    reranker_calls: int = Field(default=0, ge=0)
+    context_tokens: int | None = Field(default=None, ge=0)
+    total_input_tokens: int | None = Field(default=None, ge=0)
+    total_output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    usage_origin: UsageOrigin = UsageOrigin.UNAVAILABLE
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ObservationRequest(ObservationModel):
+    """Input retained with an observation for reproducibility."""
+
+    query: str
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    filters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ObservationAnswer(ObservationModel):
+    """Canonical answer text and source-backed claims."""
+
+    text: str | None = None
+    claims: list["ClaimModel"] = Field(default_factory=list)
+    citations: list["CitationModel"] = Field(default_factory=list)
+    insufficient_evidence: bool | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class ClaimModel(ObservationModel):
+    """One canonical answer claim and the citations assigned to it."""
+
+    claim_id: str
+    text: str
+    citations: list[str] = Field(default_factory=list)
+    source_answer_span: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CitationModel(ObservationModel):
+    """Resolved or unresolved provenance for a claim citation."""
+
+    citation_id: str
+    claim_id: str
+    document_id: str | None = None
+    chunk_id: str | None = None
+    page: int | None = None
+    start_char: int | None = None
+    end_char: int | None = None
+    resolved: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssessmentModel(ObservationModel):
+    """Canonical evaluation of a generated candidate."""
+
+    assessment_id: str
+    assessor: str
+    dimension: str
+    label: str | None = None
+    score: float | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionModel(ObservationModel):
+    """Policy action taken after assessment."""
+
+    action: str
+    reason: str | None = None
+    assessment_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArchitectureConfiguration(ObservationModel):
+    """Effective architecture identity without credentials."""
+
+    name: str
+    version: int
+    config_hash: str
+
+
+class IngestionConfiguration(ObservationModel):
+    """Effective document-ingestion settings."""
+
+    parser: str
+    chunker: str
+    target_chunk_size: int | None = None
+    overlap: int | None = None
+    config_hash: str
+
+
+class EmbeddingConfiguration(ObservationModel):
+    """Effective embedding-space identity."""
+
+    model_id: str
+    version: str | None = None
+    dimension: int | None = None
+    normalization: bool | None = None
+    embedding_hash: str | None = None
+
+
+class RetrievalConfiguration(ObservationModel):
+    """Effective retrieval parameters."""
+
+    type: str
+    top_k: int | None = None
+    similarity_metric: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    context_limit: int | None = None
+
+
+class GenerationConfiguration(ObservationModel):
+    """Effective generation parameters with secret-free model identity."""
+
+    model_id: str
+    version: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class PromptConfiguration(ObservationModel):
+    """Versioned prompt identity."""
+
+    prompt_id: str | None = None
+    prompt_version: str | None = None
+    prompt_hash: str | None = None
+
+
+class CorpusConfiguration(ObservationModel):
+    """Corpus identity associated with the observation."""
+
+    corpus_id: str | None = None
+    version: str | None = None
+    hash: str | None = None
+
+
+class EffectiveConfiguration(ObservationModel):
+    """All effective, reproducibility-relevant runtime configuration."""
+
+    architecture: ArchitectureConfiguration
+    ingestion: IngestionConfiguration | None = None
+    embedding: EmbeddingConfiguration | None = None
+    retrieval: RetrievalConfiguration | None = None
+    generation: GenerationConfiguration | None = None
+    prompt: PromptConfiguration | None = None
+    corpus: CorpusConfiguration | None = None
+
+
+class RagRunObservation(ObservationModel):
+    """Canonical persisted representation shared by HTTP, CLI, and diagnostics."""
+
+    schema_version: str = "1"
+    run_id: str
+    request_id: str
+    corpus_id: str
+    architecture_name: str
+    architecture_version: str | int
+    status: str
+    request: ObservationRequest
+    answer: ObservationAnswer | None = None
+    retrieval: list[RetrievalStageSnapshot] = Field(default_factory=list)
+    assessments: list[AssessmentModel] = Field(default_factory=list)
+    decision: DecisionModel | None = None
+    trace: list[TraceSpan] = Field(default_factory=list)
+    usage: RagUsage = Field(default_factory=RagUsage)
+    effective_configuration: EffectiveConfiguration | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+    error: str | None = None
