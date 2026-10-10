@@ -38,7 +38,11 @@ class StructuredModelClient(Protocol):
     """Generate typed structured output for independently composed reasoners."""
 
     async def generate[OutputT: BaseModel](
-        self, prompt: str, output_type: type[OutputT]
+        self,
+        prompt: str,
+        output_type: type[OutputT],
+        *,
+        model_name: str | None = None,
     ) -> GenerationResult[OutputT]:
         """Return validated output and usage, or raise without partial JSON."""
         ...

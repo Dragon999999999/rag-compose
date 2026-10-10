@@ -79,6 +79,7 @@ class BasicRagRunner:
                 answer,
                 {
                     "status": "completed",
+                    "observation_status": "abstained",
                     "retrieved_chunk_ids": [],
                     "retrieval_results": [],
                     "retrieval_stages": [
@@ -114,7 +115,13 @@ class BasicRagRunner:
         context_span = traces.start("final_context", input_count=len(chunks))
         traces.end(context_span, output_count=len(context.chunks))
         reasoning_span = traces.start("generation", input_count=len(context.chunks))
-        reasoning = await self._reasoner.reason(context)
+        values = runtime_config or {}
+        reasoner_kwargs = {
+            key: values[key]
+            for key in ("prompt_id", "model_name")
+            if isinstance(values.get(key), str)
+        }
+        reasoning = await self._reasoner.reason(context, **reasoner_kwargs)
         generation_data = reasoning.metadata.get("generation")
         if isinstance(generation_data, dict):
             generation_usage = generation_data.get("usage")

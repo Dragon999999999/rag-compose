@@ -34,7 +34,11 @@ class AqueductModelClient:
         self._config = config
 
     async def generate[OutputT: BaseModel](
-        self, prompt: str, output_type: type[OutputT]
+        self,
+        prompt: str,
+        output_type: type[OutputT],
+        *,
+        model_name: str | None = None,
     ) -> GenerationResult[OutputT]:
         """Call Aqueduct and return validated output, closing the client on every exit.
 
@@ -52,7 +56,7 @@ class AqueductModelClient:
                     max_retries=self._config.retries,
                 ) as client:
                     model = OpenAIChatModel(
-                        self._config.name,
+                        model_name or self._config.name,
                         provider=OpenAIProvider(openai_client=client),
                     )
                     agent = Agent(
@@ -68,7 +72,7 @@ class AqueductModelClient:
                     return GenerationResult(
                         output=output_type.model_validate(result.output),
                         usage=LLMUsage(
-                            model_id=self._config.name,
+                            model_id=model_name or self._config.name,
                             input_tokens=request_tokens,
                             output_tokens=response_tokens,
                             total_tokens=total_tokens,
@@ -79,7 +83,7 @@ class AqueductModelClient:
                                 "cost": str(cost) if cost is not None else None,
                             },
                         ),
-                        model_id=self._config.name,
+                        model_id=model_name or self._config.name,
                     )
         except TimeoutError as exc:
             raise ModelRequestError(

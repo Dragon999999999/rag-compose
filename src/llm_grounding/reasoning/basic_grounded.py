@@ -238,7 +238,13 @@ class BasicGroundedReasoner:
         self._prompts = prompts
         self._prompt_id = prompt_id
 
-    async def reason(self, context: GroundingContext) -> ReasoningResult:
+    async def reason(
+        self,
+        context: GroundingContext,
+        *,
+        prompt_id: str | None = None,
+        model_name: str | None = None,
+    ) -> ReasoningResult:
         """Render the selected prompt, call the model, and canonicalize source refs.
 
         Raises:
@@ -248,16 +254,16 @@ class BasicGroundedReasoner:
         if not context.chunks:
             raise ValueError("Grounded reasoning requires at least one retrieved chunk")
         prompt_context = build_grounded_prompt_context(context)
-        prompt = self._render_prompt(context, prompt_context)
+        prompt = self._render_prompt(context, prompt_context, prompt_id=prompt_id)
         model_payload: ModelGroundedResponsePayload
         generation_usage: dict[str, JsonValue] = {}
         if context.generate_chat_name:
-            generation = await self._model_client.generate(
-                prompt.text, ModelInitialGroundedResponsePayload
+            generation = await self._generate(
+                prompt.text, ModelInitialGroundedResponsePayload, model_name
             )
         else:
-            generation = await self._model_client.generate(
-                prompt.text, ModelGroundedResponsePayload
+            generation = await self._generate(
+                prompt.text, ModelGroundedResponsePayload, model_name
             )
         if isinstance(generation, GenerationResult):
             model_payload = generation.output
@@ -309,14 +315,29 @@ class BasicGroundedReasoner:
         self,
         context: GroundingContext,
         prompt_context: GroundedPromptContext,
+        *,
+        prompt_id: str | None = None,
     ) -> RenderedPrompt:
         """Render the configured template with only model-facing source data."""
         return self._prompts.render(
-            self._prompt_id,
+            prompt_id or self._prompt_id,
             {
                 "task": context.request.task,
                 "history": _history_text(context),
                 "chunks": prompt_context.chunks,
                 "generate_chat_name": context.generate_chat_name,
             },
+        )
+
+    async def _generate(
+        self,
+        prompt: str,
+        output_type: type[ModelGroundedResponsePayload],
+        model_name: str | None,
+    ):
+        """Generate through a request-local model override when supported."""
+        if model_name is None:
+            return await self._model_client.generate(prompt, output_type)
+        return await self._model_client.generate(
+            prompt, output_type, model_name=model_name
         )
