@@ -12,7 +12,10 @@ from pydantic import BaseModel, Field
 
 from llm_grounding.domain.answers import ReasoningResult
 from llm_grounding.domain.evidence import EvidenceType, source_order
-from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
+from llm_grounding.infrastructure.llm.protocol import (
+    GenerationResult,
+    StructuredModelClient,
+)
 from llm_grounding.reasoning.models import ReasoningRequest
 
 PROMPT_ID = "basic-summary"
@@ -80,9 +83,20 @@ class BasicSummaryReasoner:
         paper_content = "\n".join(
             item.text for item in evidence if item.text is not None
         )
-        output = await self._model_client.generate(
+        generation = await self._model_client.generate(
             build_prompt(paper_content, request.task), BasicSummaryPayload
         )
+        if isinstance(generation, GenerationResult):
+            output = generation.output
+            generation_metadata = {
+                "usage": generation.usage.model_dump(mode="json")
+                if generation.usage
+                else None,
+                "model_id": generation.model_id,
+            }
+        else:
+            output = generation
+            generation_metadata = {}
         return ReasoningResult(
             result_id=str(uuid4()),
             payload=output.model_dump(mode="json"),
@@ -90,5 +104,6 @@ class BasicSummaryReasoner:
                 "prompt_id": PROMPT_ID,
                 "prompt_version": PROMPT_VERSION,
                 "output_schema": "BasicSummaryPayload",
+                "generation": generation_metadata,
             },
         )

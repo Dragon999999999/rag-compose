@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from llm_grounding.domain.answers import JsonValue, ReasoningResult
 from llm_grounding.domain.corpus import GroundingContext
-from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
+from llm_grounding.infrastructure.llm.protocol import (
+    GenerationResult,
+    StructuredModelClient,
+)
 from llm_grounding.infrastructure.prompts import PromptLibrary, RenderedPrompt
 
 
@@ -247,14 +250,25 @@ class BasicGroundedReasoner:
         prompt_context = build_grounded_prompt_context(context)
         prompt = self._render_prompt(context, prompt_context)
         model_payload: ModelGroundedResponsePayload
+        generation_usage: dict[str, JsonValue] = {}
         if context.generate_chat_name:
-            model_payload = await self._model_client.generate(
+            generation = await self._model_client.generate(
                 prompt.text, ModelInitialGroundedResponsePayload
             )
         else:
-            model_payload = await self._model_client.generate(
+            generation = await self._model_client.generate(
                 prompt.text, ModelGroundedResponsePayload
             )
+        if isinstance(generation, GenerationResult):
+            model_payload = generation.output
+            generation_usage = {
+                "usage": generation.usage.model_dump(mode="json")
+                if generation.usage
+                else None,
+                "model_id": generation.model_id,
+            }
+        else:
+            model_payload = generation
         raw_model_payload: dict[str, JsonValue] = model_payload.model_dump(mode="json")
         canonical_payload, resolutions, unresolved_refs = _canonicalize_model_payload(
             model_payload, prompt_context
@@ -280,6 +294,7 @@ class BasicGroundedReasoner:
             "source_ref_aliases": alias_metadata,
             "source_ref_resolutions": resolution_metadata,
             "unresolved_source_refs": unresolved_metadata,
+            "generation": generation_usage,
         }
         return ReasoningResult(
             result_id=str(uuid4()),

@@ -18,6 +18,8 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from llm_grounding.infrastructure.config.models import ModelConfig
 from llm_grounding.infrastructure.llm.credentials import resolve_api_key
+from llm_grounding.infrastructure.llm.protocol import GenerationResult
+from llm_grounding.observability.models import LLMUsage, UsageOrigin
 
 
 class ModelRequestError(RuntimeError):
@@ -33,7 +35,7 @@ class AqueductModelClient:
 
     async def generate[OutputT: BaseModel](
         self, prompt: str, output_type: type[OutputT]
-    ) -> OutputT:
+    ) -> GenerationResult[OutputT]:
         """Call Aqueduct and return validated output, closing the client on every exit.
 
         Raises:
@@ -57,7 +59,28 @@ class AqueductModelClient:
                         model, output_type=output_type, retries=self._config.retries
                     )
                     result = await agent.run(prompt)
-                    return output_type.model_validate(result.output)
+                    usage = result.usage
+                    request_tokens = getattr(usage, "input_tokens", None)
+                    response_tokens = getattr(usage, "output_tokens", None)
+                    total_tokens = getattr(usage, "total_tokens", None)
+                    cost_method = getattr(result, "cost", None)
+                    cost = cost_method() if callable(cost_method) else None
+                    return GenerationResult(
+                        output=output_type.model_validate(result.output),
+                        usage=LLMUsage(
+                            model_id=self._config.name,
+                            input_tokens=request_tokens,
+                            output_tokens=response_tokens,
+                            total_tokens=total_tokens,
+                            requests=1,
+                            usage_origin=UsageOrigin.PROVIDER_REPORTED,
+                            metadata={
+                                "details": getattr(usage, "details", {}) or {},
+                                "cost": str(cost) if cost is not None else None,
+                            },
+                        ),
+                        model_id=self._config.name,
+                    )
         except TimeoutError as exc:
             raise ModelRequestError(
                 "Aqueduct request exceeded its configured deadline."

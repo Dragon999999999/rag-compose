@@ -7,9 +7,31 @@ provider response bodies. Model configuration is constructor-injected. This
 contract does not couple reasoners to PydanticAI or a vendor client lifecycle.
 """
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel
+
+from llm_grounding.observability.models import LLMUsage
+
+
+@dataclass(frozen=True)
+class GenerationResult[OutputT: BaseModel]:
+    """Validated model output plus provider usage and model identity."""
+
+    output: "OutputT"
+    usage: LLMUsage | None = None
+    model_id: str | None = None
+
+    def __eq__(self, other: object) -> bool:
+        """Remain value-compatible with legacy callers comparing raw output."""
+        if isinstance(other, GenerationResult):
+            return (
+                self.output == other.output
+                and self.usage == other.usage
+                and self.model_id == other.model_id
+            )
+        return self.output == other
 
 
 class StructuredModelClient(Protocol):
@@ -17,6 +39,6 @@ class StructuredModelClient(Protocol):
 
     async def generate[OutputT: BaseModel](
         self, prompt: str, output_type: type[OutputT]
-    ) -> OutputT:
-        """Return schema-valid output or raise an error; never return partial JSON."""
+    ) -> GenerationResult[OutputT]:
+        """Return validated output and usage, or raise without partial JSON."""
         ...
