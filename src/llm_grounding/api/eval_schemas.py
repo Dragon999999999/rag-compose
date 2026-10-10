@@ -24,6 +24,7 @@ class EvalQueryRequest(BaseModel):
     experiment_id: str | None = None
     seed: int | None = None
     perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
+    config_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvalRetrieveRequest(EvalQueryRequest):
@@ -67,3 +68,19 @@ class EvalCorpusRequest(BaseModel):
     chunks: list[dict[str, Any]] = Field(default_factory=list)
     perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
     version: int = Field(default=1, ge=1)
+
+
+class EvalConfigOverrides(BaseModel):
+    """Per-request settings supported by ``basic_rag_v1``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    parser: str | None = None
+    chunker: str | None = None
+    embedder: str | None = None
+    vector_retriever: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=100)
+    context_chars: int | None = Field(default=None, ge=1, le=200_000)
+    summary_per_facet: int | None = Field(default=None, ge=1, le=20)
+    prompt_id: str | None = None
+    model_name: str | None = None

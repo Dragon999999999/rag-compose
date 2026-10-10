@@ -1,10 +1,13 @@
 """Application service for the native ``/eval/v1`` protocol."""
 
+import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from uuid import uuid4
 
 from llm_grounding.api.eval_schemas import EvalQueryRequest, EvalRetrieveRequest
 from llm_grounding.application.bootstrap import PhaseOneApplication
+from llm_grounding.application.eval_config import EvaluationConfigService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest, Message
 from llm_grounding.observability.builder import ObservationBuilder
@@ -34,6 +37,7 @@ class EvalService:
         self._application = application
         self._builder = builder or ObservationBuilder()
         self._corpora = corpus_service or EvalCorpusService(application.repository)
+        self._config = EvaluationConfigService()
 
     async def query(
         self,
@@ -43,20 +47,15 @@ class EvalService:
         idempotency_key: str | None = None,
     ) -> RagRunObservation:
         """Run generation and persist the canonical observation."""
-        identifier = request_id or idempotency_key
-        if identifier is None and request.benchmark_case_id:
-            identifier = EvalCorpusService.deterministic_request_id(
-                corpus_id=request.corpus_id,
-                benchmark_case_id=request.benchmark_case_id,
-                experiment_id=request.experiment_id,
-                query=request.query,
-                turn_index=request.turn_index,
-            )
-        identifier = identifier or str(uuid4())
-        existing = await self._existing(identifier)
+        fingerprint = self._fingerprint("query", request)
+        identifier = (
+            request_id or idempotency_key or self._deterministic_id(fingerprint)
+        )
+        existing = await self._existing(identifier, fingerprint)
         if existing is not None:
             return existing
         runner = self._runner()
+        effective = self._effective(request.corpus_id, request.config_overrides)
         corpus_request = CorpusRequest(
             request.corpus_id,
             request.query,
@@ -75,7 +74,7 @@ class EvalService:
             chunks=chunks,
             answer=answer,
             metadata=metadata,
-            effective_configuration=self._effective(request.corpus_id),
+            effective_configuration=effective,
             history=history,
         )
         evaluation_corpus = await self._evaluation_corpus(request.corpus_id)
@@ -89,8 +88,11 @@ class EvalService:
                             for item in request.history
                             if isinstance(item, dict) and item.get("id") is not None
                         ],
-                        "parameters": request.parameters,
                         "filters": request.filters,
+                        "parameters": {
+                            **request.parameters,
+                            "config_overrides": request.config_overrides,
+                        },
                     }
                 ),
                 "completed_at": datetime.now(UTC),
@@ -114,6 +116,7 @@ class EvalService:
                 "experiment_id": request.experiment_id,
                 "seed": request.seed,
                 "perturbation_metadata": request.perturbation_metadata,
+                "request_fingerprint": fingerprint,
             }
         )
         await self._persist(observation, metadata, evaluation_corpus is not None)
@@ -127,20 +130,15 @@ class EvalService:
         idempotency_key: str | None = None,
     ) -> RagRunObservation:
         """Run candidate/final-context retrieval without invoking generation."""
-        identifier = request_id or idempotency_key
-        if identifier is None and request.benchmark_case_id:
-            identifier = EvalCorpusService.deterministic_request_id(
-                corpus_id=request.corpus_id,
-                benchmark_case_id=request.benchmark_case_id,
-                experiment_id=request.experiment_id,
-                query=request.query,
-                turn_index=request.turn_index,
-            )
-        identifier = identifier or str(uuid4())
-        existing = await self._existing(identifier)
+        fingerprint = self._fingerprint("retrieve", request)
+        identifier = (
+            request_id or idempotency_key or self._deterministic_id(fingerprint)
+        )
+        existing = await self._existing(identifier, fingerprint)
         if existing is not None:
             return existing
         runner = self._runner()
+        effective = self._effective(request.corpus_id, request.config_overrides)
         corpus_request = CorpusRequest(
             request.corpus_id,
             request.query,
@@ -156,14 +154,17 @@ class EvalService:
             architecture_version=self._architecture_version,
             request=corpus_request,
             chunks=chunks,
-            effective_configuration=self._effective(request.corpus_id),
+            effective_configuration=effective,
         ).model_copy(
             update={
                 "request": {
                     "query": request.query,
                     "history": request.history,
-                    "parameters": request.parameters,
                     "filters": request.filters,
+                    "parameters": {
+                        **request.parameters,
+                        "config_overrides": request.config_overrides,
+                    },
                 },
                 "answer": None,
                 "status": "retrieved",
@@ -176,6 +177,7 @@ class EvalService:
                 "experiment_id": request.experiment_id,
                 "seed": request.seed,
                 "perturbation_metadata": request.perturbation_metadata,
+                "request_fingerprint": fingerprint,
             }
         )
         await self._persist(observation, {}, evaluation_corpus is not None)
@@ -226,24 +228,62 @@ class EvalService:
             else 1
         )
 
-    def _effective(self, corpus_id: str):
+    def _effective(self, corpus_id: str, overrides: dict[str, object]):
         """Build effective configuration when the composition root supplied it."""
         if not self._application.architecture or not self._application.ingestion_config:
+            if overrides:
+                raise EvalServiceError(
+                    "config_unavailable",
+                    "Per-request overrides require typed application configuration.",
+                    503,
+                )
             return None
-        return build_effective_configuration(
-            self._application.architecture,
-            self._application.ingestion_config,
-            corpus_id=corpus_id,
-        )
+        try:
+            if not overrides:
+                return build_effective_configuration(
+                    self._application.architecture,
+                    self._application.ingestion_config,
+                    corpus_id=corpus_id,
+                )
+            return self._config.validate(
+                self._application.architecture,
+                self._application.ingestion_config,
+                overrides,
+                corpus_id=corpus_id,
+            ).effective
+        except ValueError as exc:
+            raise EvalServiceError("unsupported_config", str(exc), 422) from exc
 
-    async def _existing(self, request_id: str) -> RagRunObservation | None:
+    async def _existing(
+        self, request_id: str, fingerprint: str | None = None
+    ) -> RagRunObservation | None:
         """Load an idempotent result when the configured repository supports it."""
         loader = getattr(
             self._application.repository, "observation_by_request_id", None
         )
         if loader is None:
             return None
-        return await loader(request_id)
+        existing = await loader(request_id)
+        if existing is not None and fingerprint is not None:
+            if existing.request_fingerprint not in (None, fingerprint):
+                raise EvalServiceError(
+                    "idempotency_conflict",
+                    "The request identity was already used for different input.",
+                    409,
+                )
+        return existing
+
+    @staticmethod
+    def _fingerprint(operation: str, request: EvalQueryRequest) -> str:
+        """Hash the complete request so idempotency keys cannot alias inputs."""
+        payload = {"operation": operation, **request.model_dump(mode="json")}
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return sha256(canonical.encode()).hexdigest()
+
+    @staticmethod
+    def _deterministic_id(fingerprint: str) -> str:
+        """Use the canonical request fingerprint as the generated request ID."""
+        return fingerprint
 
     async def _persist(
         self,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 
 from llm_grounding.api.eval_schemas import (
+    EvalConfigOverrides,
     EvalCorpusRequest,
     EvalError,
     EvalQueryRequest,
@@ -65,10 +66,14 @@ def create_eval_router(service: EvalService) -> APIRouter:
 
     @router.get("/config-schema")
     async def config_schema() -> dict[str, Any]:
-        """Expose the typed effective-configuration schema used by observations."""
+        """Expose supported request overrides and the recorded effective schema."""
         return {
             "protocol_version": "1",
-            "schema": EffectiveConfiguration.model_json_schema(),
+            "supported_architecture": "basic_rag_v1",
+            "schema": {
+                "overrides": EvalConfigOverrides.model_json_schema(),
+                "effective_configuration": EffectiveConfiguration.model_json_schema(),
+            },
         }
 
     @router.post("/corpora")
@@ -83,9 +88,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         try:
             corpus = await service.get_corpus(corpus_id)
         except KeyError as exc:
-            return _error_response(
-                EvalServiceError("corpus_not_found", str(exc), 404)
-            )
+            return _error_response(EvalServiceError("corpus_not_found", str(exc), 404))
         return corpus.model_dump(mode="json")
 
     @router.post("/query")

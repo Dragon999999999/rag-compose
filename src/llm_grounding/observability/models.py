@@ -406,6 +406,7 @@ class RagRunObservation(ObservationModel):
     run_id: str
     request_id: str
     target_run_id: str | None = None
+    request_fingerprint: str | None = None
     corpus_id: str
     architecture_name: str
     architecture_version: str | int
