@@ -122,5 +122,11 @@ class ChatService:
                     for chunk_id in retrieved_ids
                     if isinstance(chunk_id, str)
                 ],
+                "conversation_id": chat.id,
+                "turn_id": assistant_message.id,
+                "turn_index": len(
+                    [item for item in history if item.role == "assistant"]
+                ),
+                "included_history_turn_ids": [item.id for item in history],
             },
         )

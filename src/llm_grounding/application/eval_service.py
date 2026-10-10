@@ -95,7 +95,20 @@ class EvalService:
                 ),
                 "completed_at": datetime.now(UTC),
                 "conversation_id": request.conversation_id,
+                "turn_id": identifier,
                 "turn_index": request.turn_index,
+                "conversation_state": {
+                    "prior_turn_ids": [
+                        str(item["id"])
+                        for item in request.history
+                        if isinstance(item, dict) and item.get("id") is not None
+                    ],
+                    "included_history_turn_ids": [
+                        str(item["id"])
+                        for item in request.history
+                        if isinstance(item, dict) and item.get("id") is not None
+                    ],
+                },
                 "evaluation_corpus": evaluation_corpus,
                 "benchmark_case_id": request.benchmark_case_id,
                 "experiment_id": request.experiment_id,

@@ -50,7 +50,17 @@ def create_eval_router(service: EvalService) -> APIRouter:
                 "usage",
                 "effective_config",
             ],
-            "unsupported": ["claim_entailment", "judging"],
+            "unsupported": [
+                "claim_entailment",
+                "judging",
+                "rerank",
+                "fusion",
+                "filter",
+                "compression",
+                "confidence_calibration",
+                "multi_hop_decomposition",
+                "provider_seed",
+            ],
         }
 
     @router.get("/config-schema")
