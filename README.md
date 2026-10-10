@@ -166,3 +166,9 @@ Later work can introduce evidence selection, additional parsers, substantive
 assessors, decision policies, and scientific evaluation datasets behind the existing
 protocols. Embeddings, databases, real reranking, claim verification, and multimodal
 analysis are deliberately outside Baseline 0.
+# LLM Grounding
+
+The project includes a native `/eval/v1` adapter for reproducible retrieval and
+grounded-answer evaluation. Its canonical observations are defined in
+`src/llm_grounding/observability` and can be persisted and recovered by request
+identity. See [docs/eval_protocol.md](docs/eval_protocol.md) for the protocol.

@@ -252,3 +252,23 @@ selective retrieval/reranking, substantive assessors, claim-aware policies, and
 additional parser/evidence modalities. None are implemented as placeholders.
 Databases, embeddings, claim verification, multimodal analysis, DAG execution, and
 production services remain outside this baseline.
+
+## Evaluation and observability boundary
+
+The `observability` package is the provider-neutral boundary for the native
+`/eval/v1` adapter. `RagRunObservation` is serialized for HTTP responses,
+diagnostics, and durable replay. `ObservationBuilder` maps existing runtime
+answers, assessments, decisions, and retrieval results; it does not perform
+network I/O or semantic judging.
+
+Basic RAG emits two comparable retrieval snapshots: candidate retrieval and the
+final context passed to the reasoner. Each item retains its canonical chunk ID,
+one-based rank, score type, and evidence references. `TraceRecorder` supplies
+nested monotonic durations while preserving wall-clock timestamps. The model
+client returns `GenerationResult`, which keeps validated output together with
+provider-reported usage and model identity.
+
+Observations are persisted separately from run metadata in
+`rag_run_observations`, keyed by both `run_id` and unique `request_id`. This
+allows evaluation clients to recover and re-score completed executions without
+running the target pipeline again.

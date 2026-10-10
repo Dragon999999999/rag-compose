@@ -13,6 +13,7 @@ from llm_grounding.domain.corpus import (
     Message,
     TaskType,
 )
+from llm_grounding.observability.trace import TraceRecorder
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
 from llm_grounding.orchestration.retrieval_stages import build_retrieval_stages
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
@@ -46,8 +47,13 @@ class BasicRagRunner:
         generate_chat_name: bool = False,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute Basic RAG and retain metadata suitable for persistence."""
+        traces = TraceRecorder()
+        total_span = traces.start("rag_e2e")
+        retrieval_span = traces.start("retrieval")
         chunks = await self.retrieve(request)
+        traces.end(retrieval_span, output_count=len(chunks))
         if not chunks:
+            traces.end(total_span, output_count=0)
             self._diagnostics.report_empty_retrieval(
                 GroundingContext(request, (), history, generate_chat_name)
             )
@@ -67,22 +73,34 @@ class BasicRagRunner:
                         stage.model_dump(mode="json")
                         for stage in build_retrieval_stages((), run_id=str(uuid4()))
                     ],
+                    "trace": [span.model_dump(mode="json") for span in traces.spans],
                     "answer_payload": {},
                     "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
                 },
             )
         context = GroundingContext(request, chunks, history, generate_chat_name)
+        context_span = traces.start("final_context", input_count=len(chunks))
+        traces.end(context_span, output_count=len(context.chunks))
+        reasoning_span = traces.start("generation", input_count=len(context.chunks))
         reasoning = await self._reasoner.reason(context)
+        traces.end(reasoning_span, output_count=1)
+        assessment_span = traces.start("assessment")
         assessments = await self._assessor.assess_context(reasoning, context)
+        traces.end(assessment_span, output_count=len(assessments))
+        decision_span = traces.start("decision", input_count=len(assessments))
         decision = await self._policy.decide(reasoning, assessments)
+        traces.end(decision_span, output_count=1)
         self._diagnostics.report(context, reasoning, assessments, decision)
         rejected = decision.action == DecisionAction.REJECT
+        render_span = traces.start("render")
         answer = (
             self._rejected_answer(decision)
             if rejected
             else await self._renderer.render_context(decision, context)
         )
+        traces.end(render_span, output_count=1)
+        traces.end(total_span, output_count=1)
         return (
             reasoning.result_id,
             answer,
@@ -110,6 +128,7 @@ class BasicRagRunner:
                         chunks, run_id=reasoning.result_id
                     )
                 ],
+                "trace": [span.model_dump(mode="json") for span in traces.spans],
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )

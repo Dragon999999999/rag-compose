@@ -91,9 +91,11 @@ class ArchitectureConfig(BaseModel):
 
     def identity(self) -> str:
         """Hash architecture semantics without including endpoint credentials."""
+        import json
+
         data = self.model_dump(mode="json")
         data["reasoner"]["model"].pop("base_url", None)
-        canonical = self.__class__.model_validate(data).model_dump_json()
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
     @property
