@@ -127,7 +127,16 @@ class EvalService:
         idempotency_key: str | None = None,
     ) -> RagRunObservation:
         """Run candidate/final-context retrieval without invoking generation."""
-        identifier = request_id or idempotency_key or str(uuid4())
+        identifier = request_id or idempotency_key
+        if identifier is None and request.benchmark_case_id:
+            identifier = EvalCorpusService.deterministic_request_id(
+                corpus_id=request.corpus_id,
+                benchmark_case_id=request.benchmark_case_id,
+                experiment_id=request.experiment_id,
+                query=request.query,
+                turn_index=request.turn_index,
+            )
+        identifier = identifier or str(uuid4())
         existing = await self._existing(identifier)
         if existing is not None:
             return existing
@@ -138,6 +147,7 @@ class EvalService:
             document_ids=self._document_ids(request.filters),
         )
         chunks = await runner.retrieve(corpus_request)
+        evaluation_corpus = await self._evaluation_corpus(request.corpus_id)
         observation = self._builder.build(
             run_id=str(uuid4()),
             request_id=identifier,
@@ -158,9 +168,17 @@ class EvalService:
                 "answer": None,
                 "status": "retrieved",
                 "completed_at": datetime.now(UTC),
+                "conversation_id": request.conversation_id,
+                "turn_id": identifier,
+                "turn_index": request.turn_index,
+                "evaluation_corpus": evaluation_corpus,
+                "benchmark_case_id": request.benchmark_case_id,
+                "experiment_id": request.experiment_id,
+                "seed": request.seed,
+                "perturbation_metadata": request.perturbation_metadata,
             }
         )
-        await self._persist(observation, {})
+        await self._persist(observation, {}, evaluation_corpus is not None)
         return observation
 
     async def by_request_id(self, request_id: str) -> RagRunObservation:
