@@ -21,6 +21,8 @@ send `X-Rag-Eval-Protocol: 1`; another value is a structured protocol error.
 - `POST /eval/v1/retrieve` runs candidate retrieval and final-context construction
   without generation.
 - `GET /eval/v1/requests/{request_id}` restores a persisted observation.
+- `POST /eval/v1/corpora` creates an isolated benchmark corpus inventory.
+- `GET /eval/v1/corpora/{corpus_id}` reads an isolated benchmark corpus inventory.
 
 ## Observation semantics
 
@@ -34,3 +36,11 @@ provider-reported values from values that were not measured.
 Claims and citations are the canonical grounded response mapping. A citation is
 `resolved: true` only when its chunk exists in the selected context. The service
 does not claim semantic entailment or judgment quality.
+
+Ingestion observations retain parser/chunker identity, extracted evidence,
+character counts, source spans, chunk ordering, and parse/chunk/embed/index
+traces. Evaluation corpora use separate persistence from production projects;
+perturbation metadata and corpus hashes are retained for robustness experiments.
+Provider seeds, confidence calibration, multi-hop decomposition, and optional
+rerank/fusion/filter/compression stages are explicitly reported unavailable until
+their runtime implementations exist.
