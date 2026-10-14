@@ -1,9 +1,10 @@
 """Versioned ingestion choices, independent of query architecture configuration."""
 
+import json
 from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class ChunkerConfig(BaseModel):
@@ -24,20 +25,53 @@ class ChunkerConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
-    """Identify an embedding space, including normalization and optional revision."""
+    """Identify an embedding space and its provider connection settings.
+
+    API keys are deliberately absent. Providers resolve credentials at call time
+    from the environment, while this model remains safe to persist with an
+    ingestion record or include in an effective configuration.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    type: Literal["sentence_transformers", "fake"] = "sentence_transformers"
+    type: Literal["sentence_transformers", "fake", "openai_compatible"] = (
+        "sentence_transformers"
+    )
+    provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     revision: str | None = None
     dimension: int = Field(default=384, ge=1, le=16000)
     normalize: bool = True
     batch_size: int = Field(default=32, ge=1, le=512)
+    base_url: HttpUrl | None = None
+    timeout_seconds: float = Field(default=120, gt=0, le=3600, allow_inf_nan=False)
+    retries: int = Field(default=2, ge=0, le=5)
+
+    @model_validator(mode="after")
+    def validate_provider_settings(self) -> "EmbeddingConfig":
+        """Require an endpoint for remote OpenAI-compatible embeddings."""
+        if self.type == "openai_compatible" and self.base_url is None:
+            raise ValueError(
+                "openai_compatible embeddings require a credential-free base_url"
+            )
+        if self.base_url is not None:
+            if self.base_url.username or self.base_url.password:
+                raise ValueError("base_url must not contain credentials")
+            if self.base_url.query or self.base_url.fragment:
+                raise ValueError("base_url must not contain query or fragment")
+        return self
 
     def identity(self) -> str:
-        """Hash embedding semantics; batching does not change the embedding space."""
-        content = self.model_dump_json(exclude={"batch_size"})
-        return sha256(content.encode("utf-8")).hexdigest()
+        """Hash embedding semantics; transport tuning does not change space."""
+        data = self.model_dump(
+            mode="json",
+            exclude={"batch_size", "timeout_seconds", "retries"},
+        )
+        if self.base_url is not None:
+            data["base_url"] = sha256(str(self.base_url).encode("utf-8")).hexdigest()
+        content = json.dumps(data, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        return sha256(content).hexdigest()
 
 
 class IngestionConfig(BaseModel):

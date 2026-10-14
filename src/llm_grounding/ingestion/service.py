@@ -1,7 +1,7 @@
 """Separate persistent document ingestion workflow, never invoked by query retrieval."""
 
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -13,13 +13,16 @@ from llm_grounding.domain.corpus import (
     DocumentIngestion,
     IngestionStatus,
     ProjectDocument,
+    RetrievalUnit,
 )
 from llm_grounding.domain.documents import DocumentSource
+from llm_grounding.domain.evidence import EvidenceUnit
+from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.protocol import VectorStore
-from llm_grounding.ingestion.models import IngestionConfig
+from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.observability.ingestion import build_ingestion_observation
@@ -58,15 +61,32 @@ class DocumentIngestionService:
         chunker: Chunker,
         embedder: Embedder,
         vectors: VectorStore,
+        *,
+        embedder_factory: Callable[[EmbeddingConfig], Embedder] = build_embedder,
     ) -> None:
-        """Inject persistence, extraction, and indexing dependencies."""
+        """Inject persistence, extraction, and indexing dependencies.
+
+        The supplied embedder is retained as the compatibility/default instance
+        for existing callers. Additional ingestion configurations are materialized
+        lazily and cached by their complete embedding identity.
+        """
         self._repository = repository
         self._artifacts = artifacts
         self._parser = parser
         self._knowledge_builder = knowledge_builder
         self._chunker = chunker
-        self._embedder = embedder
+        self._embedder_factory = embedder_factory
+        self._embedders = {embedder.model_identity: embedder}
         self._vectors = vectors
+
+    def _embedder_for(self, config: IngestionConfig) -> Embedder:
+        """Return the cached provider for one exact embedding configuration."""
+        identity = config.embedding.identity()
+        embedder = self._embedders.get(identity)
+        if embedder is None:
+            embedder = self._embedder_factory(config.embedding)
+            self._embedders[identity] = embedder
+        return embedder
 
     async def add_document(
         self, project_id: str, source: Path, config: IngestionConfig
@@ -112,7 +132,13 @@ class DocumentIngestionService:
             and await self._vectors.associate_ingestion(project_id, existing.id)
         ):
             return document, association, existing
-        await self.ingest(project_id, document, ingestion, config)
+        await self.ingest(
+            project_id,
+            document,
+            ingestion,
+            config,
+            embedder=self._embedder_for(config),
+        )
         refreshed = await self._repository.find_ingestion(
             document.id, config.identity()
         )
@@ -126,17 +152,20 @@ class DocumentIngestionService:
         document: Document,
         ingestion: DocumentIngestion,
         config: IngestionConfig,
+        *,
+        embedder: Embedder | None = None,
     ) -> None:
         """Run persisted ingestion stages and leave FAILED state on an error.
 
         Failures retain canonical metadata and a sanitized error type. The caller can
         explicitly re-run this same compatible ingestion later.
         """
+        active_embedder = embedder or self._embedder_for(config)
         traces = TraceRecorder()
         total_span = traces.start("ingestion", stage_type=StageType.INGESTION)
         started = monotonic()
-        evidence = ()
-        chunks = ()
+        evidence: tuple[EvidenceUnit, ...] = ()
+        chunks: tuple[RetrievalUnit, ...] = ()
         try:
             await self._vectors.delete_ingestion(ingestion.id)
             await self._repository.clear_ingestion_representation(ingestion.id)
@@ -172,7 +201,7 @@ class DocumentIngestionService:
             vectors = await self._traced(
                 traces,
                 "embed",
-                self._embedder.embed_documents([chunk.text for chunk in chunks]),
+                active_embedder.embed_documents([chunk.text for chunk in chunks]),
             )
             if any(
                 vector.model_identity != ingestion.embedding_hash

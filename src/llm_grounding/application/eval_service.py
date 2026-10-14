@@ -55,7 +55,8 @@ class EvalService:
         if existing is not None:
             return existing
         runner = self._runner()
-        effective = self._effective(request.corpus_id, request.config_overrides)
+        overrides = self._overrides(request)
+        effective = self._effective(request.corpus_id, overrides)
         corpus_request = CorpusRequest(
             request.corpus_id,
             request.query,
@@ -63,11 +64,11 @@ class EvalService:
         )
         history = self._history(request.history)
         try:
-            if request.config_overrides:
+            if overrides:
                 run_id, answer, metadata = await runner.run(
                     corpus_request,
                     history,
-                    runtime_config=request.config_overrides,
+                    runtime_config=overrides,
                 )
             else:
                 run_id, answer, metadata = await runner.run(corpus_request, history)
@@ -120,7 +121,7 @@ class EvalService:
                         "filters": request.filters,
                         "parameters": {
                             **request.parameters,
-                            "config_overrides": request.config_overrides,
+                            "config_overrides": overrides,
                         },
                     }
                 ),
@@ -167,17 +168,16 @@ class EvalService:
         if existing is not None:
             return existing
         runner = self._runner()
-        effective = self._effective(request.corpus_id, request.config_overrides)
+        overrides = self._overrides(request)
+        effective = self._effective(request.corpus_id, overrides)
         corpus_request = CorpusRequest(
             request.corpus_id,
             request.query,
             document_ids=self._document_ids(request.filters),
         )
         try:
-            if request.config_overrides:
-                chunks = await runner.retrieve(
-                    corpus_request, runtime_config=request.config_overrides
-                )
+            if overrides:
+                chunks = await runner.retrieve(corpus_request, runtime_config=overrides)
             else:
                 chunks = await runner.retrieve(corpus_request)
         except Exception as exc:
@@ -220,7 +220,7 @@ class EvalService:
                     "filters": request.filters,
                     "parameters": {
                         **request.parameters,
-                        "config_overrides": request.config_overrides,
+                        "config_overrides": overrides,
                     },
                 },
                 "answer": None,
@@ -362,6 +362,11 @@ class EvalService:
             if self._application.architecture
             else 1
         )
+
+    @staticmethod
+    def _overrides(request: EvalQueryRequest) -> dict[str, object]:
+        """Merge structured settings over legacy flat evaluation overrides."""
+        return {**request.config_overrides, **request.config}
 
     def _effective(self, corpus_id: str, overrides: dict[str, object]):
         """Build effective configuration when the composition root supplied it."""

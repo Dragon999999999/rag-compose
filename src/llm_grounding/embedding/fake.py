@@ -11,16 +11,21 @@ from llm_grounding.embedding.models import EmbeddingVector
 class DeterministicFakeEmbedder:
     """Hash normalized word counts into a deterministic cosine-compatible space."""
 
-    def __init__(self, dimension: int = 32) -> None:
-        """Configure a small fixed dimension suitable only for tests."""
+    def __init__(self, dimension: int = 32, model_identity: str | None = None) -> None:
+        """Configure a small fixed dimension suitable only for tests.
+
+        ``model_identity`` lets the factory make the deterministic provider
+        match the persisted identity of an ``EmbeddingConfig`` exactly.
+        """
         if dimension < 2:
             raise ValueError("Fake embedder dimension must be at least 2")
         self._dimension = dimension
+        self._configured_identity = model_identity
 
     @property
     def model_identity(self) -> str:
         """Identify the deterministic hashing representation."""
-        return f"fake-hash-v1:{self._dimension}:normalized"
+        return self._configured_identity or f"fake-hash-v1:{self._dimension}:normalized"
 
     def _embed(self, text: str) -> EmbeddingVector:
         """Hash word counts, L2-normalize them, and retain the configured identity."""

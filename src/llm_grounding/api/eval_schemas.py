@@ -24,6 +24,7 @@ class EvalQueryRequest(BaseModel):
     experiment_id: str | None = None
     seed: int | None = None
     perturbation_metadata: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
     config_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -78,6 +79,7 @@ class EvalConfigOverrides(BaseModel):
     parser: str | None = None
     chunker: str | None = None
     embedder: str | None = None
+    embedding: dict[str, Any] | None = None
     vector_retriever: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=100)
     context_chars: int | None = Field(default=None, ge=1, le=200_000)

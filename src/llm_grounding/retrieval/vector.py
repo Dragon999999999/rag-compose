@@ -1,9 +1,11 @@
 """Project-scoped vector retrieval and simple multi-facet summary selection."""
 
 from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest, TaskType
+from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.vector.protocol import VectorStore
+from llm_grounding.ingestion.models import EmbeddingConfig
 
 SUMMARY_FACETS = (
     "objective and problem addressed",
@@ -17,23 +19,40 @@ SUMMARY_FACETS = (
 class VectorRetriever:
     """Embed a query explicitly and search a project-filtered derived vector index."""
 
-    def __init__(self, embedder: Embedder, store: VectorStore, top_k: int = 8) -> None:
+    def __init__(
+        self,
+        embedder: Embedder,
+        store: VectorStore,
+        top_k: int = 8,
+        *,
+        embedding_config: EmbeddingConfig | None = None,
+    ) -> None:
         """Configure an embedder, vector store, and positive candidate limit."""
         if top_k < 1:
             raise ValueError("top_k must be positive")
         self._embedder, self._store, self._top_k = embedder, store, top_k
-        self._last_query_embedding = None
+        self.embedding_config = embedding_config
+        self._last_query_embedding: EmbeddingVector | None = None
 
     @property
-    def last_query_embedding(self):
+    def last_query_embedding(self) -> EmbeddingVector | None:
         """Return the most recent query vector for observation instrumentation."""
         return self._last_query_embedding
 
+    @property
+    def default_embedder(self) -> Embedder:
+        """Return the composition-root embedder used when no override is supplied."""
+        return self._embedder
+
     async def retrieve(
-        self, request: CorpusRequest, *, top_k: int | None = None
+        self,
+        request: CorpusRequest,
+        *,
+        top_k: int | None = None,
+        embedder: Embedder | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
-        """Return query-relevant chunks scoped in the store by active project."""
-        query = await self._embedder.embed_query(request.task)
+        """Return query-relevant chunks using an optional request-local embedder."""
+        query = await (embedder or self._embedder).embed_query(request.task)
         self._last_query_embedding = query
         return await self._store.search(
             request.project_id, query, top_k or self._top_k, request.document_ids
@@ -63,10 +82,11 @@ class SummaryRetriever:
         top_k: int | None = None,
         context_chars: int | None = None,
         per_facet: int | None = None,
+        embedder: Embedder | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Avoid a naive single 'summarize' query that would bias coverage."""
         if request.task_type != TaskType.SUMMARY:
-            return await self._vector.retrieve(request, top_k=top_k)
+            return await self._vector.retrieve(request, top_k=top_k, embedder=embedder)
         active_context_chars = context_chars or self._context_chars
         active_per_facet = per_facet or self._per_facet
         all_chunks = await self._repository.chunks_for_project(
@@ -87,6 +107,7 @@ class SummaryRetriever:
                     request.document_ids,
                 ),
                 top_k=top_k,
+                embedder=embedder,
             )
             for result in results[:active_per_facet]:
                 selected.setdefault(result.chunk.chunk_id, result)

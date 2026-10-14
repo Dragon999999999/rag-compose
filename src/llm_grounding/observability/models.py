@@ -345,9 +345,11 @@ class EmbeddingConfiguration(ObservationModel):
     """Effective embedding-space identity."""
 
     model_id: str
+    provider: str | None = None
     version: str | None = None
     dimension: int | None = None
     normalization: bool | None = None
+    endpoint_hash: str | None = None
     embedding_hash: str | None = None
 
 

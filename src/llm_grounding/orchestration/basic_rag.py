@@ -14,6 +14,9 @@ from llm_grounding.domain.corpus import (
     Message,
     TaskType,
 )
+from llm_grounding.embedding.factory import build_embedder
+from llm_grounding.embedding.protocol import Embedder
+from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.observability.embedding import embedding_diagnostics
 from llm_grounding.observability.models import LLMUsage, RagUsage
 from llm_grounding.observability.trace import TraceRecorder
@@ -40,11 +43,16 @@ class BasicRagRunner:
         policy: BasicGroundingPolicy,
         renderer: GroundedAnswerRenderer,
         diagnostics: GroundingDiagnostics | None = None,
+        embedding_config: EmbeddingConfig | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
         self._assessor, self._policy, self._renderer = assessor, policy, renderer
         self._diagnostics = diagnostics or GroundingDiagnostics()
+        self._embedding_config = embedding_config or vector.embedding_config
+        self._embedders: dict[str, Embedder] = {
+            vector.default_embedder.model_identity: vector.default_embedder
+        }
 
     async def run(
         self,
@@ -207,7 +215,7 @@ class BasicRagRunner:
         runtime_config: dict[str, Any] | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Retrieve the exact candidate set used by the query path."""
-        values = runtime_config or {}
+        values = self._runtime_values(runtime_config)
         top_k = values.get("top_k") if isinstance(values.get("top_k"), int) else None
         context_chars = (
             values.get("context_chars")
@@ -219,16 +227,70 @@ class BasicRagRunner:
             if isinstance(values.get("summary_per_facet"), int)
             else None
         )
+        embedder = self._request_embedder(values)
+        if embedder is None:
+            return await (
+                self._summary.retrieve(
+                    request,
+                    top_k=top_k,
+                    context_chars=context_chars,
+                    per_facet=per_facet,
+                )
+                if request.task_type == TaskType.SUMMARY
+                else self._vector.retrieve(request, top_k=top_k)
+            )
         return await (
             self._summary.retrieve(
                 request,
                 top_k=top_k,
                 context_chars=context_chars,
                 per_facet=per_facet,
+                embedder=embedder,
             )
             if request.task_type == TaskType.SUMMARY
-            else self._vector.retrieve(request, top_k=top_k)
+            else self._vector.retrieve(request, top_k=top_k, embedder=embedder)
         )
+
+    @staticmethod
+    def _runtime_values(runtime_config: dict[str, Any] | None) -> dict[str, Any]:
+        """Merge legacy flat settings with an optional structured ``config`` map."""
+        values = dict(runtime_config or {})
+        nested = values.get("config")
+        if isinstance(nested, dict):
+            values.update(nested)
+        return values
+
+    def _request_embedder(self, values: dict[str, Any]) -> Embedder | None:
+        """Resolve and cache a request-specific embedding provider when requested."""
+        requested = values.get("embedding", values.get("embedding_config"))
+        legacy_type = values.get("embedder")
+        if requested is None and legacy_type is None:
+            return None
+        base = self._embedding_config
+        if isinstance(requested, EmbeddingConfig):
+            config = requested
+        elif isinstance(requested, dict):
+            if base is None:
+                raise ValueError(
+                    "Embedding overrides require a configured base embedding"
+                )
+            config = EmbeddingConfig.model_validate(
+                {**base.model_dump(mode="json"), **requested}
+            )
+        elif requested is not None:
+            raise ValueError("embedding override must be an EmbeddingConfig or object")
+        else:
+            if base is None or not isinstance(legacy_type, str):
+                raise ValueError("embedder override requires a configured embedding")
+            config = EmbeddingConfig.model_validate(
+                {**base.model_dump(mode="json"), "type": legacy_type}
+            )
+        identity = config.identity()
+        embedder = self._embedders.get(identity)
+        if embedder is None:
+            embedder = build_embedder(config)
+            self._embedders[identity] = embedder
+        return embedder
 
     @staticmethod
     def _usage_with_trace(usage: UsageAccumulator, traces: TraceRecorder) -> RagUsage:

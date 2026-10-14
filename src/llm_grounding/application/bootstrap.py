@@ -8,7 +8,7 @@ from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
-from llm_grounding.embedding.sentence_transformers import SentenceTransformersEmbedder
+from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.infrastructure.config.models import ArchitectureConfig
 from llm_grounding.infrastructure.config.settings import (
     MinioSettings,
@@ -108,7 +108,7 @@ def create_phase_one_application(
     engine, sessions = create_session_factory()
     repository = PostgresRepository(sessions)
     vectors = QdrantVectorStore(qdrant_settings, repository)
-    embedder = SentenceTransformersEmbedder(ingestion_config.embedding)
+    embedder = build_embedder(ingestion_config.embedding)
     chunker = (
         BlockAwareChunker(ingestion_config.chunker)
         if ingestion_config.chunker.type == "block_aware"
@@ -125,7 +125,9 @@ def create_phase_one_application(
         vectors,
     )
     top_k = architecture.retriever.top_k or 8
-    vector = VectorRetriever(embedder, vectors, top_k)
+    vector = VectorRetriever(
+        embedder, vectors, top_k, embedding_config=ingestion_config.embedding
+    )
     summary = SummaryRetriever(
         repository,
         vector,
@@ -145,6 +147,7 @@ def create_phase_one_application(
         BasicGroundingPolicy(),
         GroundedAnswerRenderer(),
         diagnostics,
+        ingestion_config.embedding,
     )
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10

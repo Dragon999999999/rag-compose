@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm_grounding.infrastructure.config.models import ArchitectureConfig
-from llm_grounding.ingestion.models import IngestionConfig
+from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.observability.configuration import build_effective_configuration
 from llm_grounding.observability.models import EffectiveConfiguration
 
@@ -12,6 +12,7 @@ SUPPORTED_OVERRIDE_FIELDS = (
     "parser",
     "chunker",
     "embedder",
+    "embedding",
     "vector_retriever",
     "top_k",
     "context_chars",
@@ -87,6 +88,10 @@ class EvaluationConfigService:
                 not isinstance(values[field], str) or not values[field].strip()
             ):
                 raise ValueError(f"{field} must be a non-empty string")
+        if "embedding" in values and not isinstance(
+            values["embedding"], (dict, EmbeddingConfig)
+        ):
+            raise ValueError("embedding must be an object")
         integer_bounds = {
             "top_k": (1, 100),
             "context_chars": (1, 200_000),
@@ -138,8 +143,23 @@ class EvaluationConfigService:
                     )
                 }
             )
+        if "embedding" in values:
+            embedding_value = values["embedding"]
+            if isinstance(embedding_value, dict):
+                embedding = IngestionConfig.model_validate(
+                    {
+                        **ingestion.model_dump(mode="json"),
+                        "embedding": {
+                            **ingestion.embedding.model_dump(mode="json"),
+                            **embedding_value,
+                        },
+                    }
+                ).embedding
+            else:
+                embedding = embedding_value
+            ingestion = ingestion.model_copy(update={"embedding": embedding})
         retriever = architecture.retriever
-        updates = {
+        updates: dict[str, Any] = {
             key: values[key]
             for key in ("top_k", "context_chars", "summary_per_facet")
             if key in values
