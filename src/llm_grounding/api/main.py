@@ -29,6 +29,7 @@ from llm_grounding.domain.corpus import (
     DocumentSummary,
     IngestionStatus,
     Message,
+    Pipeline,
     Project,
     RetrievalUnit,
     SummaryStatus,
@@ -39,6 +40,7 @@ from llm_grounding.infrastructure.config.loader import (
     load_architecture_config,
     load_ingestion_config,
 )
+from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 from llm_grounding.rendering.chunk_references import chunk_reference_label
 
@@ -54,10 +56,11 @@ class AskRequest(BaseModel):
 
     message: str = Field(min_length=1, max_length=20_000)
     summary: bool = False
+    pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 def _item(
-    value: Project | Chat | Document | DocumentIngestion | DocumentSummary,
+    value: Project | Chat | Document | DocumentIngestion | DocumentSummary | Pipeline,
 ) -> dict[str, object]:
     """Serialize a small immutable domain record without framework leakage."""
     return cast(dict[str, object], asdict(value))
@@ -308,7 +311,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=[
             "Content-Type",
             "X-Request-ID",
@@ -327,6 +330,72 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     app.include_router(
         create_eval_embeddings_router(application.evaluation.embedding_store)
     )
+
+    @app.get("/api/pipelines")
+    async def list_pipelines() -> list[dict[str, object]]:
+        """List active pipeline metadata without returning full JSON documents."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        records = await application.pipeline_service.list(active_only=True)
+        return application.pipeline_service.summaries(records)
+
+    @app.get("/api/pipelines/{pipeline_id}")
+    async def get_pipeline(pipeline_id: str) -> dict[str, object]:
+        """Return one complete persisted pipeline configuration."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        try:
+            return _item(await application.pipeline_service.get(pipeline_id))
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/pipelines", status_code=201)
+    async def create_pipeline(config: PipelineConfig) -> dict[str, object]:
+        """Validate and persist an API-owned pipeline configuration."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        try:
+            return _item(await application.pipeline_service.create(config))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.put("/api/pipelines/{pipeline_id}")
+    async def update_pipeline(
+        pipeline_id: str, config: PipelineConfig
+    ) -> dict[str, object]:
+        """Replace a pipeline atomically and invalidate its runtime cache entry."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        try:
+            return _item(await application.pipeline_service.update(pipeline_id, config))
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.delete("/api/pipelines/{pipeline_id}", status_code=204)
+    async def delete_pipeline(pipeline_id: str) -> None:
+        """Deactivate a pipeline while retaining its persisted configuration."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        try:
+            await application.pipeline_service.deactivate(pipeline_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/catalog")
+    async def catalog() -> dict[str, object]:
+        """Expose the registered stage schemas and compatibility metadata."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        return application.pipeline_service.catalog()
+
+    @app.get("/api/models")
+    async def models() -> dict[str, object]:
+        """Expose credential-free embedding and reasoning model metadata."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        return application.pipeline_service.models()
 
     @app.get("/api/projects")
     async def list_projects() -> list[dict[str, object]]:
@@ -379,6 +448,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             chat_id,
             request.message,
             TaskType.SUMMARY if request.summary else TaskType.QA,
+            request.pipeline_id,
         )
         return await _structured_answer(application, answer)
 

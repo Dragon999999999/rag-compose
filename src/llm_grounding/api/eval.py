@@ -83,7 +83,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         corpus = await service.create_corpus(**body.model_dump())
         return corpus.model_dump(mode="json")
 
-    @router.get("/corpora/{corpus_id}")
+    @router.get("/corpora/{corpus_id}", response_model=None)
     async def get_corpus(corpus_id: str) -> dict[str, Any] | JSONResponse:
         """Return an isolated benchmark corpus inventory."""
         try:
@@ -92,7 +92,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
             return _error_response(EvalServiceError("corpus_not_found", str(exc), 404))
         return corpus.model_dump(mode="json")
 
-    @router.delete("/corpora/{corpus_id}", status_code=204)
+    @router.delete("/corpora/{corpus_id}", status_code=204, response_model=None)
     async def delete_corpus(corpus_id: str) -> None | JSONResponse:
         """Delete only the isolated benchmark namespace."""
         try:
@@ -101,7 +101,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
             return _error_response(exc)
         return None
 
-    @router.post("/corpora/{corpus_id}/documents")
+    @router.post("/corpora/{corpus_id}/documents", response_model=None)
     async def upload_documents(
         corpus_id: str, body: EvalInventoryUpload
     ) -> dict[str, Any] | JSONResponse:
@@ -111,7 +111,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         except EvalServiceError as exc:
             return _error_response(exc)
 
-    @router.post("/corpora/{corpus_id}/chunks")
+    @router.post("/corpora/{corpus_id}/chunks", response_model=None)
     async def upload_chunks(
         corpus_id: str, body: EvalInventoryUpload
     ) -> dict[str, Any] | JSONResponse:
@@ -121,17 +121,17 @@ def create_eval_router(service: EvalService) -> APIRouter:
         except EvalServiceError as exc:
             return _error_response(exc)
 
-    @router.get("/corpora/{corpus_id}/documents")
+    @router.get("/corpora/{corpus_id}/documents", response_model=None)
     async def corpus_documents(corpus_id: str) -> dict[str, Any] | JSONResponse:
         """Read isolated source-document inventory."""
         return await _corpus_inventory(service, corpus_id, "documents")
 
-    @router.get("/corpora/{corpus_id}/chunks")
+    @router.get("/corpora/{corpus_id}/chunks", response_model=None)
     async def corpus_chunks(corpus_id: str) -> dict[str, Any] | JSONResponse:
         """Read isolated canonical chunk inventory."""
         return await _corpus_inventory(service, corpus_id, "chunks")
 
-    @router.get("/corpora/{corpus_id}/evidence")
+    @router.get("/corpora/{corpus_id}/evidence", response_model=None)
     async def corpus_evidence(corpus_id: str) -> dict[str, Any] | JSONResponse:
         """Read evidence/source spans supplied with the isolated chunk inventory."""
         try:
@@ -146,7 +146,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         ]
         return {"corpus_id": corpus_id, "evidence": evidence}
 
-    @router.get("/operations/{operation_id}")
+    @router.get("/operations/{operation_id}", response_model=None)
     async def operation(operation_id: str) -> dict[str, Any] | JSONResponse:
         """Return isolated ingestion/upload operation status."""
         try:
@@ -154,7 +154,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         except EvalServiceError as exc:
             return _error_response(exc)
 
-    @router.post("/query")
+    @router.post("/query", response_model=None)
     async def query(
         body: EvalQueryRequest,
         x_request_id: str | None = Header(default=None),
@@ -171,7 +171,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
             return _error_response(exc)
         return observation.model_dump(mode="json", exclude_none=True)
 
-    @router.post("/retrieve")
+    @router.post("/retrieve", response_model=None)
     async def retrieve(
         body: EvalRetrieveRequest,
         x_request_id: str | None = Header(default=None),
@@ -188,7 +188,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
             return _error_response(exc)
         return observation.model_dump(mode="json", exclude_none=True)
 
-    @router.get("/requests/{request_id}")
+    @router.get("/requests/{request_id}", response_model=None)
     async def request_observation(
         request_id: str,
         x_rag_eval_protocol: str | None = Header(default=None),

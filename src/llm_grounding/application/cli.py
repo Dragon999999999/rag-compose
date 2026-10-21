@@ -2,7 +2,9 @@
 
 import argparse
 import asyncio
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from llm_grounding.application.bootstrap import create_phase_one_application
@@ -11,6 +13,7 @@ from llm_grounding.domain.corpus import TaskType
 from llm_grounding.infrastructure.config.loader import (
     load_architecture_config,
     load_ingestion_config,
+    load_pipeline_config,
 )
 from llm_grounding.orchestration.grounding_diagnostics import (
     GroundingDiagnostics,
@@ -63,18 +66,46 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
         "--summary", action="store_true", help="Use summary retrieval planning"
     )
     ask.add_argument(
+        "--pipeline-id", help="Select a persisted pipeline runtime for this turn"
+    )
+    ask.add_argument(
         "--grounding-diagnostics",
         choices=tuple(level.value for level in GroundingDiagnosticsLevel),
         default=GroundingDiagnosticsLevel.OFF.value,
         help="Emit grounding diagnostics to stderr (default: off)",
     )
+    pipeline = commands.add_parser("pipeline", help="Manage persisted RAG pipelines")
+    pipeline_commands = pipeline.add_subparsers(dest="pipeline_command", required=True)
+    pipeline_commands.add_parser("list", help="List persisted pipelines")
+    inspect = pipeline_commands.add_parser(
+        "inspect", help="Inspect one persisted pipeline"
+    )
+    inspect.add_argument("pipeline_id")
+    validate = pipeline_commands.add_parser(
+        "validate", help="Validate a pipeline YAML without importing it"
+    )
+    validate.add_argument("config_file", type=Path)
+    create_pipeline = pipeline_commands.add_parser(
+        "create", help="Create an API-owned pipeline from YAML"
+    )
+    create_pipeline.add_argument("config_file", type=Path)
+    pipeline_import = pipeline_commands.add_parser(
+        "import", help="Synchronize pipeline YAML files into PostgreSQL"
+    )
+    pipeline_import.add_argument(
+        "directory", type=Path, default=Path("configs/pipelines"), nargs="?"
+    )
+    deactivate = pipeline_commands.add_parser(
+        "delete", help="Deactivate one persisted pipeline"
+    )
+    deactivate.add_argument("pipeline_id")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run a baseline extraction or dispatch a persistent Basic RAG command."""
     arguments = list(sys.argv[1:] if argv is None else argv)
-    phase_one = bool(arguments) and arguments[0] in {"project", "chat"}
+    phase_one = bool(arguments) and arguments[0] in {"project", "chat", "pipeline"}
     parser = create_phase_one_parser() if phase_one else create_parser()
     args = parser.parse_args(arguments)
     try:
@@ -104,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
 
 async def _run_phase_one_command(args: argparse.Namespace) -> int:
     """Dispatch thin application commands while preserving composition in YAML."""
+    if args.command == "pipeline" and args.pipeline_command == "validate":
+        config = load_pipeline_config(args.config_file)
+        print(f"valid\t{config.name}\t{config.config_hash}")
+        return 0
     architecture = load_architecture_config(
         Path("configs/architectures/basic_rag_v1.yaml")
     )
@@ -113,10 +148,16 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
     )
     if diagnostics_level != GroundingDiagnosticsLevel.OFF:
         configure_console_grounding_diagnostics()
+    pipeline_directory = (
+        args.directory
+        if args.command == "pipeline" and args.pipeline_command == "import"
+        else None
+    )
     application = create_phase_one_application(
         architecture,
         ingestion,
         GroundingDiagnostics(diagnostics_level),
+        pipeline_directory=pipeline_directory,
     )
     try:
         await application.startup()
@@ -145,8 +186,35 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
             print(f"Created chat {chat.id}: {chat.name}")
         elif args.command == "chat" and args.chat_command == "ask":
             task_type = TaskType.SUMMARY if args.summary else TaskType.QA
-            answer = await application.chats.ask(args.chat_id, args.message, task_type)
+            answer = await application.chats.ask(
+                args.chat_id, args.message, task_type, args.pipeline_id
+            )
             print(answer.text)
+        elif args.command == "pipeline":
+            if application.pipeline_service is None:
+                raise RuntimeError("Pipeline management is unavailable")
+            if args.pipeline_command == "list":
+                records = await application.pipeline_service.list()
+                for record in records:
+                    print(
+                        f"{record.id}\t{record.name}\t{record.version}\t"
+                        f"{record.source_kind}\t{record.active}"
+                    )
+            elif args.pipeline_command == "inspect":
+                record = await application.pipeline_service.get(args.pipeline_id)
+                print(json.dumps(asdict(record), default=str, indent=2))
+            elif args.pipeline_command == "create":
+                config = load_pipeline_config(args.config_file)
+                record = await application.pipeline_service.create(config)
+                print(f"Created pipeline {record.id}: {record.name}")
+            elif args.pipeline_command == "import":
+                for record in await application.pipeline_service.list():
+                    print(f"{record.id}\t{record.name}\t{record.version}")
+            elif args.pipeline_command == "delete":
+                await application.pipeline_service.deactivate(args.pipeline_id)
+                print(f"Deactivated pipeline {args.pipeline_id}")
+            else:
+                raise ValueError("Unsupported pipeline command")
         else:
             raise ValueError("Unsupported command")
     finally:

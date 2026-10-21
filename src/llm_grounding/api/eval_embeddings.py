@@ -36,7 +36,7 @@ def create_eval_embeddings_router(
     router = APIRouter(prefix="/eval/v1", tags=["evaluation-embeddings"])
     configured_token = access_token or os.getenv("LLM_GROUNDING_EVAL_EMBEDDING_TOKEN")
 
-    @router.post("/embeddings")
+    @router.post("/embeddings", response_model=None)
     async def embeddings(
         body: EvalEmbeddingRequest,
         x_eval_embedding_token: str | None = Header(default=None),

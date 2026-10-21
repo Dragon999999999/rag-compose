@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from llm_grounding.application.chat_service import ChatService
 from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
+from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
+from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
@@ -59,6 +61,7 @@ class PhaseOneApplication:
         architecture: ArchitectureConfig | None = None,
         ingestion_config: IngestionConfig | None = None,
         pipeline_sync: PipelineSynchronizer | None = None,
+        pipeline_service: PipelineService | None = None,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -77,6 +80,8 @@ class PhaseOneApplication:
         self.architecture = architecture
         self.ingestion_config = ingestion_config
         self._pipeline_sync = pipeline_sync
+        self.pipeline_service = pipeline_service
+        self.pipeline_runtime = pipeline_service.runtime if pipeline_service else None
         self.pipelines: tuple[Pipeline, ...] = ()
 
     async def startup(self) -> None:
@@ -138,8 +143,11 @@ def create_phase_one_application(
     qdrant_settings = QdrantSettings.from_environment()
     engine, sessions = create_session_factory()
     repository = PostgresRepository(sessions)
-    pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, model_catalog)
     vectors = QdrantVectorStore(qdrant_settings, repository)
+    catalog = model_catalog or load_model_catalog()
+    pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, catalog)
+    pipeline_runtime = PipelineRuntimeResolver(repository, vectors, catalog)
+    pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
     embedder = build_embedder(ingestion_config.embedding)
     chunker = (
         BlockAwareChunker(ingestion_config.chunker)
@@ -187,7 +195,7 @@ def create_phase_one_application(
     summaries = DocumentSummaryService(repository, runner)
     return PhaseOneApplication(
         ProjectService(repository, ingestion, vectors, summaries),
-        ChatService(repository, runner, max_history),
+        ChatService(repository, runner, max_history, pipeline_runtime),
         engine,
         vectors,
         repository,
@@ -197,4 +205,5 @@ def create_phase_one_application(
         architecture,
         ingestion_config,
         pipeline_sync,
+        pipeline_service,
     )

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, CorpusRequest, Message, TaskType
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
@@ -44,12 +45,14 @@ class ChatService:
         repository: PostgresRepository,
         runner: BasicRagRunner,
         max_history: int = 10,
+        pipeline_runtime: PipelineRuntimeResolver | None = None,
     ) -> None:
         """Inject persistence, query architecture, and bounded history policy."""
-        self._repository, self._runner, self._max_history = (
+        self._repository, self._runner, self._max_history, self._pipeline_runtime = (
             repository,
             runner,
             max_history,
+            pipeline_runtime,
         )
 
     async def create_chat(self, project_id: str, name: str) -> Chat:
@@ -78,14 +81,30 @@ class ChatService:
         return await self._repository.recent_messages(chat_id, 10_000)
 
     async def ask(
-        self, chat_id: str, message: str, task_type: TaskType = TaskType.QA
+        self,
+        chat_id: str,
+        message: str,
+        task_type: TaskType = TaskType.QA,
+        pipeline_id: str | None = None,
     ) -> Answer:
         """Persist a question, query its corpus, then persist the answer."""
         chat = await self._repository.get_chat(chat_id)
+        selected_runner = self._runner
+        selected_name = "basic_rag_v1"
+        selected_version = 1
+        if pipeline_id is not None:
+            if self._pipeline_runtime is None:
+                raise ValueError("Pipeline runtime resolution is unavailable")
+            runtime = await self._pipeline_runtime.resolve(pipeline_id)
+            if not isinstance(runtime.runner, BasicRagRunner):
+                raise ValueError("The selected pipeline is not a Basic RAG runtime")
+            selected_runner = runtime.runner
+            selected_name = runtime.architecture.name
+            selected_version = runtime.architecture.version
         generate_chat_name = not chat.chat_name_set
         await self._repository.add_message(chat_id, "user", message)
         history = await self._repository.recent_messages(chat_id, self._max_history)
-        run_id, answer, metadata = await self._runner.run(
+        run_id, answer, metadata = await selected_runner.run(
             CorpusRequest(chat.project_id, message, task_type),
             history,
             generate_chat_name=generate_chat_name,
@@ -93,8 +112,8 @@ class ChatService:
         await self._repository.record_run(
             run_id,
             chat.project_id,
-            "basic_rag_v1",
-            1,
+            selected_name,
+            selected_version,
             str(metadata["status"]),
             metadata,
         )
