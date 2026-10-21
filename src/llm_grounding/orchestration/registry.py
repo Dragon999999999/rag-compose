@@ -12,10 +12,19 @@ from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.decision.accept_all import AcceptAllDecisionPolicy
 from llm_grounding.decision.protocol import DecisionPolicy
 from llm_grounding.infrastructure.config.loader import ConfigurationError
-from llm_grounding.infrastructure.config.models import ArchitectureConfig
+from llm_grounding.infrastructure.config.models import (
+    ArchitectureConfig,
+    ModelCatalog,
+    PipelineConfig,
+)
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
+from llm_grounding.infrastructure.prompts import PromptLibrary, PromptLibraryError
+from llm_grounding.ingestion.models import ChunkerConfig, IngestionConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
+from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
+from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
+from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
 from llm_grounding.orchestration.architecture import Architecture
 from llm_grounding.parsing.protocol import DocumentParser
@@ -30,6 +39,14 @@ from llm_grounding.retrieval.reranking.identity import IdentityReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
 
 
+def _vector_retriever_requires_runtime_dependencies() -> Retriever:
+    """Reserve the registered vector stage for the Qdrant composition root."""
+    raise ConfigurationError(
+        "The vector retriever requires the Qdrant repository and embedder; "
+        "construct it through the application bootstrap."
+    )
+
+
 class ComponentRegistry:
     """Map stage-local names to typed constructors and validate complete composition."""
 
@@ -42,7 +59,8 @@ class ComponentRegistry:
             "basic": BasicKnowledgeBuilder
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
-            "full_document": FullDocumentRetriever
+            "full_document": FullDocumentRetriever,
+            "vector": _vector_retriever_requires_runtime_dependencies,
         }
         self.rerankers: dict[str, Callable[[], Reranker]] = {
             "identity": IdentityReranker
@@ -57,6 +75,15 @@ class ComponentRegistry:
         self.renderers: dict[str, Callable[[], Renderer]] = {
             "basic_summary": BasicSummaryRenderer
         }
+        self.pipeline_reasoners = frozenset({"basic_summary", "basic_grounded"})
+        self.pipeline_assessors = frozenset({"noop", "source_reference"})
+        self.pipeline_decision_policies = frozenset({"accept_all", "basic_grounding"})
+        self.pipeline_renderers = frozenset({"basic_summary", "grounded_answer"})
+        self.chunkers: dict[str, Callable[[ChunkerConfig], Chunker]] = {
+            "block_aware": BlockAwareChunker,
+            "fixed_window": FixedWindowChunker,
+        }
+        self.vector_backends: frozenset[str] = frozenset({"qdrant"})
 
     def validate(self, config: ArchitectureConfig) -> None:
         """Reject unknown identifiers with stage context before constructing clients."""
@@ -82,6 +109,93 @@ class ComponentRegistry:
                     f"Unknown {stage} component {name!r}; "
                     f"available: {', '.join(factories)}"
                 )
+
+    def validate_pipeline(
+        self, config: PipelineConfig, catalog: ModelCatalog | None = None
+    ) -> None:
+        """Validate all pipeline stages and named model references.
+
+        The registry remains closed: a pipeline can choose only implementations
+        registered here and can never name an arbitrary import path.
+
+        Args:
+            config: Complete pipeline composition to validate.
+            catalog: Shared catalog used to resolve embedding and reasoning models.
+
+        Raises:
+            ConfigurationError: If a component, model reference, or stage pairing
+                is unsupported.
+        """
+        selections: list[tuple[str, str, Collection[str]]] = [
+            ("parser", config.representation.parser.type, self.parsers),
+            (
+                "knowledge_builder",
+                config.representation.knowledge_builder.type,
+                self.knowledge_builders,
+            ),
+            ("retriever", config.query.retriever.type, self.retrievers),
+            ("reranker", config.query.reranker.type, self.rerankers),
+            ("reasoner", config.query.reasoner.type, self.pipeline_reasoners),
+            (
+                "decision_policy",
+                config.query.decision_policy.type,
+                self.pipeline_decision_policies,
+            ),
+            ("renderer", config.query.renderer.type, self.pipeline_renderers),
+        ]
+        selections.extend(
+            ("assessor", item.type, self.pipeline_assessors)
+            for item in config.query.assessors
+        )
+        for stage, name, factories in selections:
+            if name not in factories:
+                raise ConfigurationError(
+                    f"Unknown {stage} component {name!r}; "
+                    f"available: {', '.join(factories)}"
+                )
+        if config.representation.chunker.type not in self.chunkers:
+            raise ConfigurationError(
+                f"Unknown chunker component {config.representation.chunker.type!r}; "
+                f"available: {', '.join(self.chunkers)}"
+            )
+        if config.representation.vector_backend.type not in self.vector_backends:
+            raise ConfigurationError(
+                "Unknown vector_backend component "
+                f"{config.representation.vector_backend.type!r}; available: "
+                f"{', '.join(sorted(self.vector_backends))}"
+            )
+        if catalog is not None:
+            try:
+                catalog.embedding(config.representation.embedding.model_ref)
+                catalog.reasoning(config.query.reasoner.model_ref)
+            except ValueError as exc:
+                kind = "embedding" if "embedding" in str(exc) else "reasoning"
+                raise ConfigurationError(f"Unknown {kind} model reference") from exc
+        if config.query.retriever.type == "vector" and (
+            config.representation.vector_backend.type != "qdrant"
+        ):
+            raise ConfigurationError(
+                "The vector retriever requires the qdrant vector backend"
+            )
+        if (
+            config.query.reasoner.type == "basic_grounded"
+            and not config.query.reasoner.prompt_id
+        ):
+            raise ConfigurationError(
+                "The basic_grounded reasoner requires a registered prompt_id"
+            )
+        if config.query.reasoner.prompt_id is not None:
+            try:
+                PromptLibrary.default().metadata(config.query.reasoner.prompt_id)
+            except PromptLibraryError as exc:
+                raise ConfigurationError(str(exc)) from exc
+
+    def resolve_pipeline(
+        self, config: PipelineConfig, catalog: ModelCatalog
+    ) -> tuple[ArchitectureConfig, IngestionConfig]:
+        """Validate and resolve a pipeline into existing execution configurations."""
+        self.validate_pipeline(config, catalog)
+        return config.resolve(catalog)
 
     def build(
         self,

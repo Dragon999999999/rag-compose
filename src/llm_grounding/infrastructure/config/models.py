@@ -10,6 +10,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+from llm_grounding.ingestion.models import (
+    ChunkerConfig,
+    EmbeddingConfig,
+    IngestionConfig,
+)
+
 
 class ComponentConfig(BaseModel):
     """Select one registered implementation without arbitrary plugin loading."""
@@ -102,3 +108,175 @@ class ArchitectureConfig(BaseModel):
     def config_hash(self) -> str:
         """Return the deterministic architecture configuration hash."""
         return self.identity()
+
+
+class VectorBackendConfig(ComponentConfig):
+    """Select the registered vector backend and its immutable index contract."""
+
+    type: Literal["qdrant"]
+    index_version: str = Field(default="1", min_length=1, max_length=32)
+
+
+class ModelReference(BaseModel):
+    """Reference a credential-free entry in the shared model catalog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    model_ref: str = Field(
+        min_length=1,
+        description="Stable model-catalog key, never a provider credential.",
+    )
+
+
+class PipelineReasonerConfig(ComponentConfig, ModelReference):
+    """Select a reasoner and a named model-catalog entry."""
+
+    prompt_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Registered prompt selected for a prompt-driven reasoner.",
+    )
+
+
+class PipelineEmbeddingConfig(ModelReference):
+    """Select the named embedding model used to build and query an index."""
+
+
+class PipelineRepresentationConfig(BaseModel):
+    """Describe every document-to-index transformation in a pipeline."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    parser: ComponentConfig
+    knowledge_builder: ComponentConfig
+    chunker: ChunkerConfig
+    embedding: PipelineEmbeddingConfig
+    vector_backend: VectorBackendConfig
+
+    def identity(self, catalog: "ModelCatalog | None" = None) -> str:
+        """Hash all choices that can make a persisted vector index incompatible."""
+        import json
+
+        data = self.model_dump(mode="json")
+        if catalog is not None:
+            data["embedding_model"] = catalog.embedding(
+                self.embedding.model_ref
+            ).model_dump(mode="json")
+        return sha256(
+            json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+
+class PipelineQueryConfig(BaseModel):
+    """Describe the query-time stages executed over a representation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    retriever: RetrieverConfig
+    reranker: ComponentConfig
+    reasoner: PipelineReasonerConfig
+    assessors: tuple[ComponentConfig, ...]
+    decision_policy: ComponentConfig
+    renderer: ComponentConfig
+    chat_history: ChatHistoryConfig | None = None
+
+
+class ModelCatalog(BaseModel):
+    """Credential-free named model definitions shared by pipeline YAML files."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    schema_version: Literal[1] = 1
+    embedding_models: dict[str, EmbeddingConfig] = Field(default_factory=dict)
+    reasoning_models: dict[str, ModelConfig] = Field(default_factory=dict)
+
+    def embedding(self, model_ref: str) -> EmbeddingConfig:
+        """Resolve an embedding reference or raise a configuration error."""
+        try:
+            return self.embedding_models[model_ref]
+        except KeyError as exc:
+            raise ValueError(f"Unknown embedding model reference: {model_ref}") from exc
+
+    def reasoning(self, model_ref: str) -> ModelConfig:
+        """Resolve a reasoning reference or raise a configuration error."""
+        try:
+            return self.reasoning_models[model_ref]
+        except KeyError as exc:
+            raise ValueError(f"Unknown reasoning model reference: {model_ref}") from exc
+
+
+class PipelineConfig(BaseModel):
+    """Versioned, validated definition of a complete RAG pipeline.
+
+    Pipeline YAML contains only component identifiers, tuning parameters, and
+    model-catalog references. Provider credentials are resolved by infrastructure
+    adapters and are never part of the persisted pipeline document.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    schema_version: Literal[1] = 1
+    name: str = Field(min_length=1, max_length=255)
+    version: int = Field(ge=1)
+    description: str = Field(default="", max_length=4000)
+    is_default: bool = False
+    representation: PipelineRepresentationConfig
+    query: PipelineQueryConfig
+
+    def identity(self) -> str:
+        """Return the hash of the source pipeline document semantics."""
+        import json
+
+        canonical = json.dumps(
+            self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        )
+        return sha256(canonical.encode()).hexdigest()
+
+    @property
+    def config_hash(self) -> str:
+        """Return the deterministic source configuration hash."""
+        return self.identity()
+
+    def representation_hash(self, catalog: ModelCatalog | None = None) -> str:
+        """Return the identity used to decide whether an index can be reused."""
+        return self.representation.identity(catalog)
+
+    def resolve(
+        self, catalog: ModelCatalog
+    ) -> tuple[ArchitectureConfig, IngestionConfig]:
+        """Resolve named models into the legacy execution configurations.
+
+        The execution engines still consume the established architecture and
+        ingestion models. This adapter keeps their behavior stable while making
+        pipeline configuration the persisted composition boundary.
+        """
+        embedding = catalog.embedding(self.representation.embedding.model_ref)
+        reasoning = catalog.reasoning(self.query.reasoner.model_ref)
+        architecture = ArchitectureConfig(
+            name=self.name,
+            version=self.version,
+            parser=self.representation.parser,
+            knowledge_builder=self.representation.knowledge_builder,
+            retriever=self.query.retriever,
+            reranker=self.query.reranker,
+            reasoner=ReasonerConfig(
+                type=self.query.reasoner.type,
+                model=reasoning,
+                prompt_id=self.query.reasoner.prompt_id,
+            ),
+            assessors=self.query.assessors,
+            decision_policy=self.query.decision_policy,
+            renderer=self.query.renderer,
+            chat_history=self.query.chat_history,
+        )
+        ingestion = IngestionConfig.model_validate(
+            {
+                "parser": self.representation.parser.type,
+                "knowledge_builder": self.representation.knowledge_builder.type,
+                "chunker": self.representation.chunker.model_dump(mode="json"),
+                "embedding": embedding.model_dump(mode="json"),
+                "vector_backend": self.representation.vector_backend.type,
+                "index_version": self.representation.vector_backend.index_version,
+            }
+        )
+        return architecture, ingestion

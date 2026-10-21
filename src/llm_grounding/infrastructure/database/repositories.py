@@ -19,12 +19,14 @@ from llm_grounding.domain.corpus import (
     EvidenceReference,
     IngestionStatus,
     Message,
+    Pipeline,
     Project,
     ProjectDocument,
     RetrievalUnit,
     SummaryStatus,
 )
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
+from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
@@ -37,6 +39,7 @@ from llm_grounding.infrastructure.database.models import (
     IngestionObservationRow,
     IngestionRow,
     MessageRow,
+    PipelineRow,
     ProjectDocumentRow,
     ProjectRow,
     RagRunObservationRow,
@@ -67,11 +70,251 @@ def _sent_prompt_exists(chat_id: str | InstrumentedAttribute[str]) -> Exists:
 
 
 class PostgresRepository:
-    """Persist and load projects, corpora, chats, and RAG-run metadata."""
+    """Persist projects, pipelines, corpora, chats, and RAG-run metadata.
+
+    Pipelines are the canonical composition records. YAML synchronization is
+    intentionally implemented through the repository so API-owned rows cannot
+    be overwritten by a later import.
+    """
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         """Inject a factory so each operation owns an isolated async session."""
         self._sessions = sessions
+
+    async def create_pipeline(
+        self,
+        config: PipelineConfig | dict[str, object],
+        *,
+        source_kind: str = "api",
+        source_path: str | None = None,
+        source_fingerprint: str | None = None,
+        representation_hash: str | None = None,
+        pipeline_id: str | None = None,
+        active: bool = True,
+    ) -> Pipeline:
+        """Create a pipeline owned by an API or another explicit source.
+
+        Args:
+            config: A validated pipeline or a mapping accepted by its schema.
+            source_kind: Ownership marker, normally ``api`` or ``yaml``.
+            source_path: Import path for YAML-owned records.
+            source_fingerprint: SHA-256 of the imported source file.
+            representation_hash: Resolved identity of the document index contract.
+            pipeline_id: Optional stable identifier used by an import process.
+            active: Whether the new pipeline may be selected for execution.
+
+        Returns:
+            The persisted pipeline domain record.
+
+        Raises:
+            ValueError: If the pipeline name or source marker is invalid.
+        """
+        pipeline = self._validate_pipeline_config(config)
+        if not source_kind.strip():
+            raise ValueError("Pipeline source_kind must not be blank")
+        async with self._sessions.begin() as session:
+            row = PipelineRow(
+                id=pipeline_id,
+                name=pipeline.name,
+                version=pipeline.version,
+                schema_version=pipeline.schema_version,
+                description=pipeline.description,
+                config_json=pipeline.model_dump(mode="json"),
+                config_hash=pipeline.config_hash,
+                representation_hash=representation_hash
+                or pipeline.representation_hash(),
+                source_kind=source_kind.strip(),
+                source_path=source_path,
+                source_fingerprint=source_fingerprint,
+                active=active,
+                is_default=pipeline.is_default,
+            )
+            session.add(row)
+            if row.is_default:
+                await session.execute(
+                    update(PipelineRow)
+                    .where(PipelineRow.name != row.name)
+                    .values(is_default=False)
+                )
+            await session.flush()
+            return self._pipeline(row)
+
+    async def get_pipeline(self, pipeline_id: str) -> Pipeline:
+        """Retrieve one pipeline by stable database identifier."""
+        async with self._sessions() as session:
+            row = await session.get(PipelineRow, pipeline_id)
+            if row is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            return self._pipeline(row)
+
+    async def get_pipeline_by_name(self, name: str) -> Pipeline | None:
+        """Retrieve the current pipeline record for a stable name."""
+        async with self._sessions() as session:
+            row = await session.scalar(
+                select(PipelineRow).where(PipelineRow.name == name.strip())
+            )
+            return None if row is None else self._pipeline(row)
+
+    async def list_pipelines(
+        self, *, active_only: bool = False
+    ) -> tuple[Pipeline, ...]:
+        """List pipelines deterministically by default status, name, and version."""
+        async with self._sessions() as session:
+            query = select(PipelineRow)
+            if active_only:
+                query = query.where(PipelineRow.active.is_(True))
+            rows = (
+                await session.scalars(
+                    query.order_by(
+                        PipelineRow.is_default.desc(),
+                        PipelineRow.name,
+                        PipelineRow.version.desc(),
+                    )
+                )
+            ).all()
+            return tuple(self._pipeline(row) for row in rows)
+
+    async def update_pipeline(
+        self,
+        pipeline_id: str,
+        config: PipelineConfig | dict[str, object] | None = None,
+        *,
+        description: str | None = None,
+        active: bool | None = None,
+        is_default: bool | None = None,
+        representation_hash: str | None = None,
+    ) -> Pipeline:
+        """Update a pipeline and mark it API-owned so imports cannot replace it."""
+        pipeline = (
+            self._validate_pipeline_config(config) if config is not None else None
+        )
+        async with self._sessions.begin() as session:
+            row = await session.get(PipelineRow, pipeline_id)
+            if row is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            if pipeline is not None:
+                row.name = pipeline.name
+                row.version = pipeline.version
+                row.schema_version = pipeline.schema_version
+                row.description = pipeline.description
+                row.config_json = pipeline.model_dump(mode="json")
+                row.config_hash = pipeline.config_hash
+                row.representation_hash = (
+                    representation_hash or pipeline.representation_hash()
+                )
+                row.is_default = pipeline.is_default
+            elif description is not None:
+                row.description = description
+            if active is not None:
+                row.active = active
+            if is_default is not None:
+                row.is_default = is_default
+            row.source_kind = "api"
+            row.source_path = None
+            row.source_fingerprint = None
+            if row.is_default:
+                await session.execute(
+                    update(PipelineRow)
+                    .where(PipelineRow.id != row.id)
+                    .values(is_default=False)
+                )
+            await session.flush()
+            return self._pipeline(row)
+
+    async def deactivate_pipeline(self, pipeline_id: str) -> Pipeline:
+        """Mark a pipeline inactive without deleting its reproducibility record."""
+        async with self._sessions.begin() as session:
+            row = await session.get(PipelineRow, pipeline_id)
+            if row is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            row.active = False
+            await session.flush()
+            return self._pipeline(row)
+
+    async def upsert_pipeline_from_yaml(
+        self,
+        config: PipelineConfig,
+        *,
+        source_path: str,
+        source_fingerprint: str,
+        representation_hash: str | None = None,
+    ) -> Pipeline:
+        """Import one YAML pipeline unless its stable name is API-owned.
+
+        Existing YAML-owned rows are updated only when the source fingerprint or
+        effective configuration changed. API-owned rows remain untouched.
+        """
+        async with self._sessions.begin() as session:
+            row = await session.scalar(
+                select(PipelineRow).where(PipelineRow.name == config.name)
+            )
+            if row is not None and row.source_kind != "yaml":
+                return self._pipeline(row)
+            effective_representation_hash = (
+                representation_hash or config.representation_hash()
+            )
+            values = {
+                "name": config.name,
+                "version": config.version,
+                "schema_version": config.schema_version,
+                "description": config.description,
+                "config_json": config.model_dump(mode="json"),
+                "config_hash": config.config_hash,
+                "representation_hash": effective_representation_hash,
+                "source_kind": "yaml",
+                "source_path": source_path,
+                "source_fingerprint": source_fingerprint,
+                "active": True,
+                "is_default": config.is_default,
+            }
+            if row is None:
+                row = PipelineRow(**values)
+                session.add(row)
+            elif (
+                row.source_fingerprint != source_fingerprint
+                or row.config_hash != config.config_hash
+                or row.representation_hash != effective_representation_hash
+            ):
+                for key, value in values.items():
+                    setattr(row, key, value)
+            if config.is_default:
+                await session.execute(
+                    update(PipelineRow)
+                    .where(PipelineRow.name != config.name)
+                    .values(is_default=False)
+                )
+            await session.flush()
+            return self._pipeline(row)
+
+    @staticmethod
+    def _validate_pipeline_config(
+        config: PipelineConfig | dict[str, object],
+    ) -> PipelineConfig:
+        """Normalize repository inputs at the persistence boundary."""
+        if isinstance(config, PipelineConfig):
+            return config
+        return PipelineConfig.model_validate(config)
+
+    @staticmethod
+    def _pipeline(row: PipelineRow) -> Pipeline:
+        """Map one ORM pipeline row to a detached domain record."""
+        return Pipeline(
+            row.id,
+            row.name,
+            row.version,
+            row.schema_version,
+            row.description,
+            dict(row.config_json),
+            row.config_hash,
+            row.representation_hash,
+            row.source_kind,
+            row.source_path,
+            row.source_fingerprint,
+            row.active,
+            row.is_default,
+            row.created_at or _now(),
+            row.updated_at or row.created_at or _now(),
+        )
 
     async def create_project(self, name: str) -> Project:
         """Create a named reusable corpus.

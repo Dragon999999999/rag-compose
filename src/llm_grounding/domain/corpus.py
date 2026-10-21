@@ -21,6 +21,27 @@ class Project:
 
 
 @dataclass(frozen=True)
+class Pipeline:
+    """Persist one named, versioned RAG pipeline configuration."""
+
+    id: str
+    name: str
+    version: int
+    schema_version: int
+    description: str
+    config: dict[str, object]
+    config_hash: str
+    representation_hash: str
+    source_kind: str
+    source_path: str | None
+    source_fingerprint: str | None
+    active: bool
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class Document:
     """Identify immutable PDF content and its current user-facing filename."""
 

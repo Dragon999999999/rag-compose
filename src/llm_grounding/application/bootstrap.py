@@ -1,15 +1,24 @@
 """Construct Phase 1 application services from environment-backed infrastructure."""
 
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
 from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
+from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
+from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
-from llm_grounding.infrastructure.config.models import ArchitectureConfig
+from llm_grounding.infrastructure.config.loader import load_model_catalog
+from llm_grounding.infrastructure.config.models import (
+    ArchitectureConfig,
+    ModelCatalog,
+    PipelineConfig,
+)
 from llm_grounding.infrastructure.config.settings import (
     MinioSettings,
     QdrantSettings,
@@ -49,6 +58,7 @@ class PhaseOneApplication:
         runner: BasicRagRunner | None = None,
         architecture: ArchitectureConfig | None = None,
         ingestion_config: IngestionConfig | None = None,
+        pipeline_sync: PipelineSynchronizer | None = None,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -66,6 +76,14 @@ class PhaseOneApplication:
         self.runner = runner
         self.architecture = architecture
         self.ingestion_config = ingestion_config
+        self._pipeline_sync = pipeline_sync
+        self.pipelines: tuple[Pipeline, ...] = ()
+
+    async def startup(self) -> None:
+        """Synchronize configured pipelines and expose PostgreSQL-backed records."""
+        if self._pipeline_sync is not None:
+            await self._pipeline_sync.synchronize()
+        self.pipelines = await self.repository.list_pipelines()
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
@@ -86,18 +104,31 @@ class EvalApplication:
 
 
 def create_phase_one_application(
-    architecture: ArchitectureConfig,
-    ingestion_config: IngestionConfig,
+    architecture: ArchitectureConfig | PipelineConfig,
+    ingestion_config: IngestionConfig | None = None,
     diagnostics: GroundingDiagnostics | None = None,
+    *,
+    model_catalog: ModelCatalog | None = None,
+    pipeline_directory: Path | None = None,
 ) -> PhaseOneApplication:
     """Construct PostgreSQL/MinIO/Qdrant Basic RAG services from typed configuration.
 
     Raises:
         RuntimeError: If configuration selects unsupported Phase 1 components.
     """
-    if architecture.name != "basic_rag_v1" or architecture.retriever.type != "vector":
+    if isinstance(architecture, PipelineConfig):
+        catalog = model_catalog or load_model_catalog()
+        model_catalog = catalog
+        architecture, ingestion_config = architecture.resolve(catalog)
+    if ingestion_config is None:
+        raise ValueError("An ingestion configuration is required")
+    if (
+        architecture.retriever.type != "vector"
+        or architecture.reasoner.type != "basic_grounded"
+        or architecture.renderer.type != "grounded_answer"
+    ):
         raise RuntimeError(
-            "Phase 1 application requires the basic_rag_v1 vector architecture"
+            "Phase 1 application requires a vector/basic_grounded pipeline"
         )
     if ingestion_config.vector_backend != "qdrant":
         raise RuntimeError("Phase 1 application currently supports only qdrant")
@@ -107,6 +138,7 @@ def create_phase_one_application(
     qdrant_settings = QdrantSettings.from_environment()
     engine, sessions = create_session_factory()
     repository = PostgresRepository(sessions)
+    pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, model_catalog)
     vectors = QdrantVectorStore(qdrant_settings, repository)
     embedder = build_embedder(ingestion_config.embedding)
     chunker = (
@@ -164,4 +196,5 @@ def create_phase_one_application(
         runner,
         architecture,
         ingestion_config,
+        pipeline_sync,
     )

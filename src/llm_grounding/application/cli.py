@@ -119,6 +119,7 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
         GroundingDiagnostics(diagnostics_level),
     )
     try:
+        await application.startup()
         if args.command == "project" and args.project_command == "create":
             project = await application.projects.create_project(args.name)
             print(f"Created project {project.id}: {project.name}")

@@ -39,6 +39,11 @@ packages = ["src/llm_grounding"]
 "configs/architectures/baseline_v0.yaml" = "llm_grounding/infrastructure/config/baseline_v0.yaml"
 "configs/architectures/basic_rag_v1.yaml" = "llm_grounding/infrastructure/config/basic_rag_v1.yaml"
 "configs/ingestion/default.yaml" = "llm_grounding/infrastructure/config/ingestion_default.yaml"
+"configs/models.yaml" = "llm_grounding/infrastructure/config/models.yaml"
+"configs/pipelines/basic_rag_v1.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_v1.yaml"
+"configs/pipelines/basic_rag_small_chunks.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_small_chunks.yaml"
+"configs/pipelines/basic_rag_large_chunks.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_large_chunks.yaml"
+"configs/pipelines/basic_rag_fast_reasoning.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_fast_reasoning.yaml"
 "prompts/registry.yaml" = "llm_grounding/infrastructure/prompts/assets/registry.yaml"
 "prompts/reasoning/grounded_qa_v1.jinja2" = "llm_grounding/infrastructure/prompts/assets/reasoning/grounded_qa_v1.jinja2"
 

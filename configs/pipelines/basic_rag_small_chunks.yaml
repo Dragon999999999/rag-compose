@@ -1,0 +1,40 @@
+schema_version: 1
+name: basic_rag_small_chunks
+version: 1
+description: Grounded retrieval with smaller overlapping chunks for precise evidence.
+representation:
+  parser:
+    type: pymupdf
+  knowledge_builder:
+    type: basic
+  chunker:
+    type: block_aware
+    version: '1'
+    target_chars: 500
+    overlap_chars: 80
+  embedding:
+    model_ref: embedding_001
+  vector_backend:
+    type: qdrant
+    index_version: '1'
+query:
+  retriever:
+    type: vector
+    top_k: 6
+    context_chars: 10000
+    summary_per_facet: 3
+  reranker:
+    type: identity
+  reasoner:
+    type: basic_grounded
+    model_ref: reasoning_001
+    prompt_id: grounded_qa_v1
+  assessors:
+    - type: source_reference
+  decision_policy:
+    type: basic_grounding
+  renderer:
+    type: grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10

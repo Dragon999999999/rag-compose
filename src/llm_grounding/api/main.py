@@ -292,6 +292,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        await application.startup()
         yield
         await application.close()
 
