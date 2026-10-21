@@ -10,6 +10,8 @@ import { DocumentOverview } from "../components/documents/DocumentOverview";
 import { AppShell } from "../components/layout/AppShell";
 import { ProjectHeader } from "../components/layout/ProjectHeader";
 import { ProjectSidebar } from "../components/layout/ProjectSidebar";
+import { PipelineEditor } from "../components/pipelines/PipelineEditor";
+import { PipelineLibrary } from "../components/pipelines/PipelineLibrary";
 import { SourcesWorkspace } from "../components/sources/SourcesWorkspace";
 import { selectChatForWorkspace } from "../features/chatNavigation";
 import {
@@ -36,6 +38,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/projects" replace />} />
       <Route path="/projects" element={<ProjectHome />} />
+      <Route path="/pipelines" element={<PipelineLibrary />} />
+      <Route path="/pipelines/new" element={<PipelineEditor />} />
+      <Route path="/pipelines/:pipelineId/edit" element={<PipelineEditor />} />
       <Route
         path="/projects/:projectId/chats/:chatId"
         element={<ProjectWorkspace />}

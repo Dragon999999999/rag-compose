@@ -99,6 +99,9 @@ export function ProjectSidebar({
   return (
     <aside className="project-sidebar">
       <div className="sidebar-title">Projects</div>
+      <NavLink className="sidebar-global-link" to="/pipelines">
+        Pipeline library
+      </NavLink>
       <nav aria-label="Projects">
         {projects.map((project) => {
           const isSelected = project.id === selectedProjectId;

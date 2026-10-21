@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatsApi } from "../api/chats";
-import { request } from "../api/client";
 import { documentsApi } from "../api/documents";
+import { pipelinesApi } from "../api/pipelines";
 import { projectsApi } from "../api/projects";
 import { ragApi } from "../api/rag";
-import type { Message, Pipeline } from "../api/types";
+import type { Message, PipelineConfig } from "../api/types";
 import { findReusableDraftChat } from "./chatNavigation";
 
-export const keys = { projects: ["projects"] as const, pipelines: ["pipelines"] as const, chats: (projectId: string) => ["projects", projectId, "chats"] as const, messages: (chatId: string) => ["chats", chatId, "messages"] as const, sources: (projectId: string) => ["projects", projectId, "sources"] as const, documentSummary: (projectId: string, documentId: string) => ["projects", projectId, "documents", documentId, "summary"] as const, evidence: (runId: string) => ["runs", runId, "evidence"] as const };
+export const keys = { projects: ["projects"] as const, pipelines: (includeInactive = false) => ["pipelines", { includeInactive }] as const, chats: (projectId: string) => ["projects", projectId, "chats"] as const, messages: (chatId: string) => ["chats", chatId, "messages"] as const, sources: (projectId: string) => ["projects", projectId, "sources"] as const, documentSummary: (projectId: string, documentId: string) => ["projects", projectId, "documents", documentId, "summary"] as const, evidence: (runId: string) => ["runs", runId, "evidence"] as const };
 export const useProjects = () => useQuery({ queryKey: keys.projects, queryFn: projectsApi.list });
-export const usePipelines = () => useQuery({ queryKey: keys.pipelines, queryFn: () => request<Pipeline[]>("/pipelines") });
+export const usePipelines = (includeInactive = false) => useQuery({ queryKey: keys.pipelines(includeInactive), queryFn: () => pipelinesApi.list(includeInactive) });
+export const usePipeline = (pipelineId?: string) => useQuery({ queryKey: ["pipelines", pipelineId], queryFn: () => pipelinesApi.get(pipelineId!), enabled: Boolean(pipelineId) });
 export const useChats = (projectId?: string) => useQuery({ queryKey: keys.chats(projectId ?? ""), queryFn: () => chatsApi.list(projectId!), enabled: !!projectId });
 export const useMessages = (chatId?: string) => useQuery({ queryKey: keys.messages(chatId ?? ""), queryFn: () => chatsApi.messages(chatId!), enabled: !!chatId });
 export const useSources = (projectId?: string) => useQuery({ queryKey: keys.sources(projectId ?? ""), queryFn: () => documentsApi.list(projectId!), enabled: !!projectId });
@@ -33,4 +34,39 @@ export function useDocumentSummaryMutation(
       client.invalidateQueries({ queryKey: keys.sources(projectId) });
     },
   });
+}
+
+export function usePipelineMutations() {
+  const client = useQueryClient();
+  const invalidate = (): void => {
+    void client.invalidateQueries({ queryKey: ["pipelines"] });
+  };
+  return {
+    create: useMutation({
+      mutationFn: pipelinesApi.create,
+      onSuccess: invalidate,
+    }),
+    update: useMutation({
+      mutationFn: ({ pipelineId, config }: { pipelineId: string; config: PipelineConfig }) =>
+        pipelinesApi.update(pipelineId, config),
+      onSuccess: invalidate,
+    }),
+    deactivate: useMutation({
+      mutationFn: pipelinesApi.deactivate,
+      onSuccess: invalidate,
+    }),
+    setDefault: useMutation({
+      mutationFn: async (pipelineId: string) => {
+        const pipeline = await pipelinesApi.get(pipelineId);
+        if (!pipeline.config) {
+          throw new Error("The complete pipeline configuration is unavailable.");
+        }
+        return pipelinesApi.update(pipelineId, {
+          ...pipeline.config,
+          is_default: true,
+        });
+      },
+      onSuccess: invalidate,
+    }),
+  };
 }

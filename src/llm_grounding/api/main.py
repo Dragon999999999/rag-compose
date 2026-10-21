@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
@@ -365,11 +365,15 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     )
 
     @app.get("/api/pipelines")
-    async def list_pipelines() -> list[dict[str, object]]:
-        """List active pipeline metadata without returning full JSON documents."""
+    async def list_pipelines(
+        include_inactive: bool = Query(False),
+    ) -> list[dict[str, object]]:
+        """List pipeline metadata without returning full JSON documents."""
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
-        records = await application.pipeline_service.list(active_only=True)
+        records = await application.pipeline_service.list(
+            active_only=not include_inactive
+        )
         return application.pipeline_service.summaries(records)
 
     @app.get("/api/pipelines/{pipeline_id}")
