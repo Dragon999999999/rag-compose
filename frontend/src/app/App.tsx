@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
-import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
+import type { Chat, Evidence, GroundedAnswer, Pipeline, Project } from "../api/types";
 import { ChatWorkspace } from "../components/chats/ChatWorkspace";
-import { ChatCreateDialog, Dialog, NameDialog } from "../components/common/Dialog";
+import { ChatCreateDialog, Dialog, ProjectCreateDialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";
 import { EvidenceWorkspace } from "../components/evidence/EvidenceWorkspace";
 import { DocumentOverview } from "../components/documents/DocumentOverview";
@@ -17,6 +17,7 @@ import { selectChatForWorkspace } from "../features/chatNavigation";
 import {
   useChatMutations,
   useChats,
+  useCompatibleQueryPipelines,
   useDocumentSummaryMutation,
   useDocumentSummary,
   useEvidence,
@@ -32,6 +33,14 @@ import "./App.css";
 type DeleteTarget =
   | { kind: "project"; item: Project }
   | { kind: "chat"; item: Chat };
+
+function mergeIngestionPipelines(
+  ingestion: Pipeline[] | undefined,
+  all: Pipeline[] | undefined,
+): Pipeline[] {
+  const records = [...(ingestion ?? []), ...(all ?? []).filter((pipeline) => pipeline.kind === "full")];
+  return records.filter((pipeline, index) => records.findIndex((item) => item.id === pipeline.id) === index);
+}
 
 export function App() {
   return (
@@ -77,6 +86,8 @@ export function App() {
 
 function ProjectHome() {
   const projects = useProjects();
+  const ingestionPipelines = usePipelines(false, "ingestion");
+  const allPipelines = usePipelines();
   const navigate = useNavigate();
   const [create, setCreate] = useState(false);
   const mutations = useProjectMutations();
@@ -104,11 +115,12 @@ function ProjectHome() {
         </p>
       </EmptyState>
       {create && (
-        <NameDialog
+        <ProjectCreateDialog
           error={mutations.create.error}
+          pipelines={mergeIngestionPipelines(ingestionPipelines.data, allPipelines.data)}
           onClose={() => setCreate(false)}
-          onSubmit={(name) =>
-            mutations.create.mutate(name, {
+          onSubmit={(name, ingestionPipelineId) =>
+            mutations.create.mutate({ name, ingestionPipelineId }, {
               onSuccess: (project) => {
                 setCreate(false);
                 navigate(`/projects/${project.id}/sources`);
@@ -116,8 +128,6 @@ function ProjectHome() {
             })
           }
           pending={mutations.create.isPending}
-          submitLabel="Create project"
-          title="Create project"
         />
       )}
     </main>
@@ -130,6 +140,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const projects = useProjects();
   const chats = useChats(projectId);
   const pipelines = usePipelines();
+  const ingestionPipelines = usePipelines(false, "ingestion");
+  const compatibleQueryPipelines = useCompatibleQueryPipelines(projectId);
   const sources = useSources(projectId);
   const documentSummary = useDocumentSummary(projectId, documentId);
   const documentSummaryMutation = useDocumentSummaryMutation(projectId, documentId);
@@ -204,6 +216,11 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       return;
     }
     chatMutations.updatePipeline.mutate({ chatId, pipelineId });
+  };
+
+  const switchIngestionPipeline = (pipelineId: string): void => {
+    if (!projectId || !pipelineId) return;
+    projectMutations.updateIngestion.mutate({ id: projectId, ingestionPipelineId: pipelineId });
   };
 
   const ask = (message: string): void => {
@@ -360,9 +377,14 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       onNewChat={() => createChat()}
       onWorkspaceToggle={toggleWorkspace}
       project={project}
-      pipelines={pipelines.data ?? []}
+      ingestionPipelines={mergeIngestionPipelines(ingestionPipelines.data, pipelines.data)}
+      queryCompatibility={compatibleQueryPipelines.data ?? []}
+      compatibilityError={compatibleQueryPipelines.error}
+      ingestionError={projectMutations.updateIngestion.error}
+      ingestionChanging={projectMutations.updateIngestion.isPending}
       pipelineChanging={chatMutations.updatePipeline.isPending}
       pipelineError={chatMutations.updatePipeline.error}
+      onIngestionChange={switchIngestionPipeline}
       onPipelineChange={switchPipeline}
       view={sourceView ? "sources" : "chat"}
     />
@@ -502,11 +524,12 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
         ) : null}
       </AppShell>
       {createProject && (
-        <NameDialog
+        <ProjectCreateDialog
           error={projectMutations.create.error}
+          pipelines={mergeIngestionPipelines(ingestionPipelines.data, pipelines.data)}
           onClose={() => setCreateProject(false)}
-          onSubmit={(name) =>
-            projectMutations.create.mutate(name, {
+          onSubmit={(name, ingestionPipelineId) =>
+            projectMutations.create.mutate({ name, ingestionPipelineId }, {
               onSuccess: (newProject) => {
                 setCreateProject(false);
                 navigate(`/projects/${newProject.id}/sources`);
@@ -514,8 +537,6 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
             })
           }
           pending={projectMutations.create.isPending}
-          submitLabel="Create project"
-          title="Create project"
         />
       )}
       {createChatProjectId && (
@@ -524,7 +545,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
           onClose={() => setCreateChatProjectId(null)}
           onSubmit={submitChatCreation}
           pending={chatMutations.create.isPending}
-          pipelines={pipelines.data ?? []}
+          compatibility={compatibleQueryPipelines.data ?? []}
+          compatibilityError={compatibleQueryPipelines.error}
         />
       )}
       {deleteTarget && (

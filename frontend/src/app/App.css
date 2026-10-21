@@ -36,6 +36,8 @@
 .pipeline-selector { align-items: center; color: var(--color-text-muted); display: flex; font-size: 12px; gap: var(--spacing-1); }
 .pipeline-selector select, .dialog-form select { min-height: 34px; padding: 7px 9px; }
 .pipeline-error { color: var(--color-danger); font-size: 12px; margin: 0; }
+.index-status { color: var(--color-text-muted); font-size: 11px; margin: 0; }
+.pipeline-compatibility-list { color: var(--color-warning); display: grid; font-size: 11px; gap: 3px; max-width: 330px; }
 
 .sources-workspace .source-name { background: transparent; border: 0; color: var(--color-text-secondary); cursor: pointer; font: inherit; font-weight: 650; padding: 0; }
 .sources-workspace .source-name:hover, .sources-workspace .source-name:focus-visible { color: var(--color-primary); text-decoration: underline; }

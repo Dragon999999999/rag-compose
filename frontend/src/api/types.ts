@@ -1,4 +1,19 @@
-export type Project = { id: string; name: string; created_at: string };
+export type PipelineKind = "full" | "ingestion" | "query";
+export type Project = {
+  id: string;
+  name: string;
+  created_at: string;
+  ingestion_pipeline_id?: string | null;
+  ingestion_pipeline_version?: number | null;
+  ingestion_pipeline_config_hash?: string | null;
+  ingestion_representation_hash?: string | null;
+  index_capabilities?: {
+    capabilities?: string[];
+    embedding_identity?: string | null;
+    dimension?: number | null;
+    representation_hash?: string | null;
+  };
+};
 export type JsonSchema = {
   type?: string;
   title?: string;
@@ -17,6 +32,7 @@ export type JsonSchema = {
 export type CatalogStage = { implementations: string[]; schema: JsonSchema };
 export type PipelineCatalog = {
   schema_version: number;
+  pipeline_kinds?: Record<string, string[]>;
   stages: Record<string, CatalogStage>;
   compatibility: Record<string, unknown>;
 };
@@ -28,12 +44,13 @@ export type ModelCatalog = {
 };
 export type PipelineConfig = {
   schema_version: number;
+  kind: PipelineKind;
   name: string;
   version: number;
   description: string;
   is_default: boolean;
-  representation: Record<string, unknown>;
-  query: Record<string, unknown>;
+  representation?: Record<string, unknown>;
+  query?: Record<string, unknown>;
 };
 export type Pipeline = {
   id: string;
@@ -48,8 +65,16 @@ export type Pipeline = {
   source_kind?: string;
   created_at: string;
   updated_at: string;
+  kind: PipelineKind;
   conversation_count?: number;
   config?: PipelineConfig;
+};
+export type PipelineCompatibility = {
+  pipeline: Pipeline;
+  compatible: boolean;
+  required_capabilities: string[];
+  missing_capabilities: string[];
+  reason: string | null;
 };
 export type PipelineChange = {
   path: string;
@@ -62,6 +87,7 @@ export type PipelineUpdateImpact = {
   current_version: number;
   current_config_hash: string;
   conversation_count: number;
+  project_count?: number;
   representation_changed: boolean;
   compatible: boolean;
   can_migrate: boolean;

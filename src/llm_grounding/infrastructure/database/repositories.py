@@ -342,6 +342,16 @@ class PostgresRepository:
             )
             return int(count or 0)
 
+    async def count_pipeline_projects(self, pipeline_id: str) -> int:
+        """Count projects whose indexed data selects an ingestion pipeline."""
+        async with self._sessions() as session:
+            count = await session.scalar(
+                select(func.count(ProjectRow.id)).where(
+                    ProjectRow.ingestion_pipeline_id == pipeline_id
+                )
+            )
+            return int(count or 0)
+
     async def _record_pipeline_version(
         self,
         session: AsyncSession,

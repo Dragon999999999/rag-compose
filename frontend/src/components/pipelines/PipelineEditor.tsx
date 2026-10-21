@@ -8,6 +8,7 @@ import type {
   Pipeline,
   PipelineCatalog,
   PipelineConfig,
+  PipelineKind,
   PipelineUpdateImpact,
 } from "../../api/types";
 import { Dialog } from "../common/Dialog";
@@ -73,7 +74,8 @@ export function PipelineEditor() {
   const navigate = useNavigate();
   const isNew = !pipelineId;
   const sourceId = pipelineId ?? searchParams.get("source") ?? undefined;
-  const pipelines = usePipelines();
+  const requestedKind = parsePipelineKind(searchParams.get("kind"));
+  const pipelines = usePipelines(false, requestedKind);
   const defaultId = pipelines.data?.find((pipeline) => pipeline.is_default)?.id;
   const source = usePipeline(
     sourceId ?? (searchParams.get("mode") === "default" ? defaultId : undefined),
@@ -91,6 +93,8 @@ export function PipelineEditor() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<DraftSnapshot | null>(null);
   const [updateImpact, setUpdateImpact] = useState<PipelineUpdateImpact | null>(null);
+  const pipelineKind: PipelineKind = source.data?.kind ?? source.data?.config?.kind ?? requestedKind ?? "full";
+  const visibleStages = stagesForKind(pipelineKind);
 
   const template = source.data?.config
     ? { id: source.data.id, config: source.data.config, name: source.data.name }
@@ -101,7 +105,7 @@ export function PipelineEditor() {
   useEffect(() => {
     if (!isNew && !template) return;
     if (!templateKey || loadedTemplate === templateKey) return;
-    const initial = template ? cloneConfig(template.config) : emptyConfig();
+    const initial = template ? cloneConfig(template.config) : emptyConfig(pipelineKind);
     if (isNew && template) {
       initial.name = `Copy of ${template.name}`;
       initial.version = 1;
@@ -114,11 +118,12 @@ export function PipelineEditor() {
     setIsDefault(initial.is_default);
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate(templateKey);
-  }, [isNew, loadedTemplate, template, templateKey]);
+    setSelectedStage(stagesForKind(initial.kind)[0].key);
+  }, [isNew, loadedTemplate, pipelineKind, template, templateKey]);
 
   useEffect(() => {
     if (!isNew || templateKey || loadedTemplate === "blank") return;
-    const initial = emptyConfig();
+    const initial = emptyConfig(pipelineKind);
     setDraft(initial);
     setName(initial.name);
     setDescription(initial.description);
@@ -126,7 +131,8 @@ export function PipelineEditor() {
     setIsDefault(false);
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate("blank");
-  }, [isNew, loadedTemplate, templateKey]);
+    setSelectedStage(stagesForKind(initial.kind)[0].key);
+  }, [isNew, loadedTemplate, pipelineKind, templateKey]);
 
   const dirty = useMemo(() => {
     if (!draft || !savedSnapshot) return false;
@@ -148,17 +154,17 @@ export function PipelineEditor() {
   }, [dirty]);
 
   const issues = useMemo(
-    () => validateDraft(draft, name, version, catalog.data, models.data),
-    [catalog.data, draft, models.data, name, version],
+    () => validateDraft(draft, name, version, visibleStages, catalog.data, models.data),
+    [catalog.data, draft, models.data, name, version, visibleStages],
   );
   const selectedDefinition =
-    ALL_STAGES.find((stage) => stage.key === selectedStage) ?? REPRESENTATION_STAGES[0];
+    visibleStages.find((stage) => stage.key === selectedStage) ?? visibleStages[0];
   const selectedValue = draft ? readStage(draft, selectedDefinition) : undefined;
   const representationChanged = Boolean(
-    draft &&
+      draft &&
       savedSnapshot &&
-      JSON.stringify(draft.representation) !==
-        JSON.stringify(JSON.parse(savedSnapshot.config).representation),
+      JSON.stringify(draft.representation ?? null) !==
+        JSON.stringify(JSON.parse(savedSnapshot.config).representation ?? null),
   );
   const saving =
     mutations.create.isPending ||
@@ -246,7 +252,7 @@ export function PipelineEditor() {
         { pipelineId, config },
         {
           onSuccess: (impact) => {
-            if (impact.conversation_count === 0) {
+            if (impact.conversation_count === 0 && (impact.project_count ?? 0) === 0) {
               mutations.update.mutate(
                 {
                   pipelineId,
@@ -355,9 +361,9 @@ export function PipelineEditor() {
 
       <div className="pipeline-editor-layout">
         <section className="pipeline-graph" aria-label="Pipeline graph">
-          <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />
-          <div className="graph-divider" />
-          <GraphSection label="Query processing" stages={QUERY_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />
+          {pipelineKind !== "query" && <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
+          {pipelineKind === "full" && <div className="graph-divider" />}
+          {pipelineKind !== "ingestion" && <GraphSection label="Query processing" stages={QUERY_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
           {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
         </section>
         <StageInspector
@@ -405,8 +411,8 @@ function PipelineUpdateDialog({
       <div className="impact-dialog">
         <p>
           This pipeline is selected by {impact.conversation_count} conversation
-          {impact.conversation_count === 1 ? "" : "s"}. Choose how to apply the
-          draft safely.
+          {impact.conversation_count === 1 ? "" : "s"} and {impact.project_count ?? 0} project
+          {(impact.project_count ?? 0) === 1 ? "" : "s"}. Choose how to apply the draft safely.
         </p>
         {impact.compatibility_reason && (
           <p className="form-error" role="alert">{impact.compatibility_reason}</p>
@@ -463,6 +469,16 @@ function StageNode({ definition, selected, configured, onSelect }: { definition:
 function StageInspector({ catalog, definition, models, value, onChange, onAddAssessor, onRemoveAssessor, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onAddAssessor: () => void; onRemoveAssessor: (index: number) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
   const stage = catalog.stages[definition.catalogKey];
   const assessorValues = definition.key === "assessors" ? readAssessorValue(value) : [];
+  const retrieverCapabilities = isRecord(catalog.compatibility.retriever_capabilities)
+    ? catalog.compatibility.retriever_capabilities
+    : undefined;
+  const selectedRetriever = typeof value?.type === "string" ? value.type : undefined;
+  const requirements = definition.key === "retriever" && selectedRetriever && retrieverCapabilities
+    ? retrieverCapabilities[selectedRetriever]
+    : undefined;
+  const requirementNames = Array.isArray(requirements)
+    ? requirements.filter((item): item is string => typeof item === "string")
+    : [];
   return (
     <aside className="pipeline-inspector">
       <div className="inspector-heading"><span>{definition.section === "representation" ? "Representation / indexing" : "Query processing"}</span><h2>{definition.label}</h2><p>{definition.description}</p></div>
@@ -472,6 +488,7 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
         <SchemaFields stage={stage} value={value ?? {}} models={models} stageKey={definition.key} onChange={onChange} />
       )}
       {definition.key === "embedding" && <p className="inspector-warning">Embedding changes alter the representation identity and may require a new compatible index.</p>}
+      {requirementNames.length > 0 && <p className="inspector-warning">This retriever requires: {requirementNames.join(", ")}. The project index must provide these capabilities.</p>}
       <p className="inspector-catalog-note">Options and parameter constraints are provided by the backend catalog.</p>
     </aside>
   );
@@ -480,7 +497,7 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
 function SchemaFields({ stage, value, models, stageKey, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; onChange: (value: Record<string, unknown>) => void }) {
   const properties = stage.schema.properties ?? {};
   const required = new Set(stage.schema.required ?? []);
-  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "type" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} onChange={(next) => { const updated = { ...value }; if (next === undefined) delete updated[field]; else updated[field] = next; onChange(updated); }} />)}</div>;
+  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "type" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} onChange={(next) => { let updated = { ...value }; if (field === "type" && next !== value.type) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || allowed.has(key))); } if (next === undefined) delete updated[field]; else updated[field] = next; onChange(updated); }} />)}</div>;
 }
 
 function SchemaField({ field, schema, required, value, implementations, modelOptions, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; implementations?: string[]; modelOptions?: string[]; onChange: (value: unknown) => void }) {
@@ -498,13 +515,14 @@ function resolveSchema(schema: JsonSchema): JsonSchema {
 
 function readStage(config: PipelineConfig, definition: StageDefinition): Record<string, unknown> | undefined {
   const section = config[definition.section];
+  if (!section) return undefined;
   const value = section[definition.key];
   if (definition.key === "assessors") return readAssessorValue(value)[0];
   return isRecord(value) ? value : undefined;
 }
 
 function readAssessors(config: PipelineConfig): Record<string, unknown>[] {
-  return readAssessorValue(config.query.assessors);
+  return readAssessorValue(config.query?.assessors);
 }
 
 function readAssessorValue(value: unknown): Record<string, unknown>[] {
@@ -515,14 +533,14 @@ function readAssessorValue(value: unknown): Record<string, unknown>[] {
 
 function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>): PipelineConfig {
   const next = cloneConfig(config);
-  if (definition.key === "assessors") next.query.assessors = [value];
-  else next[definition.section] = { ...next[definition.section], [definition.key]: value };
+  if (definition.key === "assessors") next.query = { ...(next.query ?? {}), assessors: [value] };
+  else next[definition.section] = { ...(next[definition.section] ?? {}), [definition.key]: value };
   return next;
 }
 
 function updateAssessors(config: PipelineConfig, values: Record<string, unknown>[]): PipelineConfig {
   const next = cloneConfig(config);
-  next.query.assessors = values;
+  next.query = { ...(next.query ?? {}), assessors: values };
   return next;
 }
 
@@ -538,16 +556,21 @@ function defaultStageValue(definition: StageDefinition, catalog: PipelineCatalog
   }));
 }
 
-function validateDraft(config: PipelineConfig | null, name: string, version: string, catalog?: PipelineCatalog, models?: ModelCatalog): string[] {
+function validateDraft(config: PipelineConfig | null, name: string, version: string, stages: StageDefinition[], catalog?: PipelineCatalog, models?: ModelCatalog): string[] {
   if (!config || !catalog || !models) return ["Pipeline configuration is still loading."];
   const issues: string[] = [];
   if (!name.trim()) issues.push("Pipeline name is required.");
   if (!/^\d+$/.test(version) || Number(version) < 1) issues.push("Version must be a positive integer.");
-  for (const definition of ALL_STAGES) {
+  for (const definition of stages) {
     const value = readStage(config, definition);
     if (!value) issues.push(`${definition.label} must be configured.`);
     const stage = catalog.stages[definition.catalogKey];
     if (value && stage) {
+      for (const field of stage.schema.required ?? []) {
+        if (value[field] === undefined || value[field] === null || value[field] === "") {
+          issues.push(`${definition.label} requires ${humanize(field)}.`);
+        }
+      }
       const type = value.type;
       if (typeof type === "string" && stage.implementations.length > 0 && !stage.implementations.includes(type)) issues.push(`${definition.label} uses an unsupported implementation.`);
       if (definition.key === "embedding" && typeof value.model_ref === "string" && !models.embedding[value.model_ref]) issues.push("Embedding model reference is unavailable.");
@@ -557,8 +580,27 @@ function validateDraft(config: PipelineConfig | null, name: string, version: str
   return [...new Set(issues)];
 }
 
-function emptyConfig(): PipelineConfig {
-  return { schema_version: 1, name: "new_pipeline", version: 1, description: "", is_default: false, representation: {}, query: {} };
+function emptyConfig(kind: PipelineKind): PipelineConfig {
+  return {
+    schema_version: 1,
+    kind,
+    name: "new_pipeline",
+    version: 1,
+    description: "",
+    is_default: false,
+    ...(kind !== "query" ? { representation: {} } : {}),
+    ...(kind !== "ingestion" ? { query: {} } : {}),
+  };
+}
+
+function parsePipelineKind(value: string | null): PipelineKind | undefined {
+  return value === "ingestion" || value === "query" || value === "full" ? value : undefined;
+}
+
+function stagesForKind(kind: PipelineKind): StageDefinition[] {
+  if (kind === "ingestion") return REPRESENTATION_STAGES;
+  if (kind === "query") return QUERY_STAGES;
+  return ALL_STAGES;
 }
 
 function cloneConfig(config: PipelineConfig): PipelineConfig {

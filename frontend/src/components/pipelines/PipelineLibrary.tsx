@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import type { Pipeline, PipelineConfig } from "../../api/types";
+import type { Pipeline, PipelineConfig, PipelineKind } from "../../api/types";
 import { Dialog } from "../common/Dialog";
 import { Button, EmptyState, ErrorState, StatusBadge } from "../common/ui";
 import { usePipeline, usePipelineMutations, usePipelines } from "../../features/hooks";
@@ -9,11 +9,13 @@ import "./PipelinePages.css";
 
 type StatusFilter = "all" | "active" | "inactive";
 type SortOrder = "updated" | "name" | "version";
+type KindFilter = "all" | PipelineKind;
 
 /** Provide a central, searchable inventory of persisted RAG pipelines. */
 export function PipelineLibrary() {
   const navigate = useNavigate();
-  const pipelines = usePipelines(true);
+  const [kind, setKind] = useState<KindFilter>("all");
+  const pipelines = usePipelines(true, kind === "all" ? undefined : kind);
   const mutations = usePipelineMutations();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -65,6 +67,14 @@ export function PipelineLibrary() {
         </div>
         <Button variant="primary" onClick={() => setShowCreate(true)}>＋ Create pipeline</Button>
       </header>
+
+      <nav aria-label="Pipeline type" className="pipeline-tabs">
+        {(["all", "ingestion", "query", "full"] as KindFilter[]).map((option) => (
+          <button className={kind === option ? "active" : ""} key={option} onClick={() => setKind(option)} type="button">
+            {option === "all" ? "All pipelines" : option === "full" ? "Legacy full" : `${option[0].toUpperCase()}${option.slice(1)} pipelines`}
+          </button>
+        ))}
+      </nav>
 
       <section className="pipeline-toolbar" aria-label="Pipeline filters">
         <label className="pipeline-search">
@@ -119,7 +129,7 @@ export function PipelineLibrary() {
                 <PipelineRow
                   key={pipeline.id}
                   pipeline={pipeline}
-                  onDuplicate={() => navigate(`/pipelines/new?source=${pipeline.id}`)}
+                  onDuplicate={() => navigate(`/pipelines/new?source=${pipeline.id}&kind=${pipeline.kind}`)}
                   onDelete={() => setDeleteTarget(pipeline)}
                   onEdit={() => navigate(`/pipelines/${pipeline.id}/edit`)}
                   onSetDefault={() => mutations.setDefault.mutate(pipeline.id)}
@@ -135,7 +145,7 @@ export function PipelineLibrary() {
         Pipeline definitions are validated and persisted by the backend. Changes affect new executions; historical responses retain their recorded configuration hash.
       </p>
 
-      {showCreate && <CreatePipelineDialog onClose={() => setShowCreate(false)} onChoose={(mode) => navigate(`/pipelines/new?mode=${mode}`)} />}
+      {showCreate && <CreatePipelineDialog onClose={() => setShowCreate(false)} onChoose={(mode, selectedKind) => navigate(`/pipelines/new?mode=${mode}&kind=${selectedKind}`)} />}
       {deleteTarget && (
         <Dialog title={`Deactivate ${deleteTarget.name}?`} onClose={() => setDeleteTarget(null)}>
           <p>This will remove the pipeline from active selectors. Existing conversations and historical executions remain traceable.</p>
@@ -168,7 +178,7 @@ function PipelineRow({
   settingDefault: boolean;
 }) {
   const detail = usePipeline(pipeline.id);
-  const embedding = modelReference(detail.data?.config, "representation");
+  const embedding = pipeline.kind === "query" ? null : modelReference(detail.data?.config, "representation");
   const reasoning = modelReference(detail.data?.config, "query");
   return (
     <tr>
@@ -176,6 +186,7 @@ function PipelineRow({
         <button className="pipeline-name" onClick={onEdit} type="button">{pipeline.name}</button>
         <span className="pipeline-description">{pipeline.description || "No description"}</span>
         <span className="pipeline-source">{pipeline.source_kind ?? "configuration"}</span>
+        <span className="pipeline-kind">{pipeline.kind === "full" ? "Legacy full" : `${pipeline.kind} pipeline`}</span>
       </th>
       <td>{embedding ?? "—"}</td>
       <td>{reasoning ?? "—"}</td>
@@ -200,13 +211,15 @@ function PipelineRow({
   );
 }
 
-function CreatePipelineDialog({ onClose, onChoose }: { onClose: () => void; onChoose: (mode: "default" | "blank") => void }) {
+function CreatePipelineDialog({ onClose, onChoose }: { onClose: () => void; onChoose: (mode: "default" | "blank", kind: Exclude<PipelineKind, "full">) => void }) {
+  const [kind, setKind] = useState<Exclude<PipelineKind, "full">>("query");
   return (
     <Dialog title="Create pipeline" onClose={onClose}>
-      <p>Choose a starting point. The editor sends the final typed configuration to the backend for validation.</p>
+      <p>Choose the pipeline responsibility and starting point. The editor sends the final typed configuration to the backend for validation.</p>
+      <label className="dialog-form-label">Pipeline type<select value={kind} onChange={(event) => setKind(event.target.value as Exclude<PipelineKind, "full">)}><option value="query">Query pipeline</option><option value="ingestion">Ingestion pipeline</option></select></label>
       <div className="create-pipeline-options">
-        <button onClick={() => onChoose("default")} type="button"><strong>From default</strong><span>Start with the current default RAG configuration.</span></button>
-        <button onClick={() => onChoose("blank")} type="button"><strong>Blank configuration</strong><span>Build the complete specification using the registered stages.</span></button>
+        <button onClick={() => onChoose("default", kind)} type="button"><strong>From default</strong><span>Start with the current default {kind} configuration.</span></button>
+        <button onClick={() => onChoose("blank", kind)} type="button"><strong>Blank configuration</strong><span>Build the {kind} specification using registered stages.</span></button>
       </div>
       <footer><Button variant="ghost" onClick={onClose}>Cancel</Button></footer>
     </Dialog>

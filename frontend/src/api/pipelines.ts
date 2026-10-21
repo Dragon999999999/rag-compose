@@ -1,11 +1,14 @@
 import { request } from "./client";
-import type { ModelCatalog, Pipeline, PipelineCatalog, PipelineConfig, PipelineUpdateImpact } from "./types";
+import type { ModelCatalog, Pipeline, PipelineCatalog, PipelineConfig, PipelineKind, PipelineUpdateImpact } from "./types";
 
 export const pipelinesApi = {
-  list: (includeInactive = false) =>
-    request<Pipeline[]>(
-      `/pipelines${includeInactive ? "?include_inactive=true" : ""}`,
-    ),
+  list: (includeInactive = false, kind?: PipelineKind) => {
+    const query = new URLSearchParams();
+    if (includeInactive) query.set("include_inactive", "true");
+    if (kind) query.set("kind", kind);
+    const suffix = query.toString() ? `?${query}` : "";
+    return request<Pipeline[]>(`/pipelines${suffix}`);
+  },
   get: (pipelineId: string) => request<Pipeline>(`/pipelines/${pipelineId}`),
   create: (config: PipelineConfig) =>
     request<Pipeline>("/pipelines", {

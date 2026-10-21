@@ -11,7 +11,11 @@ from llm_grounding.application.pipeline_runtime import (
     ResolvedPipeline,
 )
 from llm_grounding.domain.corpus import Pipeline
-from llm_grounding.infrastructure.config.models import ModelCatalog, PipelineConfig
+from llm_grounding.infrastructure.config.models import (
+    ModelCatalog,
+    PipelineConfig,
+    PipelineEmbeddingConfig,
+)
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
@@ -48,6 +52,7 @@ class PipelineUpdateImpact:
     compatible: bool
     compatibility_reason: str | None
     changes: tuple[PipelineChange, ...]
+    project_count: int = 0
 
     def as_dict(self) -> dict[str, object]:
         """Serialize authoritative update impact metadata."""
@@ -56,6 +61,7 @@ class PipelineUpdateImpact:
             "current_version": self.current_version,
             "current_config_hash": self.current_config_hash,
             "conversation_count": self.conversation_count,
+            "project_count": self.project_count,
             "representation_changed": self.representation_changed,
             "compatible": self.compatible,
             "can_migrate": self.compatible,
@@ -71,7 +77,8 @@ class PipelineDependencyError(ValueError):
         """Retain the authoritative impact returned by the preflight check."""
         self.impact = impact
         super().__init__(
-            f"Pipeline is used by {impact.conversation_count} conversations; "
+            f"Pipeline is used by {impact.conversation_count} conversations and "
+            f"{impact.project_count} projects; "
             "choose migration or create a copy"
         )
 
@@ -101,6 +108,7 @@ def _with_compatibility_reason(
             current_version=impact.current_version,
             current_config_hash=impact.current_config_hash,
             conversation_count=impact.conversation_count,
+            project_count=impact.project_count,
             representation_changed=impact.representation_changed,
             compatible=False,
             compatibility_reason=reason,
@@ -289,6 +297,12 @@ class PipelineService:
         impact = await self._impact_for(existing, config)
         if impact.conversation_count and not migrate_conversations:
             raise PipelineDependencyError(impact)
+        if (
+            impact.project_count
+            and impact.representation_changed
+            and not migrate_conversations
+        ):
+            raise PipelineDependencyError(impact)
         if migrate_conversations and not impact.compatible:
             raise PipelineCompatibilityError(impact)
         representation_hash = config.representation_hash(self._catalog)
@@ -332,6 +346,14 @@ class PipelineService:
         conversation_count = (
             int(await count_method(existing.id)) if count_method is not None else 0
         )
+        project_count_method = getattr(
+            self._repository, "count_pipeline_projects", None
+        )
+        project_count = (
+            int(await project_count_method(existing.id))
+            if project_count_method is not None
+            else 0
+        )
         representation_changed = existing.kind != config.kind or (
             existing.kind in {"full", "ingestion"}
             and config.representation_hash(self._catalog)
@@ -343,16 +365,21 @@ class PipelineService:
             current_config_hash=existing.config_hash,
             conversation_count=conversation_count,
             representation_changed=representation_changed,
-            compatible=not (conversation_count > 0 and representation_changed),
+            compatible=not (
+                (conversation_count > 0 or project_count > 0)
+                and representation_changed
+            ),
             compatibility_reason=(
-                "Existing conversations use the current representation; re-indexing "
-                "is required before they can migrate."
-                if conversation_count > 0 and representation_changed
+                "Existing conversations or project indexes use the current "
+                "representation; re-indexing is required before migration."
+                if (conversation_count > 0 or project_count > 0)
+                and representation_changed
                 else None
             ),
             changes=_configuration_changes(
                 existing.config, config.model_dump(mode="json")
             ),
+            project_count=project_count,
         )
 
     async def _ensure_name_available(self, pipeline_id: str, name: str) -> None:
@@ -448,6 +475,10 @@ class PipelineService:
                     self._registry.knowledge_builders.keys(), "ComponentConfig"
                 ),
                 "chunker": self._stage(self._registry.chunkers.keys(), "ChunkerConfig"),
+                "embedding": {
+                    "implementations": sorted(self._catalog.embedding_models),
+                    "schema": PipelineEmbeddingConfig.model_json_schema(),
+                },
                 "vector_backend": self._stage(
                     self._registry.vector_backends, "VectorBackendConfig"
                 ),

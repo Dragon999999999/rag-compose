@@ -7,6 +7,9 @@
 .pipeline-loading { color: var(--color-text-muted); margin: 20vh auto; text-align: center; }
 
 .pipeline-toolbar { align-items: center; display: flex; gap: var(--spacing-2); margin: 0 auto 14px; max-width: 1280px; }
+.pipeline-tabs { border-bottom: 1px solid var(--color-border); display: flex; gap: 4px; margin: 0 auto 18px; max-width: 1280px; overflow-x: auto; }
+.pipeline-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 700; padding: 10px 12px; white-space: nowrap; }
+.pipeline-tabs button:hover, .pipeline-tabs button.active { border-bottom-color: var(--color-primary); color: var(--color-text); }
 .pipeline-toolbar label { display: block; }
 .pipeline-toolbar input, .pipeline-toolbar select, .editor-meta input { min-height: 36px; padding: 8px 10px; }
 .pipeline-search { flex: 1; }
@@ -24,6 +27,7 @@
 .pipeline-name:hover { color: var(--color-primary); }
 .pipeline-description, .pipeline-source { color: var(--color-text-muted); display: block; font-size: 12px; font-weight: 400; margin-top: 4px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pipeline-source { color: var(--color-accent); font-size: 10px; text-transform: capitalize; }
+.pipeline-kind { color: var(--color-info); display: block; font-size: 10px; font-weight: 650; margin-top: 3px; text-transform: capitalize; }
 .pipeline-statuses { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
 .default-badge, .config-valid, .config-invalid { border-radius: 999px; font-size: 10px; font-weight: 750; padding: 3px 7px; }
 .default-badge { background: rgb(229 184 110 / 13%); color: var(--color-warning); }
@@ -37,6 +41,9 @@
 .create-pipeline-options button { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text); display: grid; gap: 4px; padding: 14px; text-align: left; transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast); }
 .create-pipeline-options button:hover, .create-pipeline-options button:focus-visible { background: var(--color-surface-hover); border-color: var(--color-primary); transform: translateY(-1px); }
 .create-pipeline-options span { color: var(--color-text-muted); font-size: 13px; }
+.dialog-form-label { color: var(--color-text-secondary); display: grid; font-size: 12px; font-weight: 650; gap: 6px; margin: 16px 0; }
+.dialog-form-label select { min-height: 36px; padding: 8px 10px; }
+.compatibility-option-warning { background: rgb(229 184 110 / 8%); border-left: 2px solid var(--color-warning); color: var(--color-text-muted) !important; font-size: 12px; margin: 8px 0; padding: 6px 9px; }
 
 .editor-page-header { align-items: center; }
 .editor-actions { align-items: center; display: flex; gap: var(--spacing-2); }
