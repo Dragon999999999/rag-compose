@@ -15,6 +15,7 @@ from llm_grounding.infrastructure.database.models import (
     ChatRow,
     DocumentRow,
     DocumentSummaryRow,
+    PipelineVersionRow,
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
@@ -84,6 +85,122 @@ class SessionFactory:
     def begin(self) -> TransactionContext:
         """Open the simulated transaction context."""
         return TransactionContext(self.session)
+
+
+class ExpiringPipelineRow:
+    """Simulate an ORM pipeline row whose update timestamp expires on flush."""
+
+    def __init__(self, config, updated_at: datetime) -> None:
+        """Initialize fields accessed by the repository's pipeline mapper."""
+        self.id = "pipeline-id"
+        self.name = config.name
+        self.version = config.version
+        self.schema_version = config.schema_version
+        self.description = config.description
+        self.kind = config.kind
+        self.config_json = config.model_dump(mode="json")
+        self.config_hash = config.config_hash
+        self.representation_hash = config.representation_hash()
+        self.source_kind = "yaml"
+        self.source_path = "configs/pipelines/basic_rag_v1.yaml"
+        self.source_fingerprint = "fingerprint"
+        self.active = True
+        self.is_default = config.is_default
+        self.created_at = updated_at
+        self._updated_at = updated_at
+        self._timestamp_loaded = False
+
+    @property
+    def updated_at(self) -> datetime:
+        """Raise like an async ORM access to an expired attribute."""
+        if not self._timestamp_loaded:
+            raise MissingGreenlet("Pipeline updated_at was not refreshed")
+        return self._updated_at
+
+    def mark_refreshed(self) -> None:
+        """Mark the generated timestamp as loaded by an awaited refresh."""
+        self._timestamp_loaded = True
+
+
+class ExpiringPipelineSession:
+    """Provide the async session operations used by YAML pipeline upsert."""
+
+    def __init__(self, row: ExpiringPipelineRow) -> None:
+        """Retain the simulated existing pipeline row."""
+        self.row = row
+        self.refreshed = False
+
+    async def scalar(self, statement: object) -> ExpiringPipelineRow:
+        """Return the existing row selected by the upsert."""
+        return self.row
+
+    async def get(
+        self,
+        model: type[object],
+        identity: tuple[str, int],
+        *,
+        with_for_update: bool,
+    ) -> None:
+        """Report that no immutable version snapshot needs inserting."""
+        assert model is PipelineVersionRow
+        assert identity == (self.row.id, self.row.version)
+        assert with_for_update
+        return None
+
+    async def execute(self, statement: object) -> None:
+        """Accept default-pipeline update statements without database access."""
+
+    async def flush(self) -> None:
+        """Keep the simulated expired timestamp until explicit refresh."""
+
+    async def refresh(self, row: ExpiringPipelineRow) -> None:
+        """Load the generated timestamp through the awaited ORM boundary."""
+        assert row is self.row
+        self.refreshed = True
+        row.mark_refreshed()
+
+    def add(self, row: object) -> None:
+        """Accept immutable snapshot inserts for the repository contract."""
+
+
+class ExpiringPipelineSessionFactory:
+    """Open the simulated transaction used by the pipeline refresh test."""
+
+    def __init__(self, session: ExpiringPipelineSession) -> None:
+        """Retain the session for refresh assertions."""
+        self.session = session
+
+    def begin(self) -> TransactionContext:
+        """Open a transaction around the simulated pipeline session."""
+        return TransactionContext(self.session)  # type: ignore[arg-type]
+
+
+async def test_pipeline_upsert_refreshes_expired_timestamp_before_mapping() -> None:
+    """Pipeline synchronization maps rows only after generated values are loaded."""
+    from pathlib import Path
+
+    from llm_grounding.infrastructure.config.loader import (
+        load_model_catalog,
+        load_pipeline_config,
+    )
+
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    config = load_pipeline_config(
+        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+    )
+    timestamp = datetime.now(UTC)
+    session = ExpiringPipelineSession(ExpiringPipelineRow(config, timestamp))
+    repository = PostgresRepository(ExpiringPipelineSessionFactory(session))  # type: ignore[arg-type]
+
+    record = await repository.upsert_pipeline_from_yaml(
+        config,
+        source_path="configs/pipelines/basic_rag_v1.yaml",
+        source_fingerprint="fingerprint",
+        representation_hash=config.representation_hash(catalog),
+    )
+
+    assert session.refreshed
+    assert record.updated_at == timestamp
 
 
 async def test_store_chunks_flushes_parents_before_foreign_key_members() -> None:

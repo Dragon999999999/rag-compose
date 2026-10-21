@@ -146,6 +146,7 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            await session.refresh(row)
             await self._record_pipeline_version(
                 session, row, representation_hash=effective_representation_hash
             )
@@ -259,6 +260,7 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            await session.refresh(row)
             if pipeline is not None:
                 await self._record_pipeline_version(
                     session,
@@ -329,6 +331,7 @@ class PostgresRepository:
                 if row.kind != "query":
                     chat.pipeline_representation_hash = row.representation_hash
             await session.flush()
+            await session.refresh(row)
             await self._record_pipeline_version(
                 session, row, representation_hash=representation_hash
             )
@@ -393,6 +396,7 @@ class PostgresRepository:
                 raise KeyError(f"Unknown pipeline: {pipeline_id}")
             row.active = False
             await session.flush()
+            await session.refresh(row)
             return self._pipeline(row)
 
     async def upsert_pipeline_from_yaml(
@@ -456,6 +460,7 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            await session.refresh(row)
             await self._record_pipeline_version(
                 session, row, representation_hash=row.representation_hash
             )
