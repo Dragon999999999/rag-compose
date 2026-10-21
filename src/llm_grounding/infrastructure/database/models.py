@@ -255,7 +255,7 @@ class RetrievalUnitMemberRow(Base):
 
 
 class ChatRow(Base):
-    """Persist a conversation that consumes one project corpus."""
+    """Persist a conversation, corpus scope, and selected pipeline snapshot."""
 
     __tablename__ = "chats"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_identifier)
@@ -269,6 +269,12 @@ class ChatRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    pipeline_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="SET NULL")
+    )
+    pipeline_version: Mapped[int | None] = mapped_column(Integer)
+    pipeline_config_hash: Mapped[str | None] = mapped_column(String(64))
+    pipeline_representation_hash: Mapped[str | None] = mapped_column(String(64))
 
 
 class RagRunRow(Base):
@@ -282,6 +288,12 @@ class RagRunRow(Base):
     architecture_name: Mapped[str] = mapped_column(String(255), nullable=False)
     architecture_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    pipeline_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="SET NULL")
+    )
+    pipeline_version: Mapped[int | None] = mapped_column(Integer)
+    pipeline_config_hash: Mapped[str | None] = mapped_column(String(64))
+    pipeline_representation_hash: Mapped[str | None] = mapped_column(String(64))
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from llm_grounding.api.eval import create_eval_router
 from llm_grounding.api.eval_embeddings import create_eval_embeddings_router
@@ -20,6 +20,7 @@ from llm_grounding.application.bootstrap import (
     PhaseOneApplication,
     create_phase_one_application,
 )
+from llm_grounding.application.chat_service import PipelineSelectionError
 from llm_grounding.application.eval_service import EvalService
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import (
@@ -51,6 +52,28 @@ class NameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class ChatCreateRequest(NameRequest):
+    """Name a conversation and optionally select its initial pipeline."""
+
+    pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+class ChatUpdateRequest(BaseModel):
+    """Update one chat name or switch its persisted pipeline selection."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+    @model_validator(mode="after")
+    def require_update(self) -> "ChatUpdateRequest":
+        """Reject empty PATCH requests while preserving explicit field semantics."""
+        if self.name is None and self.pipeline_id is None:
+            raise ValueError("At least one chat field must be provided")
+        if self.name is not None and self.pipeline_id is not None:
+            raise ValueError("Update chat name and pipeline selection separately")
+        return self
+
+
 class AskRequest(BaseModel):
     """Submit one persisted question or dedicated summary request."""
 
@@ -64,6 +87,14 @@ def _item(
 ) -> dict[str, object]:
     """Serialize a small immutable domain record without framework leakage."""
     return cast(dict[str, object], asdict(value))
+
+
+def _pipeline_http_error(error: PipelineSelectionError) -> HTTPException:
+    """Translate a pipeline selection failure into a structured API envelope."""
+    return HTTPException(
+        error.status_code,
+        detail={"code": error.code, "message": error.message},
+    )
 
 
 async def _source_dto(
@@ -424,12 +455,32 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         return [_item(chat) for chat in await application.chats.list_chats(project_id)]
 
     @app.post("/api/projects/{project_id}/chats")
-    async def create_chat(project_id: str, request: NameRequest) -> dict[str, object]:
-        return _item(await application.chats.create_chat(project_id, request.name))
+    async def create_chat(
+        project_id: str, request: ChatCreateRequest
+    ) -> dict[str, object]:
+        try:
+            chat = await application.chats.create_chat(
+                project_id, request.name, request.pipeline_id
+            )
+        except PipelineSelectionError as exc:
+            raise _pipeline_http_error(exc) from exc
+        return _item(chat)
 
     @app.patch("/api/chats/{chat_id}")
-    async def rename_chat(chat_id: str, request: NameRequest) -> dict[str, object]:
-        return _item(await application.chats.rename_chat(chat_id, request.name))
+    async def update_chat(
+        chat_id: str, request: ChatUpdateRequest
+    ) -> dict[str, object]:
+        try:
+            if request.pipeline_id is not None:
+                chat = await application.chats.set_pipeline(
+                    chat_id, request.pipeline_id
+                )
+            else:
+                assert request.name is not None
+                chat = await application.chats.rename_chat(chat_id, request.name)
+        except PipelineSelectionError as exc:
+            raise _pipeline_http_error(exc) from exc
+        return _item(chat)
 
     @app.delete("/api/chats/{chat_id}", status_code=204)
     async def delete_chat(chat_id: str) -> None:
@@ -444,12 +495,15 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
 
     @app.post("/api/chats/{chat_id}/messages")
     async def ask(chat_id: str, request: AskRequest) -> dict[str, object]:
-        answer = await application.chats.ask(
-            chat_id,
-            request.message,
-            TaskType.SUMMARY if request.summary else TaskType.QA,
-            request.pipeline_id,
-        )
+        try:
+            answer = await application.chats.ask(
+                chat_id,
+                request.message,
+                TaskType.SUMMARY if request.summary else TaskType.QA,
+                request.pipeline_id,
+            )
+        except PipelineSelectionError as exc:
+            raise _pipeline_http_error(exc) from exc
         return await _structured_answer(application, answer)
 
     @app.get("/api/runs/{run_id}/evidence")

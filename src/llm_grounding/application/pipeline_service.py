@@ -39,6 +39,26 @@ class PipelineService:
         """Retrieve one persisted pipeline by stable ID."""
         return await self._repository.get_pipeline(pipeline_id)
 
+    async def default(self) -> Pipeline:
+        """Return the active application default pipeline deterministically."""
+        records = await self.list(active_only=True)
+        selected = next(
+            (record for record in records if record.is_default),
+            next((record for record in records if record.name == "basic_rag_v1"), None),
+        )
+        if selected is None:
+            raise KeyError("No active default pipeline is configured")
+        return selected
+
+    async def select(self, pipeline_id: str | None = None) -> Pipeline:
+        """Resolve an explicit active pipeline or the configured default."""
+        selected = (
+            await self.default() if pipeline_id is None else await self.get(pipeline_id)
+        )
+        if not selected.active:
+            raise ValueError(f"Pipeline {selected.id!r} is inactive")
+        return selected
+
     async def create(self, config: PipelineConfig) -> Pipeline:
         """Validate and persist an API-owned pipeline configuration."""
         self.validate(config)

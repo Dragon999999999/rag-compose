@@ -316,6 +316,28 @@ class PostgresRepository:
             row.updated_at or row.created_at or _now(),
         )
 
+    @staticmethod
+    def _chat(
+        row: ChatRow,
+        *,
+        last_answer_at: datetime | None = None,
+        has_sent_prompt: bool = False,
+    ) -> Chat:
+        """Map one ORM chat row while retaining its pipeline selection snapshot."""
+        return Chat(
+            row.id,
+            row.project_id,
+            row.name,
+            row.created_at or _now(),
+            row.chat_name_set,
+            last_answer_at,
+            has_sent_prompt,
+            row.pipeline_id,
+            row.pipeline_version,
+            row.pipeline_config_hash,
+            row.pipeline_representation_hash,
+        )
+
     async def create_project(self, name: str) -> Project:
         """Create a named reusable corpus.
 
@@ -908,7 +930,15 @@ class PostgresRepository:
         )
 
     async def create_chat(
-        self, project_id: str, name: str, chat_name_set: bool = False
+        self,
+        project_id: str,
+        name: str,
+        chat_name_set: bool = False,
+        *,
+        pipeline_id: str | None = None,
+        pipeline_version: int | None = None,
+        pipeline_config_hash: str | None = None,
+        pipeline_representation_hash: str | None = None,
     ) -> Chat:
         """Create a project-scoped conversation.
 
@@ -921,20 +951,48 @@ class PostgresRepository:
         async with self._sessions.begin() as session:
             if await session.get(ProjectRow, project_id) is None:
                 raise KeyError(f"Unknown project: {project_id}")
+            pipeline = None
+            if pipeline_id is not None:
+                pipeline = await session.get(PipelineRow, pipeline_id)
+                if pipeline is None:
+                    raise KeyError(f"Unknown pipeline: {pipeline_id}")
+                if not pipeline.active:
+                    raise ValueError(f"Pipeline {pipeline_id!r} is inactive")
+                if pipeline_version is None:
+                    pipeline_version = pipeline.version
+                if pipeline_config_hash is None:
+                    pipeline_config_hash = pipeline.config_hash
+                if pipeline_representation_hash is None:
+                    pipeline_representation_hash = pipeline.representation_hash
+                if (
+                    pipeline_version != pipeline.version
+                    or pipeline_config_hash != pipeline.config_hash
+                    or pipeline_representation_hash != pipeline.representation_hash
+                ):
+                    raise ValueError(
+                        "Pipeline selection snapshot does not match the active pipeline"
+                    )
+            elif any(
+                value is not None
+                for value in (
+                    pipeline_version,
+                    pipeline_config_hash,
+                    pipeline_representation_hash,
+                )
+            ):
+                raise ValueError("Pipeline selection metadata requires pipeline_id")
             row = ChatRow(
                 project_id=project_id,
                 name=name.strip(),
                 chat_name_set=chat_name_set,
+                pipeline_id=pipeline.id if pipeline is not None else None,
+                pipeline_version=pipeline_version,
+                pipeline_config_hash=pipeline_config_hash,
+                pipeline_representation_hash=pipeline_representation_hash,
             )
             session.add(row)
             await session.flush()
-            return Chat(
-                row.id,
-                row.project_id,
-                row.name,
-                row.created_at or _now(),
-                row.chat_name_set,
-            )
+            return self._chat(row)
 
     async def get_chat(self, chat_id: str) -> Chat:
         """Load a chat and its project scope."""
@@ -943,14 +1001,7 @@ class PostgresRepository:
             if row is None:
                 raise KeyError(f"Unknown chat: {chat_id}")
             has_sent_prompt = await session.scalar(select(_sent_prompt_exists(chat_id)))
-            return Chat(
-                row.id,
-                row.project_id,
-                row.name,
-                row.created_at,
-                row.chat_name_set,
-                has_sent_prompt=bool(has_sent_prompt),
-            )
+            return self._chat(row, has_sent_prompt=bool(has_sent_prompt))
 
     async def rename_chat(self, chat_id: str, name: str) -> Chat:
         """Apply a user-selected name and prevent later automatic replacement."""
@@ -963,13 +1014,7 @@ class PostgresRepository:
             row.name = name.strip()
             row.chat_name_set = True
             await session.flush()
-            return Chat(
-                row.id,
-                row.project_id,
-                row.name,
-                row.created_at or _now(),
-                row.chat_name_set,
-            )
+            return self._chat(row)
 
     async def set_generated_chat_name(self, chat_id: str, name: str) -> Chat:
         """Set the first generated name unless a user already finalized the name.
@@ -987,13 +1032,67 @@ class PostgresRepository:
                 row.name = name.strip()
                 row.chat_name_set = True
                 await session.flush()
-            return Chat(
-                row.id,
-                row.project_id,
-                row.name,
-                row.created_at or _now(),
-                row.chat_name_set,
+            return self._chat(row)
+
+    async def set_chat_pipeline(
+        self,
+        chat_id: str,
+        pipeline_id: str,
+        *,
+        pipeline_version: int,
+        pipeline_config_hash: str,
+        pipeline_representation_hash: str,
+    ) -> Chat:
+        """Atomically select an active pipeline and persist its exact snapshot."""
+        async with self._sessions.begin() as session:
+            row = await session.get(ChatRow, chat_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown chat: {chat_id}")
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if pipeline is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            if not pipeline.active:
+                raise ValueError(f"Pipeline {pipeline_id!r} is inactive")
+            if (
+                pipeline.version != pipeline_version
+                or pipeline.config_hash != pipeline_config_hash
+                or pipeline.representation_hash != pipeline_representation_hash
+            ):
+                raise ValueError(
+                    "Pipeline changed while the conversation was being updated"
+                )
+            row.pipeline_id = pipeline.id
+            row.pipeline_version = pipeline.version
+            row.pipeline_config_hash = pipeline.config_hash
+            row.pipeline_representation_hash = pipeline.representation_hash
+            await session.flush()
+            return self._chat(row)
+
+    async def assign_default_pipeline_to_unassigned_chats(self) -> int:
+        """Backfill legacy chats after startup imports the active default pipeline."""
+        async with self._sessions.begin() as session:
+            pipeline = await session.scalar(
+                select(PipelineRow)
+                .where(
+                    PipelineRow.active.is_(True),
+                    PipelineRow.is_default.is_(True),
+                )
+                .order_by(PipelineRow.name, PipelineRow.version.desc())
+                .limit(1)
             )
+            if pipeline is None:
+                return 0
+            result = await session.execute(
+                update(ChatRow)
+                .where(ChatRow.pipeline_id.is_(None))
+                .values(
+                    pipeline_id=pipeline.id,
+                    pipeline_version=pipeline.version,
+                    pipeline_config_hash=pipeline.config_hash,
+                    pipeline_representation_hash=pipeline.representation_hash,
+                )
+            )
+            return int(result.rowcount or 0)
 
     async def delete_chat(self, chat_id: str) -> None:
         """Delete a chat and its messages without changing project documents."""
@@ -1036,14 +1135,10 @@ class PostgresRepository:
                 )
             ).all()
             return tuple(
-                Chat(
-                    row.id,
-                    row.project_id,
-                    row.name,
-                    row.created_at,
-                    row.chat_name_set,
-                    answer_at,
-                    bool(sent_prompt),
+                self._chat(
+                    row,
+                    last_answer_at=answer_at,
+                    has_sent_prompt=bool(sent_prompt),
                 )
                 for row, answer_at, sent_prompt in rows
             )
@@ -1113,8 +1208,13 @@ class PostgresRepository:
         architecture_version: int,
         status: str,
         metadata: dict[str, object],
+        *,
+        pipeline_id: str | None = None,
+        pipeline_version: int | None = None,
+        pipeline_config_hash: str | None = None,
+        pipeline_representation_hash: str | None = None,
     ) -> None:
-        """Persist a lightweight RAG run record linked to its active project."""
+        """Persist a run with the immutable pipeline snapshot used for execution."""
         async with self._sessions.begin() as session:
             session.add(
                 RagRunRow(
@@ -1123,6 +1223,10 @@ class PostgresRepository:
                     architecture_name=architecture_name,
                     architecture_version=architecture_version,
                     status=status,
+                    pipeline_id=pipeline_id,
+                    pipeline_version=pipeline_version,
+                    pipeline_config_hash=pipeline_config_hash,
+                    pipeline_representation_hash=pipeline_representation_hash,
                     metadata_json=metadata,
                 )
             )

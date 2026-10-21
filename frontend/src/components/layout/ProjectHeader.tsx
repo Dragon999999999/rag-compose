@@ -1,4 +1,4 @@
-import type { Chat, Project } from "../../api/types";
+import type { Chat, Pipeline, Project } from "../../api/types";
 import { Button } from "../common/ui";
 
 type ProjectHeaderProps = {
@@ -8,6 +8,10 @@ type ProjectHeaderProps = {
   onNewChat: () => void;
   hasChats: boolean;
   view: "chat" | "sources";
+  pipelines: Pipeline[];
+  pipelineError?: Error | null;
+  pipelineChanging?: boolean;
+  onPipelineChange: (pipelineId: string) => void;
 };
 
 /** Show workspace navigation and actions that do not edit project metadata. */
@@ -18,6 +22,10 @@ export function ProjectHeader({
   onNewChat,
   hasChats,
   view,
+  pipelines,
+  pipelineError,
+  pipelineChanging,
+  onPipelineChange,
 }: ProjectHeaderProps) {
   return (
     <header className="project-header">
@@ -28,6 +36,32 @@ export function ProjectHeader({
         </div>
       </div>
       <div className="header-actions">
+        {chat && (
+          <label className="pipeline-selector">
+            <span>Pipeline</span>
+            <select
+              aria-label="Conversation pipeline"
+              disabled={pipelineChanging}
+              onChange={(event) => onPipelineChange(event.target.value)}
+              value={chat.pipeline_id ?? ""}
+            >
+              {!chat.pipeline_id && (
+                <option value="">Application default</option>
+              )}
+              {chat.pipeline_id &&
+                !pipelines.some((pipeline) => pipeline.id === chat.pipeline_id) && (
+                  <option disabled value={chat.pipeline_id}>
+                    {chat.pipeline_id} (unavailable)
+                  </option>
+                )}
+              {pipelines.map((pipeline) => (
+                <option key={pipeline.id} value={pipeline.id}>
+                  {pipeline.name} (v{pipeline.version})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           onClick={onWorkspaceToggle}
           disabled={!project || (view === "sources" && !hasChats)}
@@ -38,6 +72,7 @@ export function ProjectHeader({
           New chat
         </Button>
       </div>
+      {pipelineError && <p className="pipeline-error" role="alert">{pipelineError.message}</p>}
     </header>
   );
 }

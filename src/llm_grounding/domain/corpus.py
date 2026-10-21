@@ -165,6 +165,10 @@ class Chat:
     chat_name_set: bool = False
     last_answer_at: datetime | None = None
     has_sent_prompt: bool = False
+    pipeline_id: str | None = None
+    pipeline_version: int | None = None
+    pipeline_config_hash: str | None = None
+    pipeline_representation_hash: str | None = None
 
 
 @dataclass(frozen=True)

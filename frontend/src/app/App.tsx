@@ -3,7 +3,7 @@ import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-do
 
 import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
 import { ChatWorkspace } from "../components/chats/ChatWorkspace";
-import { Dialog, NameDialog } from "../components/common/Dialog";
+import { ChatCreateDialog, Dialog, NameDialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";
 import { EvidenceWorkspace } from "../components/evidence/EvidenceWorkspace";
 import { DocumentOverview } from "../components/documents/DocumentOverview";
@@ -21,6 +21,7 @@ import {
   useMessages,
   useProjectMutations,
   useProjects,
+  usePipelines,
   useSourceMutations,
   useSources,
 } from "../features/hooks";
@@ -123,6 +124,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const navigate = useNavigate();
   const projects = useProjects();
   const chats = useChats(projectId);
+  const pipelines = usePipelines();
   const sources = useSources(projectId);
   const documentSummary = useDocumentSummary(projectId, documentId);
   const documentSummaryMutation = useDocumentSummaryMutation(projectId, documentId);
@@ -140,6 +142,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [evidenceOpen, setEvidenceOpen] = useState(true);
   const [createProject, setCreateProject] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [createChatProjectId, setCreateChatProjectId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<string>();
   const [latest, setLatest] = useState<GroundedAnswer | null>(null);
   const [evidenceTurnTitle, setEvidenceTurnTitle] = useState<string | null>(null);
@@ -168,19 +171,34 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     if (!targetProjectId || createChatInFlight.current) {
       return;
     }
+    setCreateChatProjectId(targetProjectId);
+  };
+
+  const submitChatCreation = (name: string, pipelineId?: string): void => {
+    if (!createChatProjectId || createChatInFlight.current) {
+      return;
+    }
     createChatInFlight.current = true;
     chatMutations.create.mutate(
-      { projectId: targetProjectId, name: "New chat" },
+      { projectId: createChatProjectId, name, pipelineId },
       {
         onError: () => {
           createChatInFlight.current = false;
         },
         onSuccess: (newChat) => {
           createChatInFlight.current = false;
-          navigate(`/projects/${targetProjectId}/chats/${newChat.id}`);
+          setCreateChatProjectId(null);
+          navigate(`/projects/${createChatProjectId}/chats/${newChat.id}`);
         },
       },
     );
+  };
+
+  const switchPipeline = (pipelineId: string): void => {
+    if (!chatId) {
+      return;
+    }
+    chatMutations.updatePipeline.mutate({ chatId, pipelineId });
   };
 
   const ask = (message: string): void => {
@@ -337,6 +355,10 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       onNewChat={() => createChat()}
       onWorkspaceToggle={toggleWorkspace}
       project={project}
+      pipelines={pipelines.data ?? []}
+      pipelineChanging={chatMutations.updatePipeline.isPending}
+      pipelineError={chatMutations.updatePipeline.error}
+      onPipelineChange={switchPipeline}
       view={sourceView ? "sources" : "chat"}
     />
   );
@@ -489,6 +511,15 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
           pending={projectMutations.create.isPending}
           submitLabel="Create project"
           title="Create project"
+        />
+      )}
+      {createChatProjectId && (
+        <ChatCreateDialog
+          error={chatMutations.create.error}
+          onClose={() => setCreateChatProjectId(null)}
+          onSubmit={submitChatCreation}
+          pending={chatMutations.create.isPending}
+          pipelines={pipelines.data ?? []}
         />
       )}
       {deleteTarget && (

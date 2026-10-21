@@ -88,6 +88,11 @@ class PhaseOneApplication:
         """Synchronize configured pipelines and expose PostgreSQL-backed records."""
         if self._pipeline_sync is not None:
             await self._pipeline_sync.synchronize()
+        assign_default = getattr(
+            self.repository, "assign_default_pipeline_to_unassigned_chats", None
+        )
+        if assign_default is not None:
+            await assign_default()
         self.pipelines = await self.repository.list_pipelines()
 
     async def close(self) -> None:
@@ -195,7 +200,13 @@ def create_phase_one_application(
     summaries = DocumentSummaryService(repository, runner)
     return PhaseOneApplication(
         ProjectService(repository, ingestion, vectors, summaries),
-        ChatService(repository, runner, max_history, pipeline_runtime),
+        ChatService(
+            repository,
+            runner,
+            max_history,
+            pipeline_runtime,
+            pipeline_service,
+        ),
         engine,
         vectors,
         repository,
