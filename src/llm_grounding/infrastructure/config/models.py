@@ -247,12 +247,20 @@ class PipelineConfig(BaseModel):
         return self
 
     def identity(self) -> str:
-        """Return the hash of the source pipeline document semantics."""
+        """Return a stable hash of the pipeline's semantic configuration.
+
+        ``kind`` was introduced after the original combined pipeline schema.
+        A missing kind means ``full`` through Pydantic's default, so omitting
+        the default from the canonical full-pipeline hash keeps records created
+        before that schema migration semantically identical. Specialized
+        ingestion and query pipelines retain their explicit kind in the hash.
+        """
         import json
 
-        canonical = json.dumps(
-            self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        )
+        data = self.model_dump(mode="json")
+        if data.get("kind") == "full":
+            data.pop("kind")
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
     @property

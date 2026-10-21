@@ -1,6 +1,8 @@
 """Verify unified pipeline validation and representation compatibility identities."""
 
+import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -58,6 +60,22 @@ def test_representation_changes_produce_distinct_index_identity() -> None:
     assert base.representation_hash(catalog) != changed.representation_hash(catalog)
 
 
+def test_full_pipeline_hash_preserves_pre_kind_migration_identity() -> None:
+    """The new default kind does not change hashes of legacy full pipelines."""
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    config = load_pipeline_config(
+        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+    )
+    legacy_payload = config.model_dump(mode="json")
+    legacy_payload.pop("kind")
+    legacy_hash = sha256(
+        json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    assert config.kind == "full"
+    assert config.config_hash == legacy_hash
+
+
 def test_ingestion_and_query_pipeline_specs_resolve_separately() -> None:
     """Specialized definitions compose through a project's effective ingestion."""
     catalog = load_model_catalog(Path("configs/models.yaml"))
@@ -73,9 +91,7 @@ def test_ingestion_and_query_pipeline_specs_resolve_separately() -> None:
     assert query.kind == "query"
     assert query.representation is None
     effective_ingestion = ingestion.resolve_ingestion(catalog)
-    architecture, resolved_ingestion = query.resolve_query(
-        catalog, effective_ingestion
-    )
+    architecture, resolved_ingestion = query.resolve_query(catalog, effective_ingestion)
     assert architecture.retriever.type == "vector"
     assert resolved_ingestion.identity() == effective_ingestion.identity()
 
@@ -152,6 +168,7 @@ class RecordingPipelineRepository:
     def __init__(self) -> None:
         """Start with an empty persisted pipeline collection."""
         self.records: dict[str, Pipeline] = {}
+        self.versions: dict[tuple[str, int], str] = {}
 
     async def get_pipeline_by_name(self, name: str) -> Pipeline | None:
         """Return the current record for a stable pipeline name."""
@@ -169,9 +186,17 @@ class RecordingPipelineRepository:
         previous = self.records.get(config.name)
         if previous is not None and previous.source_kind == "api":
             return previous
+        pipeline_id = previous.id if previous is not None else config.name
+        version_key = (pipeline_id, config.version)
+        stored_hash = self.versions.get(version_key)
+        if stored_hash is not None and stored_hash != config.config_hash:
+            raise ValueError(
+                f"Pipeline {pipeline_id} version {config.version} already contains "
+                "a different configuration; increment the pipeline version"
+            )
         now = datetime.now(UTC)
         record = Pipeline(
-            previous.id if previous is not None else config.name,
+            pipeline_id,
             config.name,
             config.version,
             config.schema_version,
@@ -188,6 +213,7 @@ class RecordingPipelineRepository:
             now,
         )
         self.records[config.name] = record
+        self.versions[version_key] = config.config_hash
         return record
 
 
@@ -210,3 +236,57 @@ async def test_startup_synchronizer_discovers_and_fingerprints_yaml(
     assert first.pipelines[0].source_fingerprint
     assert second.imported == 0
     assert second.updated == 0
+
+
+async def test_startup_sync_rejects_changed_yaml_without_version_bump(
+    tmp_path: Path,
+) -> None:
+    """A changed YAML document cannot overwrite an immutable version snapshot."""
+    source = Path("configs/pipelines/basic_rag_v1.yaml")
+    pipeline_path = tmp_path / source.name
+    pipeline_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    repository = RecordingPipelineRepository()
+    synchronizer = PipelineSynchronizer(repository, tmp_path, load_model_catalog())
+
+    await synchronizer.synchronize()
+    pipeline_path.write_text(
+        pipeline_path.read_text(encoding="utf-8").replace("top_k: 8", "top_k: 9"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Pipeline basic_rag_v1 version 1 already contains a different",
+    ):
+        await synchronizer.synchronize()
+
+    assert repository.records["basic_rag_v1"].version == 1
+    assert repository.records["basic_rag_v1"].config["query"]["retriever"]["top_k"] == 8
+
+
+async def test_startup_sync_accepts_changed_yaml_after_version_bump(
+    tmp_path: Path,
+) -> None:
+    """A changed YAML document imports normally once its version is incremented."""
+    source = Path("configs/pipelines/basic_rag_v1.yaml")
+    pipeline_path = tmp_path / source.name
+    pipeline_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    repository = RecordingPipelineRepository()
+    synchronizer = PipelineSynchronizer(repository, tmp_path, load_model_catalog())
+
+    await synchronizer.synchronize()
+    changed = pipeline_path.read_text(encoding="utf-8")
+    pipeline_path.write_text(
+        changed.replace("\nversion: 1\n", "\nversion: 2\n", 1).replace(
+            "top_k: 8", "top_k: 9"
+        ),
+        encoding="utf-8",
+    )
+
+    updated = await synchronizer.synchronize()
+    repeated = await synchronizer.synchronize()
+
+    assert updated.updated == 1
+    assert repeated.updated == 0
+    assert repository.records["basic_rag_v1"].version == 2
+    assert repository.records["basic_rag_v1"].config["query"]["retriever"]["top_k"] == 9

@@ -380,8 +380,9 @@ class PostgresRepository:
             )
         elif version.config_hash != row.config_hash:
             raise ValueError(
-                f"Pipeline version {row.version} already contains a different "
-                "configuration; increment the pipeline version"
+                f"Pipeline {row.id} version {row.version} already contains a "
+                f"different configuration (stored hash {version.config_hash}, "
+                f"incoming hash {row.config_hash}); increment the pipeline version"
             )
 
     async def deactivate_pipeline(self, pipeline_id: str) -> Pipeline:
@@ -441,6 +442,7 @@ class PostgresRepository:
                 row.source_fingerprint != source_fingerprint
                 or row.config_hash != config.config_hash
                 or row.representation_hash != effective_representation_hash
+                or dict(row.config_json) != config.model_dump(mode="json")
             ):
                 for key, value in values.items():
                     setattr(row, key, value)
