@@ -81,7 +81,7 @@ src/llm_grounding/
 ├── domain/             # Sources, evidence, claims, outputs, and run records
 ├── parsing/            # Structured PDF blocks with provenance
 ├── knowledge/          # In-memory canonical evidence
-├── retrieval/          # Whole-document selection and identity reranking
+├── retrieval/          # Retrieval plus top-k and local cross-encoder reranking
 ├── reasoning/          # Versioned prompt and typed summary extraction
 ├── assessment/         # No-op measurements
 ├── decision/           # Unconditional baseline acceptance
@@ -108,6 +108,28 @@ messages and nonzero exits. Library clients can inspect the chained cause.
 
 See [`docs/architecture.md`](docs/architecture.md) for contracts, a complete file
 map, prompt semantics, migration notes, and extension boundaries.
+
+### Optional local reranking
+
+Query pipelines can keep the retrieval order with `type: identity`, truncate it
+with `provider: top_k`, or score candidates locally with
+`provider: cross_encoder`:
+
+```yaml
+reranker:
+  provider: cross_encoder
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  model_name: cross-encoder/ms-marco-MiniLM-L6-v2
+  device: cpu
+  batch_size: 16
+```
+
+Install the optional dependency with `uv sync --extra reranking`. The model is
+loaded only on the first reranking request and cached in
+`~/.cache/rag-eval/models`, or in `RAG_EVAL_MODEL_CACHE_DIR` when set. In Docker,
+mount that directory as a persistent volume if the application container should
+reuse downloaded weights across restarts. No API key or model server is needed.
 
 Persistent project corpora and Basic RAG v1 are documented in
 [`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md). Baseline 0
@@ -162,10 +184,10 @@ or chunk it. Keyword count (5–8) and summary length (20–500 characters) are 
 constraints; 1–3 words per keyword and 2–3 summary sentences are prompt instructions.
 The model is nondeterministic and its remote alias can change.
 
-Later work can introduce evidence selection, additional parsers, substantive
-assessors, decision policies, and scientific evaluation datasets behind the existing
-protocols. Embeddings, databases, real reranking, claim verification, and multimodal
-analysis are deliberately outside Baseline 0.
+Later work can introduce additional parsers, substantive assessors, decision
+policies, and scientific evaluation datasets behind the existing protocols.
+Cross-encoder scores reorder candidates but do not establish claim entailment or
+correctness.
 # LLM Grounding
 
 The project includes a native `/eval/v1` adapter for reproducible retrieval and

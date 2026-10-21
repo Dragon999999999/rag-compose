@@ -48,6 +48,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
             "features": [
                 "query",
                 "retrieve",
+                "rerank",
                 "observations",
                 "usage",
                 "effective_config",
@@ -55,7 +56,6 @@ def create_eval_router(service: EvalService) -> APIRouter:
             "unsupported": [
                 "claim_entailment",
                 "judging",
-                "rerank",
                 "fusion",
                 "filter",
                 "compression",

@@ -358,6 +358,10 @@ class RetrievalConfiguration(ObservationModel):
 
     type: str
     top_k: int | None = None
+    retrieval_top_k: int | None = None
+    reranker: str | None = None
+    rerank_top_k: int | None = None
+    reranker_model_name: str | None = None
     similarity_metric: str | None = None
     filters: dict[str, Any] = Field(default_factory=dict)
     context_limit: int | None = None

@@ -9,6 +9,7 @@ from hashlib import sha256
 from typing import Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -77,6 +78,73 @@ class RetrieverConfig(ComponentConfig):
     summary_per_facet: int | None = Field(default=None, ge=1, le=20)
 
 
+class RerankerConfig(ComponentConfig):
+    """Configure candidate truncation or model-based reranking.
+
+    ``type`` is the established component name. ``provider`` is accepted as a
+    clearer YAML/API spelling for new configurations and is normalized to
+    ``type`` so existing persisted pipeline documents remain compatible.
+    """
+
+    type: str = Field(default="identity", min_length=1)
+    provider: Literal["identity", "top_k", "cross_encoder"] | None = Field(
+        default=None,
+        exclude=True,
+        description="Optional provider spelling for the reranker component type.",
+    )
+    retrieval_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Maximum candidates requested from the retriever before reranking.",
+    )
+    rerank_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Maximum candidates returned after reranking.",
+    )
+    model_name: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L6-v2",
+        min_length=1,
+        description="Sentence Transformers cross-encoder model identifier.",
+    )
+    device: str = Field(
+        default="cpu",
+        min_length=1,
+        description="Inference device passed to the local cross-encoder.",
+    )
+    batch_size: int = Field(default=16, ge=1, le=512)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_provider_input(cls, value: object) -> object:
+        """Normalize the new provider spelling before Pydantic constructs the model."""
+        if not isinstance(value, dict):
+            return value
+        provider = value.get("provider")
+        if provider is None:
+            return value
+        selected = value.get("type", "identity")
+        if selected not in ("identity", provider):
+            raise ValueError("type and provider must select the same reranker")
+        normalized = dict(value)
+        normalized["type"] = provider
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_top_k(self) -> "RerankerConfig":
+        """Validate top-k semantics after provider normalization."""
+        if self.rerank_top_k is not None and self.retrieval_top_k is not None:
+            if self.rerank_top_k > self.retrieval_top_k:
+                raise ValueError("rerank_top_k must not exceed retrieval_top_k")
+        if self.type == "identity" and self.rerank_top_k is not None:
+            raise ValueError(
+                "rerank_top_k requires the top_k or cross_encoder reranker"
+            )
+        return self
+
+
 class ChatHistoryConfig(BaseModel):
     """Limit conversational context without treating it as corpus evidence."""
 
@@ -95,7 +163,9 @@ class ArchitectureConfig(BaseModel):
     parser: ComponentConfig
     knowledge_builder: ComponentConfig
     retriever: RetrieverConfig
-    reranker: ComponentConfig
+    reranker: RerankerConfig = Field(
+        validation_alias=AliasChoices("reranker", "reranking")
+    )
     reasoner: ReasonerConfig
     assessors: tuple[ComponentConfig, ...]
     decision_policy: ComponentConfig
@@ -180,7 +250,9 @@ class PipelineQueryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     retriever: RetrieverConfig
-    reranker: ComponentConfig
+    reranker: RerankerConfig = Field(
+        validation_alias=AliasChoices("reranker", "reranking")
+    )
     reasoner: PipelineReasonerConfig
     assessors: tuple[ComponentConfig, ...]
     decision_policy: ComponentConfig

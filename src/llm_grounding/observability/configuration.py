@@ -71,6 +71,16 @@ def build_effective_configuration(
         retrieval=RetrievalConfiguration(
             type=architecture.retriever.type,
             top_k=architecture.retriever.top_k,
+            retrieval_top_k=(
+                architecture.reranker.retrieval_top_k or architecture.retriever.top_k
+            ),
+            reranker=architecture.reranker.type,
+            rerank_top_k=architecture.reranker.rerank_top_k,
+            reranker_model_name=(
+                architecture.reranker.model_name
+                if architecture.reranker.type == "cross_encoder"
+                else None
+            ),
             similarity_metric="cosine_similarity",
             context_limit=architecture.retriever.context_chars,
         ),

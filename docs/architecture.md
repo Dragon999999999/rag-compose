@@ -28,7 +28,7 @@ flowchart TD
 | Parsing | `DocumentParser` → `PyMuPDFDocumentParser`: reads local PDFs and returns individual nonempty text blocks. |
 | Knowledge | `KnowledgeBuilder` → `BasicKnowledgeBuilder`: maps eligible source elements to in-memory evidence. |
 | Retrieval | `Retriever` → `FullDocumentRetriever`: returns all eligible TEXT evidence in source order, independent of the query. |
-| Reranking | `Reranker` → `IdentityReranker`: preserves the response unchanged. |
+| Reranking | `Reranker` → `IdentityReranker`, `TopKReranker`, or lazy `CrossEncoderReranker`; the latter scores local query/candidate pairs. |
 | Reasoning | `ReasoningEngine` → `BasicSummaryReasoner`: produces a structured keyword/summary proposal through an injected model client. |
 | Assessment | `Assessor` → `NoOpAssessor`: returns no measurements, with no implicit pass score. |
 | Decision | `DecisionPolicy` → `AcceptAllDecisionPolicy`: accepts the candidate unchanged. |
@@ -210,7 +210,7 @@ src/llm_grounding/
 │   ├── protocol.py
 │   ├── models.py
 │   ├── full_document.py
-│   └── reranking/       protocol.py, identity.py
+│   └── reranking/       protocol.py, identity.py, top_k.py, cross_encoder.py
 ├── reasoning/           protocol.py, models.py, basic_summary.py
 ├── assessment/          protocol.py, noop.py
 ├── decision/            protocol.py, accept_all.py
@@ -248,10 +248,9 @@ is added because the baseline needs no persistence adapter.
 ## Next phase
 
 Deliberate future work includes scientific test cases and quality metrics,
-selective retrieval/reranking, substantive assessors, claim-aware policies, and
-additional parser/evidence modalities. None are implemented as placeholders.
-Databases, embeddings, claim verification, multimodal analysis, DAG execution, and
-production services remain outside this baseline.
+substantive assessors, claim-aware policies, and additional parser/evidence
+modalities. Cross-encoder reranking is selection support only; it does not verify
+claim entailment or factual correctness.
 
 ## Evaluation and observability boundary
 

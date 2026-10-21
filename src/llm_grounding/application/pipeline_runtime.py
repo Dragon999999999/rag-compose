@@ -181,10 +181,6 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounded reasoner"
             )
-        if architecture.reranker.type != "identity":
-            raise PipelineResolutionError(
-                "The vector runtime currently supports only the identity reranker"
-            )
         if tuple(item.type for item in architecture.assessors) != ("source_reference",):
             raise PipelineResolutionError(
                 "The vector runtime requires the source_reference assessor"
@@ -200,10 +196,13 @@ class PipelineRuntimeResolver:
         if architecture.reasoner.prompt_id is None:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
         embedder = self._embedder(ingestion)
+        retrieval_top_k = (
+            architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
+        )
         vector = VectorRetriever(
             embedder,
             self._vectors,
-            architecture.retriever.top_k or 8,
+            retrieval_top_k,
             embedding_config=ingestion.embedding,
         )
         summary = SummaryRetriever(
@@ -217,6 +216,7 @@ class PipelineRuntimeResolver:
             PromptLibrary.default(),
             architecture.reasoner.prompt_id,
         )
+        reranker = self._registry.build_reranker(architecture.reranker)
         return BasicRagRunner(
             vector,
             summary,
@@ -225,6 +225,9 @@ class PipelineRuntimeResolver:
             BasicGroundingPolicy(),
             GroundedAnswerRenderer(),
             embedding_config=ingestion.embedding,
+            reranker=reranker,
+            reranker_config=architecture.reranker,
+            reranker_builder=self._registry.build_reranker,
         )
 
     def _embedder(self, ingestion: IngestionConfig) -> Embedder:

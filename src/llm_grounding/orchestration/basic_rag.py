@@ -1,5 +1,7 @@
 """Basic RAG v1 query orchestration, separate from document ingestion and Baseline 0."""
 
+import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -14,8 +16,10 @@ from llm_grounding.domain.corpus import (
     Message,
     TaskType,
 )
+from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, RetrievalResult
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
+from llm_grounding.infrastructure.config.models import RerankerConfig
 from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.observability.embedding import embedding_diagnostics
 from llm_grounding.observability.models import LLMUsage, RagUsage
@@ -28,6 +32,9 @@ from llm_grounding.orchestration.retrieval_stages import (
 )
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
+from llm_grounding.retrieval.models import RetrievalResponse
+from llm_grounding.retrieval.reranking.identity import IdentityReranker
+from llm_grounding.retrieval.reranking.protocol import Reranker
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
 
 
@@ -44,10 +51,23 @@ class BasicRagRunner:
         renderer: GroundedAnswerRenderer,
         diagnostics: GroundingDiagnostics | None = None,
         embedding_config: EmbeddingConfig | None = None,
+        reranker: Reranker | None = None,
+        reranker_config: RerankerConfig | None = None,
+        reranker_builder: Callable[[RerankerConfig], Reranker] | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
         self._assessor, self._policy, self._renderer = assessor, policy, renderer
+        self._reranker = reranker or IdentityReranker()
+        self._reranker_config = reranker_config or RerankerConfig()
+        if reranker_builder is None:
+            from llm_grounding.orchestration.registry import ComponentRegistry
+
+            reranker_builder = ComponentRegistry().build_reranker
+        self._reranker_builder = reranker_builder
+        self._reranker_cache = {
+            self._reranker_config.model_dump_json(): self._reranker
+        }
         self._diagnostics = diagnostics or GroundingDiagnostics()
         self._embedding_config = embedding_config or vector.embedding_config
         self._embedders: dict[str, Embedder] = {
@@ -66,12 +86,17 @@ class BasicRagRunner:
         traces = TraceRecorder()
         usage = UsageAccumulator()
         total_span = traces.start("rag_e2e")
+        values = self._runtime_values(runtime_config)
         retrieval_span = traces.start("retrieval")
-        chunks = await self.retrieve(request, runtime_config=runtime_config)
+        candidates = await self._retrieve_candidates(request, values)
+        traces.end(retrieval_span, output_count=len(candidates))
+        rerank_span = traces.start("rerank", input_count=len(candidates))
+        chunks = await self._rerank_chunks(request.task, candidates, values)
+        usage.add_reranker()
+        traces.end(rerank_span, output_count=len(chunks))
         query_embedding = self._vector.last_query_embedding
         if query_embedding is not None:
             usage.add_embedding()
-        traces.end(retrieval_span, output_count=len(chunks))
         if not chunks:
             traces.end(total_span, output_count=0)
             self._diagnostics.report_empty_retrieval(
@@ -123,7 +148,6 @@ class BasicRagRunner:
         context_span = traces.start("final_context", input_count=len(chunks))
         traces.end(context_span, output_count=len(context.chunks))
         reasoning_span = traces.start("generation", input_count=len(context.chunks))
-        values = runtime_config or {}
         reasoner_kwargs = {
             key: values[key]
             for key in ("prompt_id", "model_name")
@@ -214,9 +238,18 @@ class BasicRagRunner:
         *,
         runtime_config: dict[str, Any] | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
-        """Retrieve the exact candidate set used by the query path."""
+        """Retrieve and rerank the exact final context used by the query path."""
         values = self._runtime_values(runtime_config)
+        candidates = await self._retrieve_candidates(request, values)
+        return await self._rerank_chunks(request.task, candidates, values)
+
+    async def _retrieve_candidates(
+        self, request: CorpusRequest, values: dict[str, Any]
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Retrieve the candidate set before the configured reranker runs."""
         top_k = values.get("top_k") if isinstance(values.get("top_k"), int) else None
+        if isinstance(values.get("retrieval_top_k"), int):
+            top_k = values["retrieval_top_k"]
         context_chars = (
             values.get("context_chars")
             if isinstance(values.get("context_chars"), int)
@@ -250,6 +283,93 @@ class BasicRagRunner:
             if request.task_type == TaskType.SUMMARY
             else self._vector.retrieve(request, top_k=top_k, embedder=embedder)
         )
+
+    async def _rerank_chunks(
+        self,
+        query: str,
+        candidates: tuple[ChunkRetrievalResult, ...],
+        values: dict[str, Any],
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Adapt persistent chunks to the shared reranker response contract."""
+        if not candidates:
+            return ()
+        response = RetrievalResponse(
+            query,
+            tuple(
+                RetrievalResult(
+                    EvidenceUnit(
+                        evidence_id=result.chunk.chunk_id,
+                        document_id=result.chunk.document_id,
+                        evidence_type=EvidenceType.TEXT,
+                        source_uri="",
+                        order=result.chunk.order,
+                        page_number=result.chunk.page_start,
+                        text=result.chunk.text,
+                        metadata=result.chunk.metadata,
+                    ),
+                    result.rank,
+                    result.retriever_id,
+                    result.score,
+                )
+                for result in candidates
+            ),
+        )
+        rerank_top_k = (
+            values.get("rerank_top_k")
+            if isinstance(values.get("rerank_top_k"), int)
+            else None
+        )
+        reranker = self._reranker_for(values)
+        ranked = await reranker.rerank(response, top_k=rerank_top_k)
+        by_id = {result.chunk.chunk_id: result for result in candidates}
+        try:
+            return tuple(
+                ChunkRetrievalResult(
+                    by_id[result.evidence.evidence_id].chunk,
+                    result.rank,
+                    result.retriever_id,
+                    result.score,
+                )
+                for result in ranked.results
+            )
+        except KeyError as exc:
+            raise RuntimeError(
+                "Reranker returned an unknown retrieval identifier"
+            ) from exc
+
+    def _reranker_for(self, values: dict[str, Any]) -> Reranker:
+        """Resolve and cache a request-local reranker when evaluation overrides it."""
+        override_keys = {
+            "reranker",
+            "rerank_top_k",
+            "reranker_model_name",
+            "reranker_device",
+            "reranker_batch_size",
+        }
+        if not override_keys.intersection(values):
+            return self._reranker
+        settings = self._reranker_config.model_dump(mode="json")
+        mapping = {
+            "reranker": "type",
+            "rerank_top_k": "rerank_top_k",
+            "reranker_model_name": "model_name",
+            "reranker_device": "device",
+            "reranker_batch_size": "batch_size",
+        }
+        settings.update(
+            {
+                target: values[source]
+                for source, target in mapping.items()
+                if source in values
+            }
+        )
+        config = RerankerConfig.model_validate(settings)
+        cache_key = json.dumps(settings, sort_keys=True, separators=(",", ":"))
+        reranker = self._reranker_cache.get(cache_key)
+        if reranker is None:
+            reranker = self._reranker_builder(config)
+            self._reranker_cache[cache_key] = reranker
+        return reranker
 
     @staticmethod
     def _runtime_values(runtime_config: dict[str, Any] | None) -> dict[str, Any]:

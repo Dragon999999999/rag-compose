@@ -1003,6 +1003,9 @@ dependencies = [
 embeddings = [
     { name = "sentence-transformers" },
 ]
+reranking = [
+    { name = "sentence-transformers" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1029,11 +1032,11 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20,<1" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "qdrant-client", specifier = ">=1.16,<2" },
-    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5,<6" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings' or extra == 'reranking'", specifier = ">=5,<6" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<2.1" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
-provides-extras = ["embeddings"]
+provides-extras = ["embeddings", "reranking"]
 
 [package.metadata.requires-dev]
 dev = [

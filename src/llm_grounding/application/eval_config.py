@@ -3,7 +3,10 @@
 from dataclasses import dataclass
 from typing import Any
 
-from llm_grounding.infrastructure.config.models import ArchitectureConfig
+from llm_grounding.infrastructure.config.models import (
+    ArchitectureConfig,
+    RerankerConfig,
+)
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.observability.configuration import build_effective_configuration
 from llm_grounding.observability.models import EffectiveConfiguration
@@ -15,6 +18,12 @@ SUPPORTED_OVERRIDE_FIELDS = (
     "embedding",
     "vector_retriever",
     "top_k",
+    "retrieval_top_k",
+    "rerank_top_k",
+    "reranker",
+    "reranker_model_name",
+    "reranker_device",
+    "reranker_batch_size",
     "context_chars",
     "summary_per_facet",
     "prompt_id",
@@ -82,6 +91,9 @@ class EvaluationConfigService:
             "vector_retriever",
             "prompt_id",
             "model_name",
+            "reranker",
+            "reranker_model_name",
+            "reranker_device",
         )
         for field in text_fields:
             if field in values and (
@@ -94,8 +106,11 @@ class EvaluationConfigService:
             raise ValueError("embedding must be an object")
         integer_bounds = {
             "top_k": (1, 100),
+            "retrieval_top_k": (1, 100),
+            "rerank_top_k": (1, 100),
             "context_chars": (1, 200_000),
             "summary_per_facet": (1, 20),
+            "reranker_batch_size": (1, 512),
         }
         for field, (minimum, maximum) in integer_bounds.items():
             if field in values and (
@@ -119,6 +134,7 @@ class EvaluationConfigService:
             "chunker": ("fixed_window", "block_aware"),
             "embedder": ("sentence_transformers", "fake"),
             "vector_retriever": "vector",
+            "reranker": ("identity", "top_k", "cross_encoder"),
         }
         for field, accepted in expected.items():
             if field in values and values[field] not in (
@@ -167,6 +183,24 @@ class EvaluationConfigService:
         architecture = architecture.model_copy(
             update={"retriever": retriever.model_copy(update=updates)}
         )
+        reranker_updates: dict[str, Any] = {}
+        if "retrieval_top_k" in values:
+            reranker_updates["retrieval_top_k"] = values["retrieval_top_k"]
+        for source, target in (
+            ("rerank_top_k", "rerank_top_k"),
+            ("reranker_model_name", "model_name"),
+            ("reranker_device", "device"),
+            ("reranker_batch_size", "batch_size"),
+        ):
+            if source in values:
+                reranker_updates[target] = values[source]
+        if "reranker" in values:
+            reranker_updates["type"] = values["reranker"]
+        if reranker_updates:
+            reranker = RerankerConfig.model_validate(
+                {**architecture.reranker.model_dump(mode="json"), **reranker_updates}
+            )
+            architecture = architecture.model_copy(update={"reranker": reranker})
         if "prompt_id" in values:
             architecture = architecture.model_copy(
                 update={

@@ -82,6 +82,12 @@ class EvalConfigOverrides(BaseModel):
     embedding: dict[str, Any] | None = None
     vector_retriever: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=100)
+    retrieval_top_k: int | None = Field(default=None, ge=1, le=100)
+    rerank_top_k: int | None = Field(default=None, ge=1, le=100)
+    reranker: str | None = None
+    reranker_model_name: str | None = None
+    reranker_device: str | None = None
+    reranker_batch_size: int | None = Field(default=None, ge=1, le=512)
     context_chars: int | None = Field(default=None, ge=1, le=200_000)
     summary_per_facet: int | None = Field(default=None, ge=1, le=20)
     prompt_id: str | None = None

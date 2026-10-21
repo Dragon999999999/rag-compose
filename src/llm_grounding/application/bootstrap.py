@@ -39,6 +39,7 @@ from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
+from llm_grounding.orchestration.registry import ComponentRegistry
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
@@ -179,7 +180,7 @@ def create_phase_one_application(
         embedder,
         vectors,
     )
-    top_k = architecture.retriever.top_k or 8
+    top_k = architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
     vector = VectorRetriever(
         embedder, vectors, top_k, embedding_config=ingestion_config.embedding
     )
@@ -194,6 +195,8 @@ def create_phase_one_application(
         PromptLibrary.default(),
         architecture.reasoner.prompt_id,
     )
+    registry = ComponentRegistry()
+    reranker = registry.build_reranker(architecture.reranker)
     runner = BasicRagRunner(
         vector,
         summary,
@@ -203,6 +206,9 @@ def create_phase_one_application(
         GroundedAnswerRenderer(),
         diagnostics,
         ingestion_config.embedding,
+        reranker=reranker,
+        reranker_config=architecture.reranker,
+        reranker_builder=registry.build_reranker,
     )
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10

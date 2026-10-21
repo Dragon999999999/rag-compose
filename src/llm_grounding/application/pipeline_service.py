@@ -486,7 +486,7 @@ class PipelineService:
                     self._registry.retrievers.keys(), "RetrieverConfig"
                 ),
                 "reranker": self._stage(
-                    self._registry.rerankers.keys(), "ComponentConfig"
+                    self._registry.rerankers.keys(), "RerankerConfig"
                 ),
                 "reasoner": self._stage(
                     self._registry.pipeline_reasoners, "PipelineReasonerConfig"

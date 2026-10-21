@@ -44,5 +44,37 @@ def test_unsupported_override_is_rejected(config) -> None:
 
     with pytest.raises(ValueError, match="Unsupported evaluation configuration"):
         EvaluationConfigService().validate(
-            architecture, IngestionConfig(), {"reranker": "cross_encoder"}
+            architecture, IngestionConfig(), {"fusion": "cross_encoder"}
+        )
+
+
+def test_reranking_overrides_are_validated_and_recorded(config) -> None:
+    """Evaluation requests can select top-k or local cross-encoder settings."""
+    architecture = config.model_copy(
+        update={
+            "name": "basic_rag_v1",
+            "retriever": config.retriever.model_copy(update={"type": "vector"}),
+        }
+    )
+
+    result = EvaluationConfigService().validate(
+        architecture,
+        IngestionConfig(),
+        {
+            "reranker": "cross_encoder",
+            "retrieval_top_k": 20,
+            "rerank_top_k": 5,
+            "reranker_device": "cpu",
+        },
+    )
+
+    assert result.effective.retrieval.reranker == "cross_encoder"
+    assert result.effective.retrieval.retrieval_top_k == 20
+    assert result.effective.retrieval.rerank_top_k == 5
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        EvaluationConfigService().validate(
+            architecture,
+            IngestionConfig(),
+            {"reranker": "top_k", "retrieval_top_k": 2, "rerank_top_k": 3},
         )

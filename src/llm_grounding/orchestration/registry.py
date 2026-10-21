@@ -16,6 +16,7 @@ from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
     PipelineConfig,
+    RerankerConfig,
 )
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
@@ -35,8 +36,10 @@ from llm_grounding.rendering.basic_summary import BasicSummaryRenderer
 from llm_grounding.rendering.protocol import Renderer
 from llm_grounding.retrieval.full_document import FullDocumentRetriever
 from llm_grounding.retrieval.protocol import Retriever
+from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
+from llm_grounding.retrieval.reranking.top_k import TopKReranker
 
 
 def _vector_retriever_requires_runtime_dependencies() -> Retriever:
@@ -62,8 +65,15 @@ class ComponentRegistry:
             "full_document": FullDocumentRetriever,
             "vector": _vector_retriever_requires_runtime_dependencies,
         }
-        self.rerankers: dict[str, Callable[[], Reranker]] = {
-            "identity": IdentityReranker
+        self.rerankers: dict[str, Callable[[RerankerConfig], Reranker]] = {
+            "identity": lambda config: IdentityReranker(),
+            "top_k": lambda config: TopKReranker(config.rerank_top_k),
+            "cross_encoder": lambda config: CrossEncoderReranker(
+                model_name=config.model_name,
+                device=config.device,
+                batch_size=config.batch_size,
+                top_k=config.rerank_top_k,
+            ),
         }
         self.reasoners: dict[
             str, Callable[[StructuredModelClient], ReasoningEngine]
@@ -188,9 +198,13 @@ class ComponentRegistry:
             except ValueError as exc:
                 kind = "embedding" if "embedding" in str(exc) else "reasoning"
                 raise ConfigurationError(f"Unknown {kind} model reference") from exc
-        if config.query is not None and config.query.retriever.type == "vector" and (
-            config.representation is not None
-            and config.representation.vector_backend.type != "qdrant"
+        if (
+            config.query is not None
+            and config.query.retriever.type == "vector"
+            and (
+                config.representation is not None
+                and config.representation.vector_backend.type != "qdrant"
+            )
         ):
             raise ConfigurationError(
                 "The vector retriever requires the qdrant vector backend"
@@ -241,9 +255,20 @@ class ComponentRegistry:
             parser=self.parsers[config.parser.type](),
             knowledge_builder=self.knowledge_builders[config.knowledge_builder.type](),
             retriever=self.retrievers[config.retriever.type](),
-            reranker=self.rerankers[config.reranker.type](),
+            reranker=self.rerankers[config.reranker.type](config.reranker),
             reasoner=self.reasoners[config.reasoner.type](client),
             assessors=tuple(self.assessors[item.type]() for item in config.assessors),
             decision_policy=self.decision_policies[config.decision_policy.type](),
             renderer=self.renderers[config.renderer.type](),
         )
+
+    def build_reranker(self, config: RerankerConfig) -> Reranker:
+        """Construct one reranker from validated settings without loading models."""
+        try:
+            factory = self.rerankers[config.type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown reranker component {config.type!r}; "
+                f"available: {', '.join(self.rerankers)}"
+            ) from exc
+        return factory(config)

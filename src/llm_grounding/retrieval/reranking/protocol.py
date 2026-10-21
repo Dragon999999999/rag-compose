@@ -13,6 +13,13 @@ from llm_grounding.retrieval.models import RetrievalResponse
 class Reranker(Protocol):
     """Define the interchangeable reranking component contract."""
 
-    async def rerank(self, response: RetrievalResponse) -> RetrievalResponse:
-        """Return refined candidates drawn only from the supplied response."""
+    async def rerank(
+        self, response: RetrievalResponse, *, top_k: int | None = None
+    ) -> RetrievalResponse:
+        """Return refined candidates drawn only from the supplied response.
+
+        Args:
+            response: Query and candidates produced by the retrieval stage.
+            top_k: Optional request-local output limit overriding provider config.
+        """
         ...
