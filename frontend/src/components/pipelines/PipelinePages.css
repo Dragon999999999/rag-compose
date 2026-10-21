@@ -47,9 +47,10 @@
 .validation-summary ul { margin: 6px 0 0; padding-left: 20px; }
 
 .editor-meta { align-items: end; display: grid; gap: var(--spacing-3); grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) minmax(100px, 120px) minmax(170px, auto); margin: 0 auto 24px; max-width: 1280px; }
-.editor-meta label { color: var(--color-text-secondary); display: grid; font-size: 12px; font-weight: 700; gap: 6px; }
-.editor-checkbox { align-items: center; display: flex !important; gap: 7px !important; min-height: 36px; padding-top: 0; white-space: nowrap; }
-.editor-checkbox input { accent-color: var(--color-primary); }
+.editor-meta label { color: var(--color-text-secondary); display: grid; font-size: 12px; font-weight: 700; gap: 6px; min-width: 0; }
+.editor-meta > label:not(.editor-checkbox) input { min-width: 0; width: 100%; }
+.editor-checkbox { align-items: center; display: flex !important; gap: 7px !important; min-height: 36px; min-width: 0; padding-top: 0; white-space: nowrap; }
+.editor-checkbox input { accent-color: var(--color-primary); flex: 0 0 18px; }
 
 .pipeline-editor-layout { align-items: start; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); margin: 0 auto; max-width: 1280px; }
 .pipeline-graph, .pipeline-inspector { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
@@ -100,4 +101,5 @@
 .impact-choice-default { border-color: var(--color-primary); }
 
 @media (max-width: 900px) { .pipeline-editor-layout { grid-template-columns: 1fr; } .pipeline-inspector { position: static; } }
+@media (max-width: 1120px) { .editor-meta { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 @media (max-width: 760px) { .pipeline-page { padding: 20px 14px; } .pipeline-page-header, .pipeline-toolbar { align-items: stretch; flex-direction: column; } .pipeline-page-header .button { align-self: flex-start; } .editor-meta { grid-template-columns: 1fr; } .editor-checkbox { padding-top: 0; } .editor-page-header { align-items: flex-start; } .editor-actions { flex-wrap: wrap; } }
