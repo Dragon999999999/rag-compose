@@ -10,6 +10,7 @@ from pathlib import Path
 from llm_grounding.application.bootstrap import create_phase_one_application
 from llm_grounding.application.service import RagService, validate_pdf_path
 from llm_grounding.domain.corpus import TaskType
+from llm_grounding.infrastructure.config.env import load_environment
 from llm_grounding.infrastructure.config.loader import (
     load_architecture_config,
     load_ingestion_config,
@@ -104,6 +105,7 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Run a baseline extraction or dispatch a persistent Basic RAG command."""
+    load_environment()
     arguments = list(sys.argv[1:] if argv is None else argv)
     phase_one = bool(arguments) and arguments[0] in {"project", "chat", "pipeline"}
     parser = create_phase_one_parser() if phase_one else create_parser()
