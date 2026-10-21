@@ -25,6 +25,28 @@ def _boolean(name: str, default: bool) -> bool:
 
 
 @dataclass(frozen=True)
+class ApiSettings:
+    """Host and port settings for the browser-facing API server."""
+
+    host: str
+    port: int
+
+    @classmethod
+    def from_environment(cls) -> "ApiSettings":
+        """Read and validate the API bind address from the environment."""
+        raw_port = _value("API_PORT", "8002")
+        try:
+            port = int(raw_port)
+        except ValueError as exc:
+            raise ValueError(
+                "API_PORT must be an integer between 1 and 65535"
+            ) from exc
+        if not 1 <= port <= 65535:
+            raise ValueError("API_PORT must be an integer between 1 and 65535")
+        return cls(host=_value("API_HOST", "127.0.0.1"), port=port)
+
+
+@dataclass(frozen=True)
 class MinioSettings:
     """Connection and bucket settings for an S3-compatible artifact store."""
 

@@ -43,6 +43,7 @@ from llm_grounding.infrastructure.config.loader import (
     load_ingestion_config,
 )
 from llm_grounding.infrastructure.config.models import PipelineConfig
+from llm_grounding.infrastructure.config.settings import ApiSettings
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 from llm_grounding.rendering.chunk_references import chunk_reference_label
 
@@ -603,4 +604,7 @@ def main() -> None:
     application = create_phase_one_application(
         architecture, load_ingestion_config(None)
     )
-    uvicorn.run(create_api(application), host="127.0.0.1", port=8000)
+    api_settings = ApiSettings.from_environment()
+    uvicorn.run(
+        create_api(application), host=api_settings.host, port=api_settings.port
+    )
