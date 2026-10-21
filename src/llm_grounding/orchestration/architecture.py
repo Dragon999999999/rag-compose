@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.decision.protocol import DecisionPolicy
+from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
 from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.reasoning.protocol import ReasoningEngine
@@ -26,3 +27,4 @@ class Architecture:
     assessors: tuple[Assessor, ...]
     decision_policy: DecisionPolicy
     renderer: Renderer
+    embedder: Embedder | None = None

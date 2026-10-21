@@ -20,6 +20,8 @@ def test_default_configuration_matches_repository_yaml(
     assert config.name == "baseline_v0"
     assert config.version == 0
     assert config.reasoner.model.name == "qwen-3.5-397b"
+    assert config.embedder is not None
+    assert config.embedder.model.name == "qwen3-embedding-4b"
     assert (
         str(config.reasoner.model.base_url)
         == "https://aqueduct.ai.datalab.tuwien.ac.at/v1"
@@ -43,6 +45,7 @@ def test_registry_constructs_all_expected_components(
     for stage, class_name in expected.items():
         assert type(getattr(architecture, stage)).__name__ == class_name
     assert type(architecture.assessors[0]).__name__ == "NoOpAssessor"
+    assert architecture.embedder is None
 
 
 @pytest.mark.parametrize(
@@ -56,6 +59,7 @@ def test_registry_constructs_all_expected_components(
         "assessors",
         "decision_policy",
         "renderer",
+        "embedder",
     ],
 )
 def test_registry_rejects_unknown_components(

@@ -13,6 +13,7 @@ flowchart TD
     Service --> Runner[ArchitectureRunner]
     Runner --> Parse[DocumentParser: structured source blocks]
     Parse --> Knowledge[KnowledgeBuilder: canonical evidence]
+    Knowledge --> Embed[Optional Embedder: provider vectors]
     Knowledge --> Retrieve[Retriever: query-specific selections]
     Retrieve --> Rerank[Reranker: ordered candidates]
     Rerank --> Reason[ReasoningEngine: candidate payload]
@@ -27,6 +28,7 @@ flowchart TD
 | --- | --- |
 | Parsing | `DocumentParser` → `PyMuPDFDocumentParser`: reads local PDFs and returns individual nonempty text blocks. |
 | Knowledge | `KnowledgeBuilder` → `BasicKnowledgeBuilder`: maps eligible source elements to in-memory evidence. |
+| Embedding | `Embedder` → `OpenAICompatibleEmbedder`: optional batched `/embeddings` requests; the baseline full-document retriever does not construct it. |
 | Retrieval | `Retriever` → `FullDocumentRetriever`: returns all eligible TEXT evidence in source order, independent of the query. |
 | Reranking | `Reranker` → `IdentityReranker`, `TopKReranker`, or lazy `CrossEncoderReranker`; the latter scores local query/candidate pairs. |
 | Reasoning | `ReasoningEngine` → `BasicSummaryReasoner`: produces a structured keyword/summary proposal through an injected model client. |
@@ -41,6 +43,15 @@ and error contract. Constructor injection keeps vendor clients out of semantic
 requests. Domain modules depend only on the standard library. The concrete parser
 contains PyMuPDF calls; the model adapter contains PydanticAI and OpenAI provider
 construction. Pydantic is used at configuration and structured-output boundaries.
+
+The optional architecture-level `embedder` component is configured in YAML with a
+provider type, nested model settings, and an optional batch size. The current
+`openai_compatible` implementation uses the shared Aqueduct credential resolver
+and the existing `Embedder` protocol. It is lazy with respect to client creation;
+full-document retrieval therefore remains usable without embedding credentials.
+Index-building workflows continue to use the separate ingestion embedding
+configuration, whose explicit dimension is part of the persisted vector-index
+identity.
 
 ### Source versus knowledge
 

@@ -5,6 +5,15 @@ parser:
   type: pymupdf
 knowledge_builder:
   type: basic
+embedder:
+  type: openai_compatible
+  model:
+    provider: aqueduct
+    name: qwen3-embedding-4b
+    base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
+    timeout_seconds: 120
+    retries: 2
+  batch_size: 32
 retriever:
   type: full_document
 reranker:

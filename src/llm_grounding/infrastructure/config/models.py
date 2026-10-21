@@ -59,6 +59,29 @@ class ModelConfig(BaseModel):
         return url
 
 
+class EmbedderConfig(ComponentConfig):
+    """Configure an embedding provider used by retrieval-aware components.
+
+    The nested model keeps provider connection settings consistent with the
+    reasoning model configuration while the component type selects the
+    embedding adapter. The component is optional for backward compatibility;
+    stages such as full-document retrieval do not need to construct it.
+    """
+
+    type: str = Field(default="openai_compatible", min_length=1)
+    model: ModelConfig
+    batch_size: int = Field(default=32, ge=1, le=512)
+
+    def identity(self) -> str:
+        """Return a stable provider/model identity without endpoint details."""
+        import json
+
+        data = self.model_dump(mode="json", exclude={"batch_size"})
+        data["model"].pop("base_url", None)
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        return sha256(canonical.encode()).hexdigest()
+
+
 class ReasonerConfig(ComponentConfig):
     """Select a reasoning implementation and its model configuration."""
 
@@ -166,6 +189,7 @@ class ArchitectureConfig(BaseModel):
     reranker: RerankerConfig = Field(
         validation_alias=AliasChoices("reranker", "reranking")
     )
+    embedder: EmbedderConfig | None = None
     reasoner: ReasonerConfig
     assessors: tuple[ComponentConfig, ...]
     decision_policy: ComponentConfig
@@ -178,6 +202,8 @@ class ArchitectureConfig(BaseModel):
 
         data = self.model_dump(mode="json")
         data["reasoner"]["model"].pop("base_url", None)
+        if data.get("embedder") is not None:
+            data["embedder"]["model"].pop("base_url", None)
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
@@ -366,6 +392,7 @@ class PipelineConfig(BaseModel):
             knowledge_builder=self.representation.knowledge_builder,
             retriever=self.query.retriever,
             reranker=self.query.reranker,
+            embedder=None,
             reasoner=ReasonerConfig(
                 type=self.query.reasoner.type,
                 model=reasoning,
@@ -418,6 +445,7 @@ class PipelineConfig(BaseModel):
             knowledge_builder=ComponentConfig(type=ingestion.knowledge_builder),
             retriever=self.query.retriever,
             reranker=self.query.reranker,
+            embedder=None,
             reasoner=ReasonerConfig(
                 type=self.query.reasoner.type,
                 model=reasoning,

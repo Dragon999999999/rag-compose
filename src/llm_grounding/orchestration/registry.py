@@ -11,9 +11,12 @@ from llm_grounding.assessment.noop import NoOpAssessor
 from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.decision.accept_all import AcceptAllDecisionPolicy
 from llm_grounding.decision.protocol import DecisionPolicy
+from llm_grounding.embedding.factory import build_architecture_embedder
+from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
+    EmbedderConfig,
     ModelCatalog,
     PipelineConfig,
     RerankerConfig,
@@ -85,6 +88,9 @@ class ComponentRegistry:
         self.renderers: dict[str, Callable[[], Renderer]] = {
             "basic_summary": BasicSummaryRenderer
         }
+        self.embedders: dict[str, Callable[[EmbedderConfig], Embedder]] = {
+            "openai_compatible": build_architecture_embedder,
+        }
         self.pipeline_reasoners = frozenset({"basic_summary", "basic_grounded"})
         self.pipeline_assessors = frozenset({"noop", "source_reference"})
         self.pipeline_decision_policies = frozenset({"accept_all", "basic_grounding"})
@@ -110,6 +116,10 @@ class ComponentRegistry:
             ("decision_policy", config.decision_policy.type, self.decision_policies),
             ("renderer", config.renderer.type, self.renderers),
         ]
+        if config.embedder is not None:
+            selections.append(
+                ("embedder", config.embedder.type, self.embedders)
+            )
         selections.extend(
             ("assessor", item.type, self.assessors) for item in config.assessors
         )
@@ -256,11 +266,28 @@ class ComponentRegistry:
             knowledge_builder=self.knowledge_builders[config.knowledge_builder.type](),
             retriever=self.retrievers[config.retriever.type](),
             reranker=self.rerankers[config.reranker.type](config.reranker),
+            embedder=(
+                self.embedders[config.embedder.type](config.embedder)
+                if config.embedder is not None
+                and config.retriever.type != "full_document"
+                else None
+            ),
             reasoner=self.reasoners[config.reasoner.type](client),
             assessors=tuple(self.assessors[item.type]() for item in config.assessors),
             decision_policy=self.decision_policies[config.decision_policy.type](),
             renderer=self.renderers[config.renderer.type](),
         )
+
+    def build_embedder(self, config: EmbedderConfig) -> Embedder:
+        """Construct one architecture-level embedder from validated settings."""
+        try:
+            factory = self.embedders[config.type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown embedder component {config.type!r}; "
+                f"available: {', '.join(self.embedders)}"
+            ) from exc
+        return factory(config)
 
     def build_reranker(self, config: RerankerConfig) -> Reranker:
         """Construct one reranker from validated settings without loading models."""

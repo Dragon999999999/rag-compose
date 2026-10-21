@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from llm_grounding.infrastructure.llm.credentials import resolve_api_key
+from llm_grounding.infrastructure.llm.credentials import (
+    resolve_api_key,
+    resolve_embedding_key,
+)
 
 
 def test_environment_key_takes_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -12,6 +15,16 @@ def test_environment_key_takes_precedence(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("AQUEDUCT_API_KEY", "  test-environment-key \n")
     monkeypatch.setenv("AQUEDUCT_API_KEY_FILE", "/missing")
     assert resolve_api_key() == "test-environment-key"
+
+
+def test_embedding_resolution_uses_the_shared_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compatibility embedding resolver does not introduce another key."""
+    monkeypatch.setenv("AQUEDUCT_API_KEY", "shared-key")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "separate-key")
+
+    assert resolve_embedding_key() == "shared-key"
 
 
 def test_key_file_fallback_is_stripped_utf8(

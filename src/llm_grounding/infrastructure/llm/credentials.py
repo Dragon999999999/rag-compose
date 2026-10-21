@@ -38,33 +38,14 @@ def resolve_api_key() -> str:
 
 
 def resolve_embedding_key() -> str:
-    """Resolve embedding credentials with an embedding-specific fallback.
+    """Resolve the shared Aqueduct credential for backward-compatible callers.
 
-    ``EMBEDDING_API_KEY`` and ``EMBEDDING_API_KEY_FILE`` take precedence. The
-    Aqueduct names remain supported so existing deployments can use the same
-    credential for reasoning and embedding requests.
+    Embedding providers deliberately use the same ``AQUEDUCT_API_KEY`` or
+    ``AQUEDUCT_API_KEY_FILE`` as reasoning providers. This compatibility name
+    remains available for existing imports but does not define separate
+    embedding credentials.
 
     Raises:
-        RuntimeError: If neither embedding-specific nor Aqueduct credentials
-            provide a nonempty, readable key.
+        RuntimeError: If the shared credential is unavailable.
     """
-    api_key = os.environ.get("EMBEDDING_API_KEY", "").strip()
-    if api_key:
-        return api_key
-    key_path = os.environ.get("EMBEDDING_API_KEY_FILE", "").strip()
-    if key_path:
-        try:
-            path = Path(key_path).expanduser()
-            if not path.is_file():
-                raise RuntimeError(
-                    "EMBEDDING_API_KEY_FILE must refer to an existing file."
-                )
-            api_key = path.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeError) as exc:
-            raise RuntimeError(
-                "Unable to read EMBEDDING_API_KEY_FILE as UTF-8."
-            ) from exc
-        if api_key:
-            return api_key
-        raise RuntimeError("EMBEDDING_API_KEY_FILE contains an empty key.")
     return resolve_api_key()

@@ -21,7 +21,11 @@ documents the variables; the application does not automatically load `.env`.
 
 The default architecture is defined in
 [`configs/architectures/baseline_v0.yaml`](configs/architectures/baseline_v0.yaml).
-It uses `qwen-3.5-397b` at `https://aqueduct.ai.datalab.tuwien.ac.at/v1`.
+It uses `qwen-3.5-397b` for reasoning and declares the OpenAI-compatible
+`qwen3-embedding-4b` embedder at `https://aqueduct.ai.datalab.tuwien.ac.at/v1`.
+Baseline 0 uses full-document retrieval, so that embedder is not constructed or
+called for the summary workflow. Embedding-aware stages use the same
+`AQUEDUCT_API_KEY` or `AQUEDUCT_API_KEY_FILE` as reasoning requests.
 Change the model settings in an explicit architecture file when needed:
 
 ```bash
