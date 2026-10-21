@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from llm_grounding.application.pipeline_compatibility import (
+    IndexCapabilities,
+    validate_query_compatibility,
+)
 from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.loader import (
@@ -21,13 +25,15 @@ def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
     catalog = load_model_catalog(Path("configs/models.yaml"))
     paths = sorted(Path("configs/pipelines").glob("*.yaml"))
 
-    assert len(paths) == 4
+    assert len(paths) == 6
     configs = [load_pipeline_config(path, catalog=catalog) for path in paths]
     assert {config.name for config in configs} == {
         "basic_rag_v1",
         "basic_rag_small_chunks",
         "basic_rag_large_chunks",
         "basic_rag_fast_reasoning",
+        "ingestion_default_v1",
+        "query_basic_v1",
     }
 
 
@@ -50,6 +56,52 @@ def test_representation_changes_produce_distinct_index_identity() -> None:
     )
 
     assert base.representation_hash(catalog) != changed.representation_hash(catalog)
+
+
+def test_ingestion_and_query_pipeline_specs_resolve_separately() -> None:
+    """Specialized definitions compose through a project's effective ingestion."""
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    ingestion = load_pipeline_config(
+        Path("configs/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    )
+    query = load_pipeline_config(
+        Path("configs/pipelines/query_basic_v1.yaml"), catalog=catalog
+    )
+
+    assert ingestion.kind == "ingestion"
+    assert ingestion.query is None
+    assert query.kind == "query"
+    assert query.representation is None
+    effective_ingestion = ingestion.resolve_ingestion(catalog)
+    architecture, resolved_ingestion = query.resolve_query(
+        catalog, effective_ingestion
+    )
+    assert architecture.retriever.type == "vector"
+    assert resolved_ingestion.identity() == effective_ingestion.identity()
+
+
+def test_query_compatibility_uses_index_capabilities_not_dimension_alone() -> None:
+    """A query pipeline requires the actual vector capability and embedding identity."""
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    query = load_pipeline_config(
+        Path("configs/pipelines/query_basic_v1.yaml"), catalog=catalog
+    )
+    ingestion = load_pipeline_config(
+        Path("configs/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    ).resolve_ingestion(catalog)
+    compatible = validate_query_compatibility(
+        query,
+        IndexCapabilities.from_ingestion(ingestion),
+        ComponentRegistry(),
+    )
+    dimension_only = IndexCapabilities(frozenset({"chunk_vectors"}), None, 384)
+    incompatible = validate_query_compatibility(
+        query, dimension_only, ComponentRegistry()
+    )
+
+    assert compatible.compatible
+    assert not incompatible.compatible
+    assert "embedding_space" in incompatible.missing_capabilities
 
 
 def test_pipeline_loader_rejects_unknown_models_without_echoing_secret(
@@ -76,7 +128,7 @@ def test_pipeline_row_persists_jsonb_configuration_and_ownership_fields() -> Non
     columns = PipelineRow.__table__.c
 
     assert columns.config_json.type.__class__.__name__ == "JSONB"
-    assert {"config_hash", "representation_hash", "source_kind"}.issubset(
+    assert {"config_hash", "representation_hash", "source_kind", "kind"}.issubset(
         columns.keys()
     )
     assert {"active", "is_default", "updated_at"}.issubset(columns.keys())

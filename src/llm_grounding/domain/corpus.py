@@ -18,6 +18,11 @@ class Project:
     id: str
     name: str
     created_at: datetime
+    ingestion_pipeline_id: str | None = None
+    ingestion_pipeline_version: int | None = None
+    ingestion_pipeline_config_hash: str | None = None
+    ingestion_representation_hash: str | None = None
+    index_capabilities: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,7 @@ class Pipeline:
     is_default: bool
     created_at: datetime
     updated_at: datetime
+    kind: str = "full"
 
 
 @dataclass(frozen=True)

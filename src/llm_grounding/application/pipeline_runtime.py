@@ -73,28 +73,36 @@ class PipelineRuntimeResolver:
         self._embedders: OrderedDict[str, Embedder] = OrderedDict()
         self._lock = asyncio.Lock()
 
-    async def resolve(self, pipeline_id: str) -> ResolvedPipeline:
-        """Load, validate, and construct the active pipeline identified by ID."""
+    async def resolve(
+        self, pipeline_id: str, *, ingestion: IngestionConfig | None = None
+    ) -> ResolvedPipeline:
+        """Load, validate, and construct a query or complete pipeline runtime."""
         record = await self._repository.get_pipeline(pipeline_id)
         if not record.active:
             raise PipelineResolutionError(f"Pipeline {pipeline_id!r} is inactive")
         config = self._parse_config(record)
-        signature = self._signature(record, config)
+        if config.kind == "query" and ingestion is None:
+            raise PipelineResolutionError(
+                "A query pipeline requires the project's effective ingestion config"
+            )
+        signature = self._signature(record, config, ingestion)
         async with self._lock:
             cached = self._runtimes.get(pipeline_id)
             if cached is not None and cached[0] == signature:
                 self._runtimes.move_to_end(pipeline_id)
                 return cached[1]
-            runtime = self._build(record, config)
+            runtime = self._build(record, config, ingestion)
             self._runtimes[pipeline_id] = (signature, runtime)
             self._runtimes.move_to_end(pipeline_id)
             while len(self._runtimes) > self._max_cache_size:
                 self._runtimes.popitem(last=False)
             return runtime
 
-    async def resolve_pipeline(self, pipeline_id: str) -> ResolvedPipeline:
+    async def resolve_pipeline(
+        self, pipeline_id: str, *, ingestion: IngestionConfig | None = None
+    ) -> ResolvedPipeline:
         """Descriptive alias for ``resolve`` used by external application clients."""
-        return await self.resolve(pipeline_id)
+        return await self.resolve(pipeline_id, ingestion=ingestion)
 
     def invalidate(self, pipeline_id: str | None = None) -> None:
         """Drop one runtime or all runtimes after a configuration mutation."""
@@ -127,15 +135,35 @@ class PipelineRuntimeResolver:
                 f"Stored pipeline {record.id!r} is not runnable"
             ) from exc
 
-    def _build(self, record: Pipeline, config: PipelineConfig) -> ResolvedPipeline:
+    def _build(
+        self,
+        record: Pipeline,
+        config: PipelineConfig,
+        ingestion: IngestionConfig | None,
+    ) -> ResolvedPipeline:
         """Build a runtime while retaining existing execution engines."""
         try:
-            architecture, ingestion = config.resolve(self._catalog)
+            if config.kind == "full":
+                architecture, effective_ingestion = config.resolve(self._catalog)
+            elif config.kind == "query":
+                if ingestion is None:
+                    raise PipelineResolutionError(
+                        "A query pipeline requires a project index configuration"
+                    )
+                architecture, effective_ingestion = config.resolve_query(
+                    self._catalog, ingestion
+                )
+            else:
+                raise PipelineResolutionError(
+                    "Ingestion pipelines are not executable query runtimes"
+                )
             if architecture.retriever.type == "vector":
-                runner = self._build_basic_rag(architecture, ingestion)
+                runner = self._build_basic_rag(architecture, effective_ingestion)
             else:
                 runner = ArchitectureRunner(self._registry.build(architecture))
-            return ResolvedPipeline(record, config, architecture, ingestion, runner)
+            return ResolvedPipeline(
+                record, config, architecture, effective_ingestion, runner
+            )
         except PipelineResolutionError:
             raise
         except (RuntimeError, ValueError, TypeError) as exc:
@@ -213,7 +241,12 @@ class PipelineRuntimeResolver:
             self._embedders.popitem(last=False)
         return embedder
 
-    def _signature(self, record: Pipeline, config: PipelineConfig) -> str:
+    def _signature(
+        self,
+        record: Pipeline,
+        config: PipelineConfig,
+        ingestion: IngestionConfig | None,
+    ) -> str:
         """Include persisted and catalog-resolved settings in cache invalidation."""
         catalog_data = self._catalog.model_dump(mode="json")
         canonical = json.dumps(
@@ -222,6 +255,9 @@ class PipelineRuntimeResolver:
                 "representation_hash": record.representation_hash,
                 "catalog": catalog_data,
                 "effective_representation": config.representation_hash(self._catalog),
+                "project_ingestion": (
+                    ingestion.identity() if ingestion is not None else None
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),

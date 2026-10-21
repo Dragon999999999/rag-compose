@@ -126,39 +126,54 @@ class ComponentRegistry:
             ConfigurationError: If a component, model reference, or stage pairing
                 is unsupported.
         """
-        selections: list[tuple[str, str, Collection[str]]] = [
-            ("parser", config.representation.parser.type, self.parsers),
-            (
-                "knowledge_builder",
-                config.representation.knowledge_builder.type,
-                self.knowledge_builders,
-            ),
-            ("retriever", config.query.retriever.type, self.retrievers),
-            ("reranker", config.query.reranker.type, self.rerankers),
-            ("reasoner", config.query.reasoner.type, self.pipeline_reasoners),
-            (
-                "decision_policy",
-                config.query.decision_policy.type,
-                self.pipeline_decision_policies,
-            ),
-            ("renderer", config.query.renderer.type, self.pipeline_renderers),
-        ]
-        selections.extend(
-            ("assessor", item.type, self.pipeline_assessors)
-            for item in config.query.assessors
-        )
+        selections: list[tuple[str, str, Collection[str]]] = []
+        if config.representation is not None:
+            selections.extend(
+                (
+                    ("parser", config.representation.parser.type, self.parsers),
+                    (
+                        "knowledge_builder",
+                        config.representation.knowledge_builder.type,
+                        self.knowledge_builders,
+                    ),
+                )
+            )
+        if config.query is not None:
+            selections.extend(
+                (
+                    ("retriever", config.query.retriever.type, self.retrievers),
+                    ("reranker", config.query.reranker.type, self.rerankers),
+                    ("reasoner", config.query.reasoner.type, self.pipeline_reasoners),
+                    (
+                        "decision_policy",
+                        config.query.decision_policy.type,
+                        self.pipeline_decision_policies,
+                    ),
+                    ("renderer", config.query.renderer.type, self.pipeline_renderers),
+                )
+            )
+            selections.extend(
+                ("assessor", item.type, self.pipeline_assessors)
+                for item in config.query.assessors
+            )
         for stage, name, factories in selections:
             if name not in factories:
                 raise ConfigurationError(
                     f"Unknown {stage} component {name!r}; "
                     f"available: {', '.join(factories)}"
                 )
-        if config.representation.chunker.type not in self.chunkers:
+        if (
+            config.representation is not None
+            and config.representation.chunker.type not in self.chunkers
+        ):
             raise ConfigurationError(
                 f"Unknown chunker component {config.representation.chunker.type!r}; "
                 f"available: {', '.join(self.chunkers)}"
             )
-        if config.representation.vector_backend.type not in self.vector_backends:
+        if (
+            config.representation is not None
+            and config.representation.vector_backend.type not in self.vector_backends
+        ):
             raise ConfigurationError(
                 "Unknown vector_backend component "
                 f"{config.representation.vector_backend.type!r}; available: "
@@ -166,25 +181,28 @@ class ComponentRegistry:
             )
         if catalog is not None:
             try:
-                catalog.embedding(config.representation.embedding.model_ref)
-                catalog.reasoning(config.query.reasoner.model_ref)
+                if config.representation is not None:
+                    catalog.embedding(config.representation.embedding.model_ref)
+                if config.query is not None:
+                    catalog.reasoning(config.query.reasoner.model_ref)
             except ValueError as exc:
                 kind = "embedding" if "embedding" in str(exc) else "reasoning"
                 raise ConfigurationError(f"Unknown {kind} model reference") from exc
-        if config.query.retriever.type == "vector" and (
-            config.representation.vector_backend.type != "qdrant"
+        if config.query is not None and config.query.retriever.type == "vector" and (
+            config.representation is not None
+            and config.representation.vector_backend.type != "qdrant"
         ):
             raise ConfigurationError(
                 "The vector retriever requires the qdrant vector backend"
             )
-        if (
+        if config.query is not None and (
             config.query.reasoner.type == "basic_grounded"
             and not config.query.reasoner.prompt_id
         ):
             raise ConfigurationError(
                 "The basic_grounded reasoner requires a registered prompt_id"
             )
-        if config.query.reasoner.prompt_id is not None:
+        if config.query is not None and config.query.reasoner.prompt_id is not None:
             try:
                 PromptLibrary.default().metadata(config.query.reasoner.prompt_id)
             except PromptLibraryError as exc:
@@ -196,6 +214,14 @@ class ComponentRegistry:
         """Validate and resolve a pipeline into existing execution configurations."""
         self.validate_pipeline(config, catalog)
         return config.resolve(catalog)
+
+    def query_capabilities(self, retriever_type: str) -> frozenset[str]:
+        """Return the index capabilities required by a registered retriever."""
+        if retriever_type == "vector":
+            return frozenset({"chunk_vectors"})
+        if retriever_type == "full_document":
+            return frozenset({"full_text"})
+        raise ConfigurationError(f"Unknown retriever component {retriever_type!r}")
 
     def build(
         self,

@@ -13,6 +13,7 @@ from llm_grounding.application.pipeline_runtime import (
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.models import ModelCatalog, PipelineConfig
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
 
 
@@ -163,33 +164,83 @@ class PipelineService:
         self._registry = registry or ComponentRegistry()
         self._runtime = runtime
 
-    async def list(self, *, active_only: bool = False) -> tuple[Pipeline, ...]:
-        """List persisted pipeline records in repository-defined order."""
-        return await self._repository.list_pipelines(active_only=active_only)
+    async def list(
+        self, *, active_only: bool = False, kind: str | None = None
+    ) -> tuple[Pipeline, ...]:
+        """List persisted pipeline records, optionally restricted by kind."""
+        if kind is not None and kind not in {"full", "ingestion", "query"}:
+            raise ValueError(f"Unsupported pipeline kind: {kind}")
+        try:
+            records = await self._repository.list_pipelines(
+                active_only=active_only, kind=kind
+            )
+        except TypeError:
+            records = await self._repository.list_pipelines(active_only=active_only)
+            if kind is not None:
+                records = tuple(
+                    record
+                    for record in records
+                    if record.kind in {kind, "full"}
+                )
+        return records
 
     async def get(self, pipeline_id: str) -> Pipeline:
         """Retrieve one persisted pipeline by stable ID."""
         return await self._repository.get_pipeline(pipeline_id)
 
-    async def default(self) -> Pipeline:
-        """Return the active application default pipeline deterministically."""
-        records = await self.list(active_only=True)
+    async def default(self, kind: str | None = None) -> Pipeline:
+        """Return the active default for a requested pipeline kind."""
+        records = await self.list(active_only=True, kind=kind)
         selected = next(
             (record for record in records if record.is_default),
-            next((record for record in records if record.name == "basic_rag_v1"), None),
+            next(
+                (
+                    record
+                    for record in records
+                    if record.name
+                    in {"basic_rag_v1", "ingestion_default_v1", "query_basic_v1"}
+                ),
+                None,
+            ),
         )
         if selected is None:
             raise KeyError("No active default pipeline is configured")
         return selected
 
-    async def select(self, pipeline_id: str | None = None) -> Pipeline:
+    async def select(
+        self, pipeline_id: str | None = None, *, kind: str | None = None
+    ) -> Pipeline:
         """Resolve an explicit active pipeline or the configured default."""
         selected = (
-            await self.default() if pipeline_id is None else await self.get(pipeline_id)
+            await self.default(kind)
+            if pipeline_id is None
+            else await self.get(pipeline_id)
         )
         if not selected.active:
             raise ValueError(f"Pipeline {selected.id!r} is inactive")
+        if kind is not None and selected.kind not in {kind, "full"}:
+            raise ValueError(
+                f"Pipeline {selected.id!r} is a {selected.kind} pipeline, not {kind}"
+            )
         return selected
+
+    async def select_ingestion(self, pipeline_id: str | None = None) -> Pipeline:
+        """Resolve an active project-level ingestion pipeline."""
+        if pipeline_id is not None:
+            return await self.select(pipeline_id, kind="ingestion")
+        try:
+            return await self.select(None, kind="ingestion")
+        except KeyError:
+            return await self.select(None, kind="full")
+
+    async def select_query(self, pipeline_id: str | None = None) -> Pipeline:
+        """Resolve an active chat-level query pipeline."""
+        if pipeline_id is not None:
+            return await self.select(pipeline_id, kind="query")
+        try:
+            return await self.select(None, kind="query")
+        except KeyError:
+            return await self.select(None, kind="full")
 
     async def create(self, config: PipelineConfig) -> Pipeline:
         """Validate and persist an API-owned pipeline configuration."""
@@ -281,8 +332,10 @@ class PipelineService:
         conversation_count = (
             int(await count_method(existing.id)) if count_method is not None else 0
         )
-        representation_changed = (
-            config.representation_hash(self._catalog) != existing.representation_hash
+        representation_changed = existing.kind != config.kind or (
+            existing.kind in {"full", "ingestion"}
+            and config.representation_hash(self._catalog)
+            != existing.representation_hash
         )
         return PipelineUpdateImpact(
             pipeline_id=existing.id,
@@ -326,10 +379,26 @@ class PipelineService:
             raise RuntimeError("Pipeline runtime resolution is not configured")
         return await self._runtime.resolve(pipeline_id)
 
+    async def resolve_ingestion(self, pipeline_id: str) -> IngestionConfig:
+        """Resolve a persisted ingestion definition into effective settings."""
+        record = await self.select_ingestion(pipeline_id)
+        config = PipelineConfig.model_validate(record.config)
+        self.validate(config)
+        if record.representation_hash != config.representation_hash(self._catalog):
+            raise ValueError(
+                f"Pipeline {record.id!r} has a stale ingestion representation hash"
+            )
+        return config.resolve_ingestion(self._catalog)
+
     @property
     def runtime(self) -> PipelineRuntimeResolver | None:
         """Return the shared resolver used by API, CLI, and chat execution."""
         return self._runtime
+
+    @property
+    def registry(self) -> ComponentRegistry:
+        """Expose the closed registry to shared compatibility validators."""
+        return self._registry
 
     def summaries(self, records: tuple[Pipeline, ...]) -> list[dict[str, object]]:
         """Serialize list metadata without including complete JSON configuration."""
@@ -342,6 +411,7 @@ class PipelineService:
                 "description": item.description,
                 "config_hash": item.config_hash,
                 "representation_hash": item.representation_hash,
+                "kind": item.kind,
                 "source_kind": item.source_kind,
                 "active": item.active,
                 "is_default": item.is_default,
@@ -355,6 +425,23 @@ class PipelineService:
         """Return registered stages, schemas, and compatibility constraints."""
         return {
             "schema_version": 1,
+            "pipeline_kinds": {
+                "ingestion": [
+                    "parser",
+                    "knowledge_builder",
+                    "chunker",
+                    "embedding",
+                    "vector_backend",
+                ],
+                "query": [
+                    "retriever",
+                    "reranker",
+                    "reasoner",
+                    "assessors",
+                    "decision_policy",
+                    "renderer",
+                ],
+            },
             "stages": {
                 "parser": self._stage(self._registry.parsers.keys(), "ComponentConfig"),
                 "knowledge_builder": self._stage(
@@ -385,6 +472,10 @@ class PipelineService:
             },
             "compatibility": {
                 "vector_retriever_requires": {"vector_backend": ["qdrant"]},
+                "retriever_capabilities": {
+                    name: sorted(self._registry.query_capabilities(name))
+                    for name in self._registry.retrievers
+                },
                 "basic_grounded_requires": {
                     "assessor": ["source_reference"],
                     "decision_policy": ["basic_grounding"],

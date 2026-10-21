@@ -59,6 +59,28 @@ class NameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class ProjectCreateRequest(NameRequest):
+    """Create a project and optionally select its ingestion pipeline."""
+
+    ingestion_pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+class ProjectUpdateRequest(BaseModel):
+    """Rename a project or change its ingestion pipeline selection."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    ingestion_pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+    @model_validator(mode="after")
+    def require_update(self) -> "ProjectUpdateRequest":
+        """Require exactly one project mutation per request."""
+        if self.name is None and self.ingestion_pipeline_id is None:
+            raise ValueError("At least one project field must be provided")
+        if self.name is not None and self.ingestion_pipeline_id is not None:
+            raise ValueError("Update project name and ingestion selection separately")
+        return self
+
+
 class ChatCreateRequest(NameRequest):
     """Name a conversation and optionally select its initial pipeline."""
 
@@ -372,13 +394,17 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     @app.get("/api/pipelines")
     async def list_pipelines(
         include_inactive: bool = Query(False),
+        kind: str | None = Query(None),
     ) -> list[dict[str, object]]:
         """List pipeline metadata without returning full JSON documents."""
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
-        records = await application.pipeline_service.list(
-            active_only=not include_inactive
-        )
+        try:
+            records = await application.pipeline_service.list(
+                active_only=not include_inactive, kind=kind
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         return application.pipeline_service.summaries(records)
 
     @app.get("/api/pipelines/{pipeline_id}")
@@ -494,20 +520,54 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         ]
 
     @app.post("/api/projects")
-    async def create_project(request: NameRequest) -> dict[str, object]:
-        return _item(await application.projects.create_project(request.name))
+    async def create_project(request: ProjectCreateRequest) -> dict[str, object]:
+        try:
+            return _item(
+                await application.projects.create_project(
+                    request.name, request.ingestion_pipeline_id
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.patch("/api/projects/{project_id}")
-    async def rename_project(
-        project_id: str, request: NameRequest
+    async def update_project(
+        project_id: str, request: ProjectUpdateRequest
     ) -> dict[str, object]:
-        return _item(
-            await application.projects.rename_project(project_id, request.name)
-        )
+        try:
+            if request.ingestion_pipeline_id is not None:
+                project = await application.projects.set_ingestion_pipeline(
+                    project_id, request.ingestion_pipeline_id
+                )
+            else:
+                assert request.name is not None
+                project = await application.projects.rename_project(
+                    project_id, request.name
+                )
+            return _item(project)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                409,
+                detail={"code": "incompatible_ingestion", "message": str(exc)},
+            ) from exc
 
     @app.delete("/api/projects/{project_id}", status_code=204)
     async def delete_project(project_id: str) -> None:
         await application.projects.delete_project(project_id)
+
+    @app.get("/api/projects/{project_id}/compatible-query-pipelines")
+    async def compatible_query_pipelines(
+        project_id: str,
+    ) -> list[dict[str, object]]:
+        """Return query pipelines and their compatibility with a project index."""
+        try:
+            return await application.projects.compatible_query_pipelines(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
 
     @app.get("/api/projects/{project_id}/chats")
     async def list_chats(project_id: str) -> list[dict[str, object]]:

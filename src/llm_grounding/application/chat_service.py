@@ -2,10 +2,16 @@
 
 from dataclasses import replace
 
+from llm_grounding.application.pipeline_compatibility import (
+    CompatibilityResult,
+    IndexCapabilities,
+    validate_query_compatibility,
+)
 from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, CorpusRequest, Message, Pipeline, TaskType
+from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
@@ -89,6 +95,9 @@ class ChatService:
                 ),
             )
         selected = await self._select_pipeline(pipeline_id)
+        indexed_representation = await self._validate_project_pipeline(
+            project_id, selected
+        )
         return await self._repository.create_chat(
             project_id,
             normalized_name,
@@ -96,7 +105,7 @@ class ChatService:
             pipeline_id=selected.id,
             pipeline_version=selected.version,
             pipeline_config_hash=selected.config_hash,
-            pipeline_representation_hash=selected.representation_hash,
+            pipeline_representation_hash=indexed_representation,
         )
 
     async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
@@ -126,11 +135,17 @@ class ChatService:
             )
         chat = await self._repository.get_chat(chat_id)
         target = await self._select_pipeline(pipeline_id)
+        indexed_representation = await self._validate_project_pipeline(
+            chat.project_id, target
+        )
         current_representation = chat.pipeline_representation_hash
         if current_representation is None:
             current = await self._pipeline_for_chat(chat)
             current_representation = current.representation_hash
-        if target.representation_hash != current_representation:
+        if (
+            target.kind != "query"
+            and target.representation_hash != current_representation
+        ):
             raise PipelineSelectionError(
                 "incompatible_representation",
                 "The selected pipeline requires an incompatible document "
@@ -142,7 +157,7 @@ class ChatService:
                 target.id,
                 pipeline_version=target.version,
                 pipeline_config_hash=target.config_hash,
-                pipeline_representation_hash=target.representation_hash,
+                pipeline_representation_hash=indexed_representation,
             )
         except KeyError as exc:
             raise PipelineSelectionError("chat_not_found", str(exc), 404) from exc
@@ -176,7 +191,14 @@ class ChatService:
                     "Pipeline runtime resolution is unavailable.",
                     503,
                 )
-            runtime = await self._pipeline_runtime.resolve(selected_pipeline.id)
+            ingestion = await self._project_ingestion(chat.project_id)
+            try:
+                runtime = await self._pipeline_runtime.resolve(
+                    selected_pipeline.id, ingestion=ingestion
+                )
+            except TypeError:
+                # Keep small test and legacy resolver adapters source-compatible.
+                runtime = await self._pipeline_runtime.resolve(selected_pipeline.id)
             if not isinstance(runtime.runner, BasicRagRunner):
                 raise PipelineSelectionError(
                     "unsupported_runtime",
@@ -209,7 +231,10 @@ class ChatService:
                 "pipeline_id": selected_pipeline.id,
                 "pipeline_version": selected_pipeline.version,
                 "pipeline_config_hash": selected_pipeline.config_hash,
-                "pipeline_representation_hash": selected_pipeline.representation_hash,
+                "pipeline_representation_hash": (
+                    chat.pipeline_representation_hash
+                    or selected_pipeline.representation_hash
+                ),
             }
             await self._repository.record_run(
                 run_id,
@@ -221,7 +246,10 @@ class ChatService:
                 pipeline_id=selected_pipeline.id,
                 pipeline_version=selected_pipeline.version,
                 pipeline_config_hash=selected_pipeline.config_hash,
-                pipeline_representation_hash=selected_pipeline.representation_hash,
+                pipeline_representation_hash=(
+                    chat.pipeline_representation_hash
+                    or selected_pipeline.representation_hash
+                ),
             )
         turn_title = _turn_title(answer, message)
         assistant_message = await self._repository.add_message(
@@ -260,7 +288,7 @@ class ChatService:
         """Resolve and normalize an explicit or default pipeline selection."""
         assert self._pipeline_service is not None
         try:
-            return await self._pipeline_service.select(pipeline_id)
+            return await self._pipeline_service.select(pipeline_id, kind="query")
         except KeyError as exc:
             code = (
                 "pipeline_not_found"
@@ -277,13 +305,16 @@ class ChatService:
         assert self._pipeline_service is not None
         if chat.pipeline_id is None:
             selected = await self._select_pipeline(None)
+            indexed_representation = await self._validate_project_pipeline(
+                chat.project_id, selected
+            )
             try:
                 await self._repository.set_chat_pipeline(
                     chat.id,
                     selected.id,
                     pipeline_version=selected.version,
                     pipeline_config_hash=selected.config_hash,
-                    pipeline_representation_hash=selected.representation_hash,
+                    pipeline_representation_hash=indexed_representation,
                 )
             except (KeyError, ValueError) as exc:
                 raise PipelineSelectionError("pipeline_changed", str(exc), 409) from exc
@@ -301,7 +332,10 @@ class ChatService:
         if chat.pipeline_config_hash is not None and (
             selected.config_hash != chat.pipeline_config_hash
             or selected.version != chat.pipeline_version
-            or selected.representation_hash != chat.pipeline_representation_hash
+            or (
+                selected.kind != "query"
+                and selected.representation_hash != chat.pipeline_representation_hash
+            )
         ):
             raise PipelineSelectionError(
                 "pipeline_configuration_changed",
@@ -309,4 +343,62 @@ class ChatService:
                 "select a pipeline again before continuing.",
                 409,
             )
+        await self._validate_project_pipeline(chat.project_id, selected)
         return selected
+
+    async def _project_ingestion(self, project_id: str):
+        """Resolve the effective ingestion configuration selected by a project."""
+        if self._pipeline_service is None:
+            return None
+        get_project = getattr(self._repository, "get_project", None)
+        if get_project is None:
+            return None
+        project = await get_project(project_id)
+        if project.ingestion_pipeline_id is None:
+            raise PipelineSelectionError(
+                "ingestion_unavailable",
+                "The project has no selected ingestion pipeline.",
+                409,
+            )
+        return await self._pipeline_service.resolve_ingestion(
+            project.ingestion_pipeline_id
+        )
+
+    async def _validate_project_pipeline(
+        self, project_id: str, pipeline: Pipeline
+    ) -> str:
+        """Validate a query pipeline against the project's indexed capabilities."""
+        if self._pipeline_service is None:
+            return pipeline.representation_hash
+        get_project = getattr(self._repository, "get_project", None)
+        if get_project is None:
+            # Legacy repository adapters do not expose project index metadata.
+            return pipeline.representation_hash
+        project = await get_project(project_id)
+        config = PipelineConfig.model_validate(pipeline.config)
+        index = IndexCapabilities.from_mapping(project.index_capabilities)
+        compatibility: CompatibilityResult = validate_query_compatibility(
+            config, index, self._pipeline_service.registry
+        )
+        if pipeline.kind != "query" and (
+            project.ingestion_representation_hash != pipeline.representation_hash
+        ):
+            compatibility = CompatibilityResult(
+                False,
+                compatibility.required_capabilities,
+                frozenset({"representation"}),
+                "The pipeline representation does not match the project's indexed "
+                "representation; re-indexing is required.",
+            )
+        if not compatibility.compatible:
+            missing = ", ".join(sorted(compatibility.missing_capabilities))
+            suffix = f" Missing: {missing}." if missing else ""
+            raise PipelineSelectionError(
+                "incompatible_index",
+                (
+                    compatibility.reason
+                    or "The pipeline is incompatible with the project index"
+                )
+                + suffix,
+            )
+        return project.ingestion_representation_hash or pipeline.representation_hash

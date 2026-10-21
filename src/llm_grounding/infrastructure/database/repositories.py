@@ -4,6 +4,7 @@ Repositories never return ORM rows to the application. They retain enough state 
 rebuild vectors, validate grounding references, and isolate project corpora.
 """
 
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, exists, func, select, update
@@ -48,6 +49,7 @@ from llm_grounding.infrastructure.database.models import (
     RetrievalUnitMemberRow,
     RetrievalUnitRow,
 )
+from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.observability.ingestion import IngestionObservation
 from llm_grounding.observability.models import (
     EvaluationCorpusReference,
@@ -123,6 +125,7 @@ class PostgresRepository:
                 version=pipeline.version,
                 schema_version=pipeline.schema_version,
                 description=pipeline.description,
+                kind=pipeline.kind,
                 config_json=pipeline.model_dump(mode="json"),
                 config_hash=pipeline.config_hash,
                 representation_hash=effective_representation_hash,
@@ -136,7 +139,10 @@ class PostgresRepository:
             if row.is_default:
                 await session.execute(
                     update(PipelineRow)
-                    .where(PipelineRow.name != row.name)
+                    .where(
+                        PipelineRow.name != row.name,
+                        PipelineRow.kind == row.kind,
+                    )
                     .values(is_default=False)
                 )
             await session.flush()
@@ -153,22 +159,27 @@ class PostgresRepository:
                 raise KeyError(f"Unknown pipeline: {pipeline_id}")
             return self._pipeline(row)
 
-    async def get_pipeline_by_name(self, name: str) -> Pipeline | None:
+    async def get_pipeline_by_name(
+        self, name: str, *, kind: str | None = None
+    ) -> Pipeline | None:
         """Retrieve the current pipeline record for a stable name."""
         async with self._sessions() as session:
-            row = await session.scalar(
-                select(PipelineRow).where(PipelineRow.name == name.strip())
-            )
+            conditions = [PipelineRow.name == name.strip()]
+            if kind is not None:
+                conditions.append(PipelineRow.kind == kind)
+            row = await session.scalar(select(PipelineRow).where(*conditions))
             return None if row is None else self._pipeline(row)
 
     async def list_pipelines(
-        self, *, active_only: bool = False
+        self, *, active_only: bool = False, kind: str | None = None
     ) -> tuple[Pipeline, ...]:
         """List pipelines deterministically by default status, name, and version."""
         async with self._sessions() as session:
             query = select(PipelineRow)
             if active_only:
                 query = query.where(PipelineRow.active.is_(True))
+            if kind is not None:
+                query = query.where(PipelineRow.kind == kind)
             rows = (
                 await session.scalars(
                     query.order_by(
@@ -222,6 +233,7 @@ class PostgresRepository:
                 row.version = pipeline.version
                 row.schema_version = pipeline.schema_version
                 row.description = pipeline.description
+                row.kind = pipeline.kind
                 row.config_json = pipeline.model_dump(mode="json")
                 row.config_hash = pipeline.config_hash
                 row.representation_hash = (
@@ -240,7 +252,10 @@ class PostgresRepository:
             if row.is_default:
                 await session.execute(
                     update(PipelineRow)
-                    .where(PipelineRow.id != row.id)
+                    .where(
+                        PipelineRow.id != row.id,
+                        PipelineRow.kind == row.kind,
+                    )
                     .values(is_default=False)
                 )
             await session.flush()
@@ -291,6 +306,7 @@ class PostgresRepository:
             row.version = pipeline.version
             row.schema_version = pipeline.schema_version
             row.description = pipeline.description
+            row.kind = pipeline.kind
             row.config_json = pipeline.model_dump(mode="json")
             row.config_hash = pipeline.config_hash
             row.representation_hash = representation_hash
@@ -301,13 +317,17 @@ class PostgresRepository:
             if row.is_default:
                 await session.execute(
                     update(PipelineRow)
-                    .where(PipelineRow.id != row.id)
+                    .where(
+                        PipelineRow.id != row.id,
+                        PipelineRow.kind == row.kind,
+                    )
                     .values(is_default=False)
                 )
             for chat in chats:
                 chat.pipeline_version = row.version
                 chat.pipeline_config_hash = row.config_hash
-                chat.pipeline_representation_hash = row.representation_hash
+                if row.kind != "query":
+                    chat.pipeline_representation_hash = row.representation_hash
             await session.flush()
             await self._record_pipeline_version(
                 session, row, representation_hash=representation_hash
@@ -379,7 +399,10 @@ class PostgresRepository:
         """
         async with self._sessions.begin() as session:
             row = await session.scalar(
-                select(PipelineRow).where(PipelineRow.name == config.name)
+                select(PipelineRow).where(
+                    PipelineRow.name == config.name,
+                    PipelineRow.kind == config.kind,
+                )
             )
             if row is not None and row.source_kind != "yaml":
                 return self._pipeline(row)
@@ -391,6 +414,7 @@ class PostgresRepository:
                 "version": config.version,
                 "schema_version": config.schema_version,
                 "description": config.description,
+                "kind": config.kind,
                 "config_json": config.model_dump(mode="json"),
                 "config_hash": config.config_hash,
                 "representation_hash": effective_representation_hash,
@@ -413,7 +437,10 @@ class PostgresRepository:
             if config.is_default:
                 await session.execute(
                     update(PipelineRow)
-                    .where(PipelineRow.name != config.name)
+                    .where(
+                        PipelineRow.name != config.name,
+                        PipelineRow.kind == config.kind,
+                    )
                     .values(is_default=False)
                 )
             await session.flush()
@@ -450,6 +477,21 @@ class PostgresRepository:
             row.is_default,
             row.created_at or _now(),
             row.updated_at or row.created_at or _now(),
+            row.kind,
+        )
+
+    @staticmethod
+    def _project(row: ProjectRow) -> Project:
+        """Map a project row with its ingestion and indexed-capability snapshot."""
+        return Project(
+            row.id,
+            row.name,
+            row.created_at or _now(),
+            row.ingestion_pipeline_id,
+            row.ingestion_pipeline_version,
+            row.ingestion_pipeline_config_hash,
+            row.ingestion_representation_hash,
+            dict(row.index_capabilities_json or {}),
         )
 
     @staticmethod
@@ -474,7 +516,16 @@ class PostgresRepository:
             row.pipeline_representation_hash,
         )
 
-    async def create_project(self, name: str) -> Project:
+    async def create_project(
+        self,
+        name: str,
+        *,
+        ingestion_pipeline_id: str | None = None,
+        ingestion_pipeline_version: int | None = None,
+        ingestion_pipeline_config_hash: str | None = None,
+        ingestion_representation_hash: str | None = None,
+        index_capabilities: dict[str, object] | None = None,
+    ) -> Project:
         """Create a named reusable corpus.
 
         Raises:
@@ -483,10 +534,36 @@ class PostgresRepository:
         if not name.strip():
             raise ValueError("Project name must not be blank")
         async with self._sessions.begin() as session:
-            row = ProjectRow(name=name.strip())
+            pipeline = None
+            if ingestion_pipeline_id is not None:
+                pipeline = await session.get(PipelineRow, ingestion_pipeline_id)
+                if pipeline is None:
+                    raise KeyError(
+                        f"Unknown ingestion pipeline: {ingestion_pipeline_id}"
+                    )
+                if pipeline.kind not in ("full", "ingestion"):
+                    raise ValueError(
+                        "Project ingestion selection requires an ingestion pipeline"
+                    )
+                if not pipeline.active:
+                    raise ValueError(f"Pipeline {ingestion_pipeline_id!r} is inactive")
+                if ingestion_pipeline_version is None:
+                    ingestion_pipeline_version = pipeline.version
+                if ingestion_pipeline_config_hash is None:
+                    ingestion_pipeline_config_hash = pipeline.config_hash
+                if ingestion_representation_hash is None:
+                    ingestion_representation_hash = pipeline.representation_hash
+            row = ProjectRow(
+                name=name.strip(),
+                ingestion_pipeline_id=pipeline.id if pipeline is not None else None,
+                ingestion_pipeline_version=ingestion_pipeline_version,
+                ingestion_pipeline_config_hash=ingestion_pipeline_config_hash,
+                ingestion_representation_hash=ingestion_representation_hash,
+                index_capabilities_json=index_capabilities or {},
+            )
             session.add(row)
             await session.flush()
-            return Project(row.id, row.name, row.created_at or _now())
+            return self._project(row)
 
     async def list_projects(self) -> tuple[Project, ...]:
         """Return projects in creation order."""
@@ -496,7 +573,7 @@ class PostgresRepository:
                     select(ProjectRow).order_by(ProjectRow.created_at)
                 )
             ).all()
-            return tuple(Project(row.id, row.name, row.created_at) for row in rows)
+            return tuple(self._project(row) for row in rows)
 
     async def get_project(self, project_id: str) -> Project:
         """Load one project or raise KeyError."""
@@ -504,7 +581,7 @@ class PostgresRepository:
             row = await session.get(ProjectRow, project_id)
             if row is None:
                 raise KeyError(f"Unknown project: {project_id}")
-            return Project(row.id, row.name, row.created_at)
+            return self._project(row)
 
     async def rename_project(self, project_id: str, name: str) -> Project:
         """Rename one project while preserving its canonical corpus identity."""
@@ -516,7 +593,68 @@ class PostgresRepository:
                 raise KeyError(f"Unknown project: {project_id}")
             row.name = name.strip()
             await session.flush()
-            return Project(row.id, row.name, row.created_at or _now())
+            return self._project(row)
+
+    async def set_project_ingestion_pipeline(
+        self,
+        project_id: str,
+        pipeline_id: str,
+        *,
+        pipeline_version: int,
+        pipeline_config_hash: str,
+        representation_hash: str,
+    ) -> Project:
+        """Atomically select an active ingestion pipeline for a project."""
+        async with self._sessions.begin() as session:
+            row = await session.get(ProjectRow, project_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown project: {project_id}")
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if pipeline is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            if pipeline.kind not in ("full", "ingestion"):
+                raise ValueError(
+                    "Project ingestion selection requires an ingestion pipeline"
+                )
+            if not pipeline.active:
+                raise ValueError(f"Pipeline {pipeline_id!r} is inactive")
+            if (
+                pipeline.version != pipeline_version
+                or pipeline.config_hash != pipeline_config_hash
+                or pipeline.representation_hash != representation_hash
+            ):
+                raise ValueError(
+                    "Ingestion pipeline changed while the project was being updated"
+                )
+            row.ingestion_pipeline_id = pipeline.id
+            row.ingestion_pipeline_version = pipeline.version
+            row.ingestion_pipeline_config_hash = pipeline.config_hash
+            row.ingestion_representation_hash = pipeline.representation_hash
+            await session.flush()
+            return self._project(row)
+
+    async def record_project_index(
+        self,
+        project_id: str,
+        *,
+        pipeline_id: str,
+        pipeline_version: int,
+        pipeline_config_hash: str,
+        representation_hash: str,
+        index_capabilities: dict[str, object],
+    ) -> Project:
+        """Persist the exact ingestion/index identity used by project documents."""
+        async with self._sessions.begin() as session:
+            row = await session.get(ProjectRow, project_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown project: {project_id}")
+            row.ingestion_pipeline_id = pipeline_id
+            row.ingestion_pipeline_version = pipeline_version
+            row.ingestion_pipeline_config_hash = pipeline_config_hash
+            row.ingestion_representation_hash = representation_hash
+            row.index_capabilities_json = index_capabilities
+            await session.flush()
+            return self._project(row)
 
     async def delete_project(self, project_id: str) -> None:
         """Delete project associations/chats while preserving reusable documents."""
@@ -1103,7 +1241,10 @@ class PostgresRepository:
                 if (
                     pipeline_version != pipeline.version
                     or pipeline_config_hash != pipeline.config_hash
-                    or pipeline_representation_hash != pipeline.representation_hash
+                    or (
+                        pipeline.kind != "query"
+                        and pipeline_representation_hash != pipeline.representation_hash
+                    )
                 ):
                     raise ValueError(
                         "Pipeline selection snapshot does not match the active pipeline"
@@ -1192,7 +1333,10 @@ class PostgresRepository:
             if (
                 pipeline.version != pipeline_version
                 or pipeline.config_hash != pipeline_config_hash
-                or pipeline.representation_hash != pipeline_representation_hash
+                or (
+                    pipeline.kind != "query"
+                    and pipeline.representation_hash != pipeline_representation_hash
+                )
             ):
                 raise ValueError(
                     "Pipeline changed while the conversation was being updated"
@@ -1229,6 +1373,99 @@ class PostgresRepository:
                 )
             )
             return int(result.rowcount or 0)
+
+    async def assign_default_ingestion_to_unassigned_projects(self) -> int:
+        """Backfill legacy projects with the active ingestion/default pipeline."""
+        async with self._sessions.begin() as session:
+            pipeline = await session.scalar(
+                select(PipelineRow)
+                .where(
+                    PipelineRow.active.is_(True),
+                    PipelineRow.kind == "ingestion",
+                    PipelineRow.is_default.is_(True),
+                )
+                .order_by(PipelineRow.name, PipelineRow.version.desc())
+                .limit(1)
+            )
+            if pipeline is None:
+                pipeline = await session.scalar(
+                    select(PipelineRow)
+                    .where(
+                        PipelineRow.active.is_(True),
+                        PipelineRow.kind == "full",
+                        PipelineRow.is_default.is_(True),
+                    )
+                    .order_by(PipelineRow.name, PipelineRow.version.desc())
+                    .limit(1)
+                )
+            if pipeline is None:
+                return 0
+            result = await session.execute(
+                update(ProjectRow)
+                .where(ProjectRow.ingestion_pipeline_id.is_(None))
+                .values(
+                    ingestion_pipeline_id=pipeline.id,
+                    ingestion_pipeline_version=pipeline.version,
+                    ingestion_pipeline_config_hash=pipeline.config_hash,
+                    ingestion_representation_hash=pipeline.representation_hash,
+                )
+            )
+            return int(result.rowcount or 0)
+
+    async def backfill_project_index_capabilities(self) -> int:
+        """Recover safe index capability snapshots from legacy ready ingestions.
+
+        Projects created before pipeline associations were introduced have no
+        capability JSON. A snapshot is reconstructed only when every selected
+        ready document uses the same effective ingestion identity; mixed legacy
+        representations remain unavailable until explicitly rebuilt.
+        """
+        updated = 0
+        async with self._sessions.begin() as session:
+            projects = (await session.scalars(select(ProjectRow))).all()
+            for project in projects:
+                if project.index_capabilities_json:
+                    continue
+                rows = (
+                    await session.scalars(
+                        select(IngestionRow)
+                        .join(
+                            ProjectDocumentRow,
+                            ProjectDocumentRow.ingestion_id == IngestionRow.id,
+                        )
+                        .where(
+                            ProjectDocumentRow.project_id == project.id,
+                            IngestionRow.status == IngestionStatus.READY,
+                        )
+                    )
+                ).all()
+                if not rows:
+                    continue
+                configs = [
+                    IngestionConfig.model_validate(json.loads(row.config_json))
+                    for row in rows
+                ]
+                identities = {config.identity() for config in configs}
+                if len(identities) != 1:
+                    continue
+                config = configs[0]
+                capability_names = ["full_text", "metadata_filtering"]
+                if config.vector_backend == "qdrant":
+                    capability_names.append("chunk_vectors")
+                capabilities = {
+                    "capabilities": capability_names,
+                    "embedding_identity": config.embedding.identity(),
+                    "dimension": config.embedding.dimension,
+                    "ingestion_pipeline_id": project.ingestion_pipeline_id,
+                    "ingestion_pipeline_version": project.ingestion_pipeline_version,
+                    "ingestion_pipeline_config_hash": (
+                        project.ingestion_pipeline_config_hash
+                    ),
+                    "representation_hash": project.ingestion_representation_hash,
+                }
+                project.index_capabilities_json = capabilities
+                updated += 1
+        return updated
 
     async def delete_chat(self, chat_id: str) -> None:
         """Delete a chat and its messages without changing project documents."""

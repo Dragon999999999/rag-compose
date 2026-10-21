@@ -40,6 +40,15 @@ class ProjectRow(Base):
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_identifier)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    ingestion_pipeline_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="SET NULL")
+    )
+    ingestion_pipeline_version: Mapped[int | None] = mapped_column(Integer)
+    ingestion_pipeline_config_hash: Mapped[str | None] = mapped_column(String(64))
+    ingestion_representation_hash: Mapped[str | None] = mapped_column(String(64))
+    index_capabilities_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -56,6 +65,9 @@ class PipelineRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="full", server_default="full"
+    )
     config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     representation_hash: Mapped[str] = mapped_column(String(64), nullable=False)

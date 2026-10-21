@@ -8,7 +8,14 @@ domain models; only sanitized JSON configuration is retained in run metadata.
 from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 from llm_grounding.ingestion.models import (
     ChunkerConfig,
@@ -206,8 +213,10 @@ class ModelCatalog(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """Versioned, validated definition of a complete RAG pipeline.
+    """Versioned, validated full, ingestion, or query pipeline definition.
 
+    Ingestion pipelines define indexed representations, query pipelines define
+    chat-time behavior, and ``full`` retains the original combined contract.
     Pipeline YAML contains only component identifiers, tuning parameters, and
     model-catalog references. Provider credentials are resolved by infrastructure
     adapters and are never part of the persisted pipeline document.
@@ -216,12 +225,26 @@ class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     schema_version: Literal[1] = 1
+    kind: Literal["full", "ingestion", "query"] = "full"
     name: str = Field(min_length=1, max_length=255)
     version: int = Field(ge=1)
     description: str = Field(default="", max_length=4000)
     is_default: bool = False
-    representation: PipelineRepresentationConfig
-    query: PipelineQueryConfig
+    representation: PipelineRepresentationConfig | None = None
+    query: PipelineQueryConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_kind_sections(self) -> "PipelineConfig":
+        """Require exactly the stages that belong to the selected pipeline kind."""
+        if self.kind in ("full", "ingestion") and self.representation is None:
+            raise ValueError(f"{self.kind} pipelines require representation stages")
+        if self.kind in ("full", "query") and self.query is None:
+            raise ValueError(f"{self.kind} pipelines require query stages")
+        if self.kind == "ingestion" and self.query is not None:
+            raise ValueError("ingestion pipelines must not define query stages")
+        if self.kind == "query" and self.representation is not None:
+            raise ValueError("query pipelines must not define representation stages")
+        return self
 
     def identity(self) -> str:
         """Return the hash of the source pipeline document semantics."""
@@ -239,6 +262,8 @@ class PipelineConfig(BaseModel):
 
     def representation_hash(self, catalog: ModelCatalog | None = None) -> str:
         """Return the identity used to decide whether an index can be reused."""
+        if self.representation is None:
+            return sha256(b"query-pipeline-no-representation").hexdigest()
         return self.representation.identity(catalog)
 
     def resolve(
@@ -250,6 +275,8 @@ class PipelineConfig(BaseModel):
         ingestion models. This adapter keeps their behavior stable while making
         pipeline configuration the persisted composition boundary.
         """
+        if self.representation is None or self.query is None:
+            raise ValueError("A full pipeline is required for combined resolution")
         embedding = catalog.embedding(self.representation.embedding.model_ref)
         reasoning = catalog.reasoning(self.query.reasoner.model_ref)
         architecture = ArchitectureConfig(
@@ -278,5 +305,47 @@ class PipelineConfig(BaseModel):
                 "vector_backend": self.representation.vector_backend.type,
                 "index_version": self.representation.vector_backend.index_version,
             }
+        )
+        return architecture, ingestion
+
+    def resolve_ingestion(self, catalog: ModelCatalog) -> IngestionConfig:
+        """Resolve an ingestion pipeline into the effective index configuration."""
+        if self.representation is None:
+            raise ValueError("An ingestion pipeline requires representation stages")
+        embedding = catalog.embedding(self.representation.embedding.model_ref)
+        return IngestionConfig.model_validate(
+            {
+                "parser": self.representation.parser.type,
+                "knowledge_builder": self.representation.knowledge_builder.type,
+                "chunker": self.representation.chunker.model_dump(mode="json"),
+                "embedding": embedding.model_dump(mode="json"),
+                "vector_backend": self.representation.vector_backend.type,
+                "index_version": self.representation.vector_backend.index_version,
+            }
+        )
+
+    def resolve_query(
+        self, catalog: ModelCatalog, ingestion: IngestionConfig
+    ) -> tuple[ArchitectureConfig, IngestionConfig]:
+        """Resolve query stages against a project's already indexed representation."""
+        if self.query is None:
+            raise ValueError("A query pipeline requires query stages")
+        reasoning = catalog.reasoning(self.query.reasoner.model_ref)
+        architecture = ArchitectureConfig(
+            name=self.name,
+            version=self.version,
+            parser=ComponentConfig(type=ingestion.parser),
+            knowledge_builder=ComponentConfig(type=ingestion.knowledge_builder),
+            retriever=self.query.retriever,
+            reranker=self.query.reranker,
+            reasoner=ReasonerConfig(
+                type=self.query.reasoner.type,
+                model=reasoning,
+                prompt_id=self.query.reasoner.prompt_id,
+            ),
+            assessors=self.query.assessors,
+            decision_policy=self.query.decision_policy,
+            renderer=self.query.renderer,
+            chat_history=self.query.chat_history,
         )
         return architecture, ingestion

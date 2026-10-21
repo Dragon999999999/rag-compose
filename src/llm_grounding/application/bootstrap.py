@@ -93,6 +93,16 @@ class PhaseOneApplication:
         )
         if assign_default is not None:
             await assign_default()
+        assign_ingestion = getattr(
+            self.repository, "assign_default_ingestion_to_unassigned_projects", None
+        )
+        if assign_ingestion is not None:
+            await assign_ingestion()
+        backfill_capabilities = getattr(
+            self.repository, "backfill_project_index_capabilities", None
+        )
+        if backfill_capabilities is not None:
+            await backfill_capabilities()
         self.pipelines = await self.repository.list_pipelines()
 
     async def close(self) -> None:
@@ -199,7 +209,13 @@ def create_phase_one_application(
     )
     summaries = DocumentSummaryService(repository, runner)
     return PhaseOneApplication(
-        ProjectService(repository, ingestion, vectors, summaries),
+        ProjectService(
+            repository,
+            ingestion,
+            vectors,
+            summaries,
+            pipeline_service,
+        ),
         ChatService(
             repository,
             runner,

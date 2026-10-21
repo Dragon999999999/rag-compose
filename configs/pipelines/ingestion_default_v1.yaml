@@ -1,0 +1,21 @@
+schema_version: 1
+kind: ingestion
+name: ingestion_default_v1
+version: 1
+description: Default document parsing, chunking, embedding, and vector index.
+is_default: true
+representation:
+  parser:
+    type: pymupdf
+  knowledge_builder:
+    type: basic
+  chunker:
+    type: block_aware
+    version: '1'
+    target_chars: 800
+    overlap_chars: 120
+  embedding:
+    model_ref: embedding_001
+  vector_backend:
+    type: qdrant
+    index_version: '1'
