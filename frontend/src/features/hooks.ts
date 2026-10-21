@@ -49,9 +49,13 @@ export function usePipelineMutations() {
       onSuccess: invalidate,
     }),
     update: useMutation({
-      mutationFn: ({ pipelineId, config }: { pipelineId: string; config: PipelineConfig }) =>
-        pipelinesApi.update(pipelineId, config),
+      mutationFn: ({ pipelineId, config, expectedConfigHash, migrateConversations }: { pipelineId: string; config: PipelineConfig; expectedConfigHash?: string; migrateConversations?: boolean }) =>
+        pipelinesApi.update(pipelineId, config, { expectedConfigHash, migrateConversations }),
       onSuccess: invalidate,
+    }),
+    impact: useMutation({
+      mutationFn: ({ pipelineId, config }: { pipelineId: string; config: PipelineConfig }) =>
+        pipelinesApi.impact(pipelineId, config),
     }),
     deactivate: useMutation({
       mutationFn: pipelinesApi.deactivate,

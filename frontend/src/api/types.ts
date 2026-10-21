@@ -51,6 +51,23 @@ export type Pipeline = {
   conversation_count?: number;
   config?: PipelineConfig;
 };
+export type PipelineChange = {
+  path: string;
+  before: unknown;
+  after: unknown;
+  representation_affecting: boolean;
+};
+export type PipelineUpdateImpact = {
+  pipeline_id: string;
+  current_version: number;
+  current_config_hash: string;
+  conversation_count: number;
+  representation_changed: boolean;
+  compatible: boolean;
+  can_migrate: boolean;
+  compatibility_reason: string | null;
+  changes: PipelineChange[];
+};
 export type Chat = { id: string; project_id: string; name: string; created_at: string; chat_name_set: boolean; last_answer_at: string | null; has_sent_prompt: boolean; pipeline_id: string | null; pipeline_version: number | null; pipeline_config_hash: string | null; pipeline_representation_hash: string | null };
 export type Message = { id: string; chat_id: string; role: "user" | "assistant" | "system"; content: string; created_at: string; rag_run_id: string | null; turn_title: string | null };
 export type SourceLocation = { page: number; bounding_boxes: BoundingBox[]; positioning: "exact" | "page_only" };

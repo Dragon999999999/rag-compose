@@ -22,6 +22,11 @@ from llm_grounding.application.bootstrap import (
 )
 from llm_grounding.application.chat_service import PipelineSelectionError
 from llm_grounding.application.eval_service import EvalService
+from llm_grounding.application.pipeline_service import (
+    PipelineCompatibilityError,
+    PipelineConcurrencyError,
+    PipelineDependencyError,
+)
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import (
     Chat,
@@ -396,17 +401,65 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @app.put("/api/pipelines/{pipeline_id}")
-    async def update_pipeline(
+    @app.post("/api/pipelines/{pipeline_id}/impact")
+    async def pipeline_update_impact(
         pipeline_id: str, config: PipelineConfig
     ) -> dict[str, object]:
-        """Replace a pipeline atomically and invalidate its runtime cache entry."""
+        """Return authoritative dependency and compatibility impact for a draft."""
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
         try:
-            return _item(await application.pipeline_service.update(pipeline_id, config))
+            impact = await application.pipeline_service.impact(pipeline_id, config)
+            return impact.as_dict()
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.put("/api/pipelines/{pipeline_id}")
+    async def update_pipeline(
+        pipeline_id: str,
+        config: PipelineConfig,
+        expected_config_hash: str | None = Query(None),
+        migrate_conversations: bool = Query(False),
+    ) -> dict[str, object]:
+        """Update a pipeline with explicit migration and stale-draft checks."""
+        if application.pipeline_service is None:
+            raise HTTPException(503, "Pipeline management is unavailable.")
+        try:
+            return _item(
+                await application.pipeline_service.update(
+                    pipeline_id,
+                    config,
+                    expected_config_hash=expected_config_hash,
+                    migrate_conversations=migrate_conversations,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PipelineDependencyError as exc:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "pipeline_dependencies",
+                    "message": str(exc),
+                    "impact": exc.impact.as_dict(),
+                },
+            ) from exc
+        except PipelineCompatibilityError as exc:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "incompatible_representation",
+                    "message": str(exc),
+                    "impact": exc.impact.as_dict(),
+                },
+            ) from exc
+        except PipelineConcurrencyError as exc:
+            raise HTTPException(
+                409,
+                detail={"code": "pipeline_stale", "message": str(exc)},
+            ) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

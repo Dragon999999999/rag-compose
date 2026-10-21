@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any
 
 from llm_grounding.application.pipeline_runtime import (
@@ -12,6 +14,136 @@ from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.models import ModelCatalog, PipelineConfig
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.orchestration.registry import ComponentRegistry
+
+
+@dataclass(frozen=True)
+class PipelineChange:
+    """Describe one changed configuration value and its index impact."""
+
+    path: str
+    before: object
+    after: object
+    representation_affecting: bool
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize the change for API and CLI consumers."""
+        return {
+            "path": self.path,
+            "before": self.before,
+            "after": self.after,
+            "representation_affecting": self.representation_affecting,
+        }
+
+
+@dataclass(frozen=True)
+class PipelineUpdateImpact:
+    """Summarize dependencies and compatibility before a pipeline update."""
+
+    pipeline_id: str
+    current_version: int
+    current_config_hash: str
+    conversation_count: int
+    representation_changed: bool
+    compatible: bool
+    compatibility_reason: str | None
+    changes: tuple[PipelineChange, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize authoritative update impact metadata."""
+        return {
+            "pipeline_id": self.pipeline_id,
+            "current_version": self.current_version,
+            "current_config_hash": self.current_config_hash,
+            "conversation_count": self.conversation_count,
+            "representation_changed": self.representation_changed,
+            "compatible": self.compatible,
+            "can_migrate": self.compatible,
+            "compatibility_reason": self.compatibility_reason,
+            "changes": [change.as_dict() for change in self.changes],
+        }
+
+
+class PipelineDependencyError(ValueError):
+    """Require an explicit migration or copy when chats use a pipeline."""
+
+    def __init__(self, impact: PipelineUpdateImpact) -> None:
+        """Retain the authoritative impact returned by the preflight check."""
+        self.impact = impact
+        super().__init__(
+            f"Pipeline is used by {impact.conversation_count} conversations; "
+            "choose migration or create a copy"
+        )
+
+
+class PipelineCompatibilityError(ValueError):
+    """Reject migration that would pair conversations with an incompatible index."""
+
+    def __init__(self, impact: PipelineUpdateImpact) -> None:
+        """Retain the compatibility explanation for a structured API error."""
+        self.impact = impact
+        super().__init__(
+            impact.compatibility_reason or "Pipeline representations are incompatible"
+        )
+
+
+class PipelineConcurrencyError(ValueError):
+    """Report that an editor attempted to update a stale pipeline snapshot."""
+
+
+def _with_compatibility_reason(
+    impact: PipelineUpdateImpact, reason: str
+) -> PipelineCompatibilityError:
+    """Create a compatibility error while preserving the complete impact payload."""
+    return PipelineCompatibilityError(
+        PipelineUpdateImpact(
+            pipeline_id=impact.pipeline_id,
+            current_version=impact.current_version,
+            current_config_hash=impact.current_config_hash,
+            conversation_count=impact.conversation_count,
+            representation_changed=impact.representation_changed,
+            compatible=False,
+            compatibility_reason=reason,
+            changes=impact.changes,
+        )
+    )
+
+
+def _configuration_changes(
+    before: dict[str, object], after: dict[str, object]
+) -> tuple[PipelineChange, ...]:
+    """Compare JSON-compatible configurations into concise leaf changes."""
+    old_values = dict(_flatten_configuration(before))
+    new_values = dict(_flatten_configuration(after))
+    changes: list[PipelineChange] = []
+    for path in sorted(set(old_values) | set(new_values)):
+        old = old_values.get(path)
+        new = new_values.get(path)
+        if old == new:
+            continue
+        changes.append(
+            PipelineChange(
+                path=path,
+                before=old,
+                after=new,
+                representation_affecting=path.startswith("representation."),
+            )
+        )
+    return tuple(changes)
+
+
+def _flatten_configuration(
+    value: object, prefix: str = ""
+) -> list[tuple[str, object]]:
+    """Flatten nested configuration values while retaining list positions."""
+    if isinstance(value, dict):
+        items: list[tuple[str, object]] = []
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            items.extend(_flatten_configuration(child, child_prefix))
+        return items
+    if isinstance(value, list):
+        return [(prefix, json.dumps(value, sort_keys=True))]
+    return [(prefix, value)]
 
 
 class PipelineService:
@@ -71,20 +203,110 @@ class PipelineService:
             representation_hash=config.representation_hash(self._catalog),
         )
 
-    async def update(self, pipeline_id: str, config: PipelineConfig) -> Pipeline:
-        """Validate and replace a pipeline, invalidating its cached runtime."""
+    async def impact(
+        self, pipeline_id: str, config: PipelineConfig
+    ) -> PipelineUpdateImpact:
+        """Preflight dependencies, changed fields, and representation compatibility."""
         self.validate(config)
-        existing = await self._repository.get_pipeline_by_name(config.name)
-        if existing is not None and existing.id != pipeline_id:
-            raise ValueError(f"Pipeline name already exists: {config.name}")
-        record = await self._repository.update_pipeline(
-            pipeline_id,
-            config,
-            representation_hash=config.representation_hash(self._catalog),
-        )
+        existing = await self.get(pipeline_id)
+        await self._ensure_name_available(pipeline_id, config.name)
+        return await self._impact_for(existing, config)
+
+    async def update(
+        self,
+        pipeline_id: str,
+        config: PipelineConfig,
+        *,
+        expected_config_hash: str | None = None,
+        migrate_conversations: bool = False,
+    ) -> Pipeline:
+        """Update a pipeline safely, optionally migrating dependent conversations."""
+        self.validate(config)
+        existing = await self.get(pipeline_id)
+        if (
+            expected_config_hash is not None
+            and existing.config_hash != expected_config_hash
+        ):
+            raise PipelineConcurrencyError(
+                "Pipeline changed while the configuration was being edited"
+            )
+        await self._ensure_name_available(pipeline_id, config.name)
+        if config.config_hash == existing.config_hash:
+            return existing
+        if config.version <= existing.version:
+            config = config.model_copy(update={"version": existing.version + 1})
+        impact = await self._impact_for(existing, config)
+        if impact.conversation_count and not migrate_conversations:
+            raise PipelineDependencyError(impact)
+        if migrate_conversations and not impact.compatible:
+            raise PipelineCompatibilityError(impact)
+        representation_hash = config.representation_hash(self._catalog)
+        if migrate_conversations:
+            migrate = getattr(self._repository, "update_pipeline_and_migrate", None)
+            if migrate is None:
+                raise PipelineCompatibilityError(
+                    _with_compatibility_reason(
+                        impact, "Conversation migration is unavailable."
+                    )
+                )
+            record = await migrate(
+                pipeline_id,
+                config,
+                representation_hash=representation_hash,
+                expected_config_hash=expected_config_hash or existing.config_hash,
+            )
+        else:
+            kwargs: dict[str, object] = {"representation_hash": representation_hash}
+            if expected_config_hash is not None:
+                kwargs["expected_config_hash"] = expected_config_hash
+            try:
+                record = await self._repository.update_pipeline(
+                    pipeline_id, config, **kwargs
+                )
+            except ValueError as exc:
+                if "changed while" in str(exc):
+                    raise PipelineConcurrencyError(str(exc)) from exc
+                raise
         if self._runtime is not None:
             self._runtime.invalidate(pipeline_id)
         return record
+
+    async def _impact_for(
+        self, existing: Pipeline, config: PipelineConfig
+    ) -> PipelineUpdateImpact:
+        """Build impact from an already-loaded pipeline without another lookup."""
+        count_method = getattr(
+            self._repository, "count_pipeline_conversations", None
+        )
+        conversation_count = (
+            int(await count_method(existing.id)) if count_method is not None else 0
+        )
+        representation_changed = (
+            config.representation_hash(self._catalog) != existing.representation_hash
+        )
+        return PipelineUpdateImpact(
+            pipeline_id=existing.id,
+            current_version=existing.version,
+            current_config_hash=existing.config_hash,
+            conversation_count=conversation_count,
+            representation_changed=representation_changed,
+            compatible=not (conversation_count > 0 and representation_changed),
+            compatibility_reason=(
+                "Existing conversations use the current representation; re-indexing "
+                "is required before they can migrate."
+                if conversation_count > 0 and representation_changed
+                else None
+            ),
+            changes=_configuration_changes(
+                existing.config, config.model_dump(mode="json")
+            ),
+        )
+
+    async def _ensure_name_available(self, pipeline_id: str, name: str) -> None:
+        """Reject updates that would collide with another stable pipeline name."""
+        existing = await self._repository.get_pipeline_by_name(name)
+        if existing is not None and existing.id != pipeline_id:
+            raise ValueError(f"Pipeline name already exists: {name}")
 
     async def deactivate(self, pipeline_id: str) -> Pipeline:
         """Deactivate a pipeline while retaining its persisted configuration."""

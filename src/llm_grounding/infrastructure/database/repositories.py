@@ -40,6 +40,7 @@ from llm_grounding.infrastructure.database.models import (
     IngestionRow,
     MessageRow,
     PipelineRow,
+    PipelineVersionRow,
     ProjectDocumentRow,
     ProjectRow,
     RagRunObservationRow,
@@ -113,6 +114,9 @@ class PostgresRepository:
         if not source_kind.strip():
             raise ValueError("Pipeline source_kind must not be blank")
         async with self._sessions.begin() as session:
+            effective_representation_hash = (
+                representation_hash or pipeline.representation_hash()
+            )
             row = PipelineRow(
                 id=pipeline_id,
                 name=pipeline.name,
@@ -121,8 +125,7 @@ class PostgresRepository:
                 description=pipeline.description,
                 config_json=pipeline.model_dump(mode="json"),
                 config_hash=pipeline.config_hash,
-                representation_hash=representation_hash
-                or pipeline.representation_hash(),
+                representation_hash=effective_representation_hash,
                 source_kind=source_kind.strip(),
                 source_path=source_path,
                 source_fingerprint=source_fingerprint,
@@ -137,6 +140,9 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            await self._record_pipeline_version(
+                session, row, representation_hash=effective_representation_hash
+            )
             return self._pipeline(row)
 
     async def get_pipeline(self, pipeline_id: str) -> Pipeline:
@@ -183,15 +189,34 @@ class PostgresRepository:
         active: bool | None = None,
         is_default: bool | None = None,
         representation_hash: str | None = None,
+        expected_config_hash: str | None = None,
     ) -> Pipeline:
         """Update a pipeline and mark it API-owned so imports cannot replace it."""
         pipeline = (
             self._validate_pipeline_config(config) if config is not None else None
         )
         async with self._sessions.begin() as session:
-            row = await session.get(PipelineRow, pipeline_id)
+            row = await session.get(PipelineRow, pipeline_id, with_for_update=True)
             if row is None:
                 raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            if (
+                expected_config_hash is not None
+                and row.config_hash != expected_config_hash
+            ):
+                raise ValueError(
+                    "Pipeline changed while the configuration was being edited"
+                )
+            if pipeline is not None:
+                dependent_count = await session.scalar(
+                    select(func.count(ChatRow.id)).where(
+                        ChatRow.pipeline_id == pipeline_id
+                    )
+                )
+                if dependent_count:
+                    raise ValueError(
+                        "Pipeline has associated conversations; explicit migration "
+                        "is required"
+                    )
             if pipeline is not None:
                 row.name = pipeline.name
                 row.version = pipeline.version
@@ -219,7 +244,115 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            if pipeline is not None:
+                await self._record_pipeline_version(
+                    session,
+                    row,
+                    representation_hash=row.representation_hash,
+                )
             return self._pipeline(row)
+
+    async def update_pipeline_and_migrate(
+        self,
+        pipeline_id: str,
+        config: PipelineConfig | dict[str, object],
+        *,
+        representation_hash: str,
+        expected_config_hash: str,
+    ) -> Pipeline:
+        """Update a pipeline and migrate all dependent chats atomically.
+
+        The pipeline row and every chat selection snapshot are locked in one
+        transaction. A stale editor hash or representation mismatch aborts the
+        transaction before any configuration or conversation is changed.
+        """
+        pipeline = self._validate_pipeline_config(config)
+        async with self._sessions.begin() as session:
+            row = await session.get(PipelineRow, pipeline_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown pipeline: {pipeline_id}")
+            if row.config_hash != expected_config_hash:
+                raise ValueError(
+                    "Pipeline changed while the configuration was being edited"
+                )
+            if row.representation_hash != representation_hash:
+                raise ValueError(
+                    "The updated representation is incompatible with existing "
+                    "conversations"
+                )
+            chats = (
+                await session.scalars(
+                    select(ChatRow)
+                    .where(ChatRow.pipeline_id == pipeline_id)
+                    .with_for_update()
+                )
+            ).all()
+            row.name = pipeline.name
+            row.version = pipeline.version
+            row.schema_version = pipeline.schema_version
+            row.description = pipeline.description
+            row.config_json = pipeline.model_dump(mode="json")
+            row.config_hash = pipeline.config_hash
+            row.representation_hash = representation_hash
+            row.is_default = pipeline.is_default
+            row.source_kind = "api"
+            row.source_path = None
+            row.source_fingerprint = None
+            if row.is_default:
+                await session.execute(
+                    update(PipelineRow)
+                    .where(PipelineRow.id != row.id)
+                    .values(is_default=False)
+                )
+            for chat in chats:
+                chat.pipeline_version = row.version
+                chat.pipeline_config_hash = row.config_hash
+                chat.pipeline_representation_hash = row.representation_hash
+            await session.flush()
+            await self._record_pipeline_version(
+                session, row, representation_hash=representation_hash
+            )
+            return self._pipeline(row)
+
+    async def count_pipeline_conversations(self, pipeline_id: str) -> int:
+        """Count conversations whose current selection references a pipeline."""
+        async with self._sessions() as session:
+            count = await session.scalar(
+                select(func.count(ChatRow.id)).where(ChatRow.pipeline_id == pipeline_id)
+            )
+            return int(count or 0)
+
+    async def _record_pipeline_version(
+        self,
+        session: AsyncSession,
+        row: PipelineRow,
+        *,
+        representation_hash: str,
+    ) -> None:
+        """Insert an immutable snapshot and reject version identity reuse."""
+        version = await session.get(
+            PipelineVersionRow, (row.id, row.version), with_for_update=True
+        )
+        values = {
+            "schema_version": row.schema_version,
+            "description": row.description,
+            "config_json": dict(row.config_json),
+            "config_hash": row.config_hash,
+            "representation_hash": representation_hash,
+        }
+        if version is None:
+            session.add(
+                PipelineVersionRow(
+                    pipeline_id=row.id,
+                    version=row.version,
+                    **values,
+                )
+            )
+        elif version.config_hash != row.config_hash:
+            raise ValueError(
+                f"Pipeline version {row.version} already contains a different "
+                "configuration; increment the pipeline version"
+            )
 
     async def deactivate_pipeline(self, pipeline_id: str) -> Pipeline:
         """Mark a pipeline inactive without deleting its reproducibility record."""
@@ -284,6 +417,9 @@ class PostgresRepository:
                     .values(is_default=False)
                 )
             await session.flush()
+            await self._record_pipeline_version(
+                session, row, representation_hash=row.representation_hash
+            )
             return self._pipeline(row)
 
     @staticmethod

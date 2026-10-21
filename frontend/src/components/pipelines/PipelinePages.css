@@ -151,6 +151,18 @@
 .assessor-item-heading { align-items: center; display: flex; font-size: 13px; justify-content: space-between; margin-bottom: 10px; }
 .assessor-item-heading button { background: none; border: 0; color: var(--color-danger); font-size: 11px; padding: 0; }
 
+.impact-dialog { display: grid; gap: var(--spacing-3); }
+.impact-dialog > p { color: var(--color-text-muted); line-height: 1.45; margin: 0; }
+.impact-changes { background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: var(--radius-sm); display: grid; gap: 7px; padding: 10px 12px; }
+.impact-changes span, .impact-changes li { color: var(--color-text-muted); font-size: 12px; }
+.impact-changes ul { margin: 0; padding-left: 20px; }
+.impact-changes small { color: var(--color-secondary); }
+.impact-choice { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); display: grid; gap: 4px; padding: 12px; text-align: left; }
+.impact-choice:hover:not(:disabled), .impact-choice:focus-visible:not(:disabled) { border-color: var(--color-primary); background: #edf2ff; }
+.impact-choice:disabled { cursor: not-allowed; opacity: .55; }
+.impact-choice span { color: var(--color-text-muted); font-size: 12px; line-height: 1.4; }
+.impact-choice-default { border-color: var(--color-primary); }
+
 @media (max-width: 900px) {
   .pipeline-editor-layout { grid-template-columns: 1fr; }
   .pipeline-inspector { position: static; }

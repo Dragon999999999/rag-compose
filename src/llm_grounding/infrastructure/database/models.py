@@ -76,6 +76,30 @@ class PipelineRow(Base):
     )
 
 
+class PipelineVersionRow(Base):
+    """Persist immutable pipeline configuration snapshots for reproducibility."""
+
+    __tablename__ = "pipeline_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "pipeline_id", "version", name="uq_pipeline_version_identity"
+        ),
+    )
+
+    pipeline_id: Mapped[str] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    representation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class DocumentRow(Base):
     """Persist deduplicated PDF identity, display name, and artifact reference."""
 

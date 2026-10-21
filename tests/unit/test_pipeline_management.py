@@ -13,7 +13,11 @@ from llm_grounding.application.pipeline_runtime import (
     PipelineResolutionError,
     PipelineRuntimeResolver,
 )
-from llm_grounding.application.pipeline_service import PipelineService
+from llm_grounding.application.pipeline_service import (
+    PipelineCompatibilityError,
+    PipelineDependencyError,
+    PipelineService,
+)
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.loader import (
     load_model_catalog,
@@ -30,6 +34,8 @@ class PipelineRepository:
         """Initialize an empty repository with the supplied model catalog."""
         self.catalog = catalog
         self.records: dict[str, Pipeline] = {}
+        self.conversation_count = 0
+        self.migrated_snapshots: list[tuple[int, str, str]] = []
 
     async def list_pipelines(
         self, *, active_only: bool = False
@@ -108,6 +114,35 @@ class PipelineRepository:
         self.records[pipeline_id] = updated
         return updated
 
+    async def count_pipeline_conversations(self, pipeline_id: str) -> int:
+        """Return the number of conversations using the selected pipeline."""
+        await self.get_pipeline(pipeline_id)
+        return self.conversation_count
+
+    async def update_pipeline_and_migrate(
+        self,
+        pipeline_id: str,
+        config,
+        *,
+        representation_hash: str,
+        expected_config_hash: str,
+    ) -> Pipeline:
+        """Apply a compatible update and record migrated chat snapshots."""
+        current = await self.get_pipeline(pipeline_id)
+        if current.config_hash != expected_config_hash:
+            raise ValueError(
+                "Pipeline changed while the configuration was being edited"
+            )
+        if current.representation_hash != representation_hash:
+            raise ValueError("The updated representation is incompatible")
+        updated = await self.update_pipeline(
+            pipeline_id, config, representation_hash=representation_hash
+        )
+        self.migrated_snapshots = [
+            (updated.version, updated.config_hash, updated.representation_hash)
+        ] * self.conversation_count
+        return updated
+
     async def deactivate_pipeline(self, pipeline_id: str) -> Pipeline:
         """Retain a record while making it unavailable for active selection."""
         current = await self.get_pipeline(pipeline_id)
@@ -148,6 +183,88 @@ async def test_pipeline_service_crud_validates_and_invalidates_runtime_async() -
     assert runtime.invalidated == [created.id, created.id]
     assert deactivated.active is False
     assert await service.list(active_only=True) == ()
+
+
+async def test_used_pipeline_reports_changes_and_requires_an_explicit_choice() -> None:
+    """Dependent conversations prevent an implicit in-place update."""
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    config = load_pipeline_config(
+        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+    )
+    repository = PipelineRepository(catalog)
+    service = PipelineService(repository, catalog)  # type: ignore[arg-type]
+    created = await service.create(config)
+    repository.conversation_count = 2
+    changed = config.model_copy(
+        update={
+            "name": config.name,
+            "query": config.query.model_copy(
+                update={
+                    "retriever": config.query.retriever.model_copy(update={"top_k": 4})
+                }
+            ),
+        }
+    )
+
+    impact = await service.impact(created.id, changed)
+
+    assert impact.conversation_count == 2
+    assert impact.compatible is True
+    assert any(change.path == "query.retriever.top_k" for change in impact.changes)
+    with pytest.raises(PipelineDependencyError):
+        await service.update(created.id, changed)
+
+
+async def test_used_pipeline_can_migrate_query_changes_but_not_representation_changes(
+) -> None:
+    """Migrate query changes while blocking representation changes."""
+    catalog = load_model_catalog(Path("configs/models.yaml"))
+    config = load_pipeline_config(
+        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+    )
+    repository = PipelineRepository(catalog)
+    service = PipelineService(repository, catalog)  # type: ignore[arg-type]
+    created = await service.create(config)
+    repository.conversation_count = 2
+
+    query_change = config.model_copy(
+        update={
+            "query": config.query.model_copy(
+                update={
+                    "retriever": config.query.retriever.model_copy(update={"top_k": 4})
+                }
+            )
+        }
+    )
+    migrated = await service.update(
+        created.id,
+        query_change,
+        expected_config_hash=created.config_hash,
+        migrate_conversations=True,
+    )
+    assert migrated.version == created.version + 1
+    assert len(repository.migrated_snapshots) == 2
+
+    representation_change = query_change.model_copy(
+        update={
+            "representation": query_change.representation.model_copy(
+                update={
+                    "chunker": query_change.representation.chunker.model_copy(
+                        update={"target_chars": 256}
+                    )
+                }
+            )
+        }
+    )
+    impact = await service.impact(created.id, representation_change)
+    assert impact.compatible is False
+    with pytest.raises(PipelineCompatibilityError):
+        await service.update(
+            created.id,
+            representation_change,
+            expected_config_hash=migrated.config_hash,
+            migrate_conversations=True,
+        )
 
 
 async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations() -> (
@@ -337,7 +454,9 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     assert created_response.status_code == 201
     assert updated_response.status_code == 200
     assert listed_response.status_code == 200
-    assert detail_response.json()["config"] == changed_config.model_dump(mode="json")
+    assert detail_response.json()["config"] == changed_config.model_copy(
+        update={"version": 2}
+    ).model_dump(mode="json")
     assert "vector_backend" in catalog_response.json()["stages"]
     assert "embedding_001" in models_response.json()["embedding"]
     assert deleted_response.status_code == 204

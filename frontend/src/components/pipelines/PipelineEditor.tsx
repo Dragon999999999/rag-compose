@@ -8,7 +8,9 @@ import type {
   Pipeline,
   PipelineCatalog,
   PipelineConfig,
+  PipelineUpdateImpact,
 } from "../../api/types";
+import { Dialog } from "../common/Dialog";
 import { Button, ErrorState } from "../common/ui";
 import {
   useModelCatalog,
@@ -88,6 +90,7 @@ export function PipelineEditor() {
   const [loadedTemplate, setLoadedTemplate] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<DraftSnapshot | null>(null);
+  const [updateImpact, setUpdateImpact] = useState<PipelineUpdateImpact | null>(null);
 
   const template = source.data?.config
     ? { id: source.data.id, config: source.data.config, name: source.data.name }
@@ -157,8 +160,12 @@ export function PipelineEditor() {
       JSON.stringify(draft.representation) !==
         JSON.stringify(JSON.parse(savedSnapshot.config).representation),
   );
-  const saving = mutations.create.isPending || mutations.update.isPending;
-  const saveError = mutations.create.error ?? mutations.update.error;
+  const saving =
+    mutations.create.isPending ||
+    mutations.update.isPending ||
+    mutations.impact.isPending;
+  const saveError =
+    mutations.create.error ?? mutations.update.error ?? mutations.impact.error;
 
   if (
     source.isLoading ||
@@ -218,24 +225,103 @@ export function PipelineEditor() {
       is_default: isDefault,
     };
     setLocalError(null);
+    setUpdateImpact(null);
     const onSuccess = (saved: Pipeline): void => {
+      const savedConfig = { ...config, version: saved.version };
       setSavedSnapshot(
         snapshotWithMetadata(
-          config,
+          savedConfig,
           saved.name,
           saved.description,
           String(saved.version),
           saved.is_default,
         ),
       );
-      setDraft(config);
+      setDraft(savedConfig);
+      setVersion(String(saved.version));
       navigate("/pipelines");
     };
     if (pipelineId) {
-      mutations.update.mutate({ pipelineId, config }, { onSuccess });
+      mutations.impact.mutate(
+        { pipelineId, config },
+        {
+          onSuccess: (impact) => {
+            if (impact.conversation_count === 0) {
+              mutations.update.mutate(
+                {
+                  pipelineId,
+                  config,
+                  expectedConfigHash: source.data?.config_hash,
+                },
+                { onSuccess },
+              );
+              return;
+            }
+            setUpdateImpact(impact);
+          },
+        },
+      );
     } else {
       mutations.create.mutate(config, { onSuccess });
     }
+  };
+
+  const updateExisting = (): void => {
+    if (!pipelineId || !updateImpact) return;
+    const impact = updateImpact;
+    const config: PipelineConfig = {
+      ...draft,
+      name: name.trim(),
+      description,
+      version: Number(version),
+      is_default: isDefault,
+    };
+    setUpdateImpact(null);
+    mutations.update.mutate(
+      {
+        pipelineId,
+        config,
+        expectedConfigHash: impact.current_config_hash,
+        migrateConversations: true,
+      },
+      {
+        onSuccess: (saved) => {
+          const savedConfig = { ...config, version: saved.version };
+          setSavedSnapshot(
+            snapshotWithMetadata(
+              savedConfig,
+              saved.name,
+              saved.description,
+              String(saved.version),
+              saved.is_default,
+            ),
+          );
+          setDraft(savedConfig);
+          setVersion(String(saved.version));
+          navigate("/pipelines");
+        },
+        onError: (error) => setLocalError(error.message),
+      },
+    );
+  };
+
+  const createCopy = (): void => {
+    if (!updateImpact) return;
+    const config: PipelineConfig = {
+      ...draft,
+      name: `Copy of ${name.trim()}`,
+      description,
+      version: 1,
+      is_default: false,
+    };
+    setUpdateImpact(null);
+    mutations.create.mutate(
+      config,
+      {
+        onSuccess: (saved) => navigate(`/pipelines/${saved.id}/edit`),
+        onError: (error) => setLocalError(error.message),
+      },
+    );
   };
 
   return (
@@ -285,8 +371,78 @@ export function PipelineEditor() {
           value={selectedValue}
         />
       </div>
+      {updateImpact && (
+        <PipelineUpdateDialog
+          impact={updateImpact}
+          pending={mutations.create.isPending || mutations.update.isPending}
+          error={saveError}
+          onClose={() => setUpdateImpact(null)}
+          onCreateCopy={createCopy}
+          onUpdateExisting={updateExisting}
+        />
+      )}
     </main>
   );
+}
+
+function PipelineUpdateDialog({
+  impact,
+  pending,
+  error,
+  onClose,
+  onCreateCopy,
+  onUpdateExisting,
+}: {
+  impact: PipelineUpdateImpact;
+  pending: boolean;
+  error: Error | null;
+  onClose: () => void;
+  onCreateCopy: () => void;
+  onUpdateExisting: () => void;
+}) {
+  return (
+    <Dialog title="Pipeline is in use" onClose={onClose}>
+      <div className="impact-dialog">
+        <p>
+          This pipeline is selected by {impact.conversation_count} conversation
+          {impact.conversation_count === 1 ? "" : "s"}. Choose how to apply the
+          draft safely.
+        </p>
+        {impact.compatibility_reason && (
+          <p className="form-error" role="alert">{impact.compatibility_reason}</p>
+        )}
+        <div className="impact-changes">
+          <strong>Changed fields</strong>
+          {impact.changes.length === 0 ? (
+            <span>No configuration fields changed.</span>
+          ) : (
+            <ul>
+              {impact.changes.map((change) => (
+                <li key={change.path}>
+                  <code>{formatChangePath(change.path)}</code>
+                  {change.representation_affecting && <small> representation-affecting</small>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <button className="impact-choice impact-choice-default" disabled={pending} onClick={onCreateCopy} type="button">
+          <strong>Create a copy (recommended)</strong>
+          <span>Keep existing conversations unchanged and save the draft as a new pipeline.</span>
+        </button>
+        <button className="impact-choice" disabled={pending || !impact.can_migrate} onClick={onUpdateExisting} type="button">
+          <strong>Update existing pipeline</strong>
+          <span>{impact.can_migrate ? "Migrate all conversations to the new version atomically." : "Unavailable until the representation/index is compatible."}</span>
+        </button>
+        {error && <p className="form-error" role="alert">{error.message}</p>}
+        <footer><Button variant="ghost" onClick={onClose}>Cancel</Button></footer>
+      </div>
+    </Dialog>
+  );
+}
+
+function formatChangePath(path: string): string {
+  return path.replaceAll(".", " → ");
 }
 
 function GraphSection({ label, stages, selected, config, onSelect }: { label: string; stages: StageDefinition[]; selected: StageKey; config: PipelineConfig; onSelect: (stage: StageKey) => void }) {
