@@ -1,15 +1,20 @@
-"""Run canonical PostgreSQL migrations using DATABASE_URL rather than checked-in secrets."""
+"""Run canonical PostgreSQL migrations using environment-based configuration."""
 
 import asyncio
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from llm_grounding.infrastructure.database.models import Base
+
+PROJECT_ROOT = Path(__file__).resolve().parents[5]
+load_dotenv(PROJECT_ROOT / ".env")
 
 config = context.config
 if config.config_file_name:
