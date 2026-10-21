@@ -36,7 +36,7 @@ class ComponentConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """Configure Aqueduct requests; retries bound HTTP and output-validation retries."""
+    """Configure one resolved OpenAI-compatible model connection."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -45,6 +45,8 @@ class ModelConfig(BaseModel):
         min_length=1, description="Model identifier served by the endpoint."
     )
     base_url: HttpUrl
+    api_key_env: str = Field(default="AQUEDUCT_API_KEY", min_length=1)
+    api_key_file_env: str = Field(default="AQUEDUCT_API_KEY_FILE", min_length=1)
     timeout_seconds: float = Field(default=120, gt=0, le=3600, allow_inf_nan=False)
     retries: int = Field(default=2, ge=0, le=5)
 
@@ -59,6 +61,20 @@ class ModelConfig(BaseModel):
         return url
 
 
+class LocalModelConfig(BaseModel):
+    """Configure a locally loaded model without a provider endpoint."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    provider: Literal["sentence_transformers"]
+    name: str = Field(min_length=1)
+    revision: str | None = Field(default=None, min_length=1)
+    dimension: int = Field(default=384, ge=1, le=16000)
+    normalize: bool = True
+    batch_size: int = Field(default=32, ge=1, le=512)
+    cache_dir_env: str | None = Field(default=None, min_length=1)
+
+
 class EmbedderConfig(ComponentConfig):
     """Configure an embedding provider used by retrieval-aware components.
 
@@ -69,7 +85,7 @@ class EmbedderConfig(ComponentConfig):
     """
 
     type: str = Field(default="openai_compatible", min_length=1)
-    model: ModelConfig
+    model: ModelConfig | LocalModelConfig
     batch_size: int = Field(default=32, ge=1, le=512)
 
     def identity(self) -> str:

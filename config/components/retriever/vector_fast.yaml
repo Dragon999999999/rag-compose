@@ -1,0 +1,5 @@
+id: retriever_vector_fast
+type: vector
+top_k: 8
+context_chars: 12000
+summary_per_facet: 3

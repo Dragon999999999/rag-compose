@@ -42,7 +42,10 @@ class EmbeddingConfig(BaseModel):
     dimension: int = Field(default=384, ge=1, le=16000)
     normalize: bool = True
     batch_size: int = Field(default=32, ge=1, le=512)
+    cache_dir_env: str | None = Field(default=None, min_length=1)
     base_url: HttpUrl | None = None
+    api_key_env: str = "AQUEDUCT_API_KEY"
+    api_key_file_env: str = "AQUEDUCT_API_KEY_FILE"
     timeout_seconds: float = Field(default=120, gt=0, le=3600, allow_inf_nan=False)
     retries: int = Field(default=2, ge=0, le=5)
 
@@ -64,7 +67,14 @@ class EmbeddingConfig(BaseModel):
         """Hash embedding semantics; transport tuning does not change space."""
         data = self.model_dump(
             mode="json",
-            exclude={"batch_size", "timeout_seconds", "retries"},
+            exclude={
+                "batch_size",
+                "cache_dir_env",
+                "timeout_seconds",
+                "retries",
+                "api_key_env",
+                "api_key_file_env",
+            },
         )
         if self.base_url is not None:
             data["base_url"] = sha256(str(self.base_url).encode("utf-8")).hexdigest()

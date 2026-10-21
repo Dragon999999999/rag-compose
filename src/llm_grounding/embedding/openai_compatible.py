@@ -22,6 +22,8 @@ class OpenAICompatibleEmbeddingSettings:
     batch_size: int = 32
     normalize: bool = True
     dimension: int | None = None
+    api_key_env: str = "AQUEDUCT_API_KEY"
+    api_key_file_env: str = "AQUEDUCT_API_KEY_FILE"
 
 
 class OpenAICompatibleEmbedder:
@@ -48,6 +50,8 @@ class OpenAICompatibleEmbedder:
             self._batch_size = config.batch_size
             self._normalize = config.normalize
             self._dimension = config.dimension
+            self._api_key_env = config.api_key_env
+            self._api_key_file_env = config.api_key_file_env
         else:
             if not config.model or not config.base_url or not config.model_identity:
                 raise ValueError("OpenAI-compatible embedding settings are incomplete")
@@ -61,6 +65,8 @@ class OpenAICompatibleEmbedder:
             self._batch_size = config.batch_size
             self._normalize = config.normalize
             self._dimension = config.dimension
+            self._api_key_env = config.api_key_env
+            self._api_key_file_env = config.api_key_file_env
         self._client: AsyncOpenAI | None = None
 
     @classmethod
@@ -75,6 +81,8 @@ class OpenAICompatibleEmbedder:
         batch_size: int = 32,
         normalize: bool = True,
         dimension: int | None = None,
+        api_key_env: str = "AQUEDUCT_API_KEY",
+        api_key_file_env: str = "AQUEDUCT_API_KEY_FILE",
     ) -> "OpenAICompatibleEmbedder":
         """Create an adapter from an architecture-level provider configuration."""
         return cls(
@@ -87,14 +95,22 @@ class OpenAICompatibleEmbedder:
                 batch_size=batch_size,
                 normalize=normalize,
                 dimension=dimension,
+                api_key_env=api_key_env,
+                api_key_file_env=api_key_file_env,
             )
         )
 
     def _client_for_request(self) -> AsyncOpenAI:
         """Create one reusable client only when an embedding request is made."""
         if self._client is None:
+            api_key = (
+                resolve_api_key()
+                if self._api_key_env == "AQUEDUCT_API_KEY"
+                and self._api_key_file_env == "AQUEDUCT_API_KEY_FILE"
+                else resolve_api_key(self._api_key_env, self._api_key_file_env)
+            )
             self._client = AsyncOpenAI(
-                api_key=resolve_api_key(),
+                api_key=api_key,
                 base_url=self._base_url,
                 timeout=self._timeout_seconds,
                 max_retries=self._retries,

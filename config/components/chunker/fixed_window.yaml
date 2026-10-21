@@ -1,0 +1,5 @@
+id: chunker_fixed_window
+type: fixed_window
+version: '1'
+target_chars: 800
+overlap_chars: 120

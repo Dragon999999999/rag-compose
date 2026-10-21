@@ -1,34 +1,13 @@
+schema_version: 2
 name: baseline_v0
 version: 0
-
-parser:
-  type: pymupdf
-knowledge_builder:
-  type: basic
-embedder:
-  type: openai_compatible
-  model:
-    provider: aqueduct
-    name: qwen3-embedding-4b
-    base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
-    timeout_seconds: 120
-    retries: 2
-  batch_size: 32
-retriever:
-  type: full_document
-reranker:
-  type: identity
-reasoner:
-  type: basic_summary
-  model:
-    provider: aqueduct
-    name: qwen-3.5-397b
-    base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
-    timeout_seconds: 120
-    retries: 2
+parser: parser_pymupdf
+knowledge_builder: knowledge_basic
+embedder: embedder_aqueduct_qwen
+retriever: retriever_full_document
+reranker: reranker_identity
+reasoner: reasoner_basic_summary
 assessors:
-  - type: noop
-decision_policy:
-  type: accept_all
-renderer:
-  type: basic_summary
+  - assessor_noop
+decision_policy: decision_accept_all
+renderer: renderer_basic_summary

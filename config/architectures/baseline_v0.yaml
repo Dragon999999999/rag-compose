@@ -1,0 +1,13 @@
+schema_version: 2
+name: baseline_v0
+version: 0
+parser: parser_pymupdf
+knowledge_builder: knowledge_basic
+embedder: embedder_aqueduct_qwen
+retriever: retriever_full_document
+reranker: reranker_identity
+reasoner: reasoner_basic_summary
+assessors:
+  - assessor_noop
+decision_policy: decision_accept_all
+renderer: renderer_basic_summary

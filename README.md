@@ -39,6 +39,12 @@ in the wheel, so installed usage does not depend on the working directory.
 Output contains numbered keywords, the summary, and an extraction-success line.
 Success means the pipeline completed; it does not establish factual correctness.
 
+The canonical reusable configuration definitions are under [`config/`](config/),
+with standalone models in [`config/models/`](config/models/) and components in
+[`config/components/`](config/components/). See
+[`docs/architecture.md`](docs/architecture.md) for the resolution and migration
+rules. Legacy files under `configs/` remain readable during migration.
+
 ## Persistent Basic RAG v1 development
 
 Basic RAG keeps PostgreSQL as canonical structured state, MinIO as canonical PDF

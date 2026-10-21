@@ -7,16 +7,21 @@ references before a configuration can reach persistence or a provider adapter.
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import yaml
 from pydantic import ValidationError
 
+from llm_grounding.infrastructure.config.declarative import (
+    DeclarativeArchitectureConfig,
+    DeclarativePipelineConfig,
+)
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
     PipelineConfig,
 )
+from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 from llm_grounding.ingestion.models import IngestionConfig
 
 
@@ -41,18 +46,15 @@ def load_architecture_config(path: Path | None = None) -> ArchitectureConfig:
         ConfigurationError: If YAML cannot be read or fails typed validation.
     """
     try:
-        if path is not None:
-            content = path.read_text(encoding="utf-8")
-        else:
-            resource = files("llm_grounding.infrastructure.config") / "baseline_v0.yaml"
-            if resource.is_file():
-                content = resource.read_text(encoding="utf-8")
-            else:
-                checkout = Path(__file__).resolve().parents[4]
-                content = (
-                    checkout / "configs/architectures/baseline_v0.yaml"
-                ).read_text(encoding="utf-8")
-        return ArchitectureConfig.model_validate(yaml.safe_load(content))
+        value = yaml.safe_load(_architecture_content(path))
+        if isinstance(value, dict) and value.get("schema_version") == 2:
+            return load_configuration_registry().architecture(
+                cast(
+                    DeclarativeArchitectureConfig,
+                    _model_validate(value, "architecture"),
+                )
+            )
+        return ArchitectureConfig.model_validate(value)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
             "Unable to read architecture YAML; check its path and syntax."
@@ -88,8 +90,10 @@ def load_ingestion_config(path: Path | None = None) -> IngestionConfig:
 
 
 def load_model_catalog(path: Path | None = None) -> ModelCatalog:
-    """Read the shared credential-free model catalog from YAML."""
+    """Read the legacy catalog or convert standalone model files into one."""
     try:
+        if path is None and _standalone_models_directory().is_dir():
+            return load_configuration_registry().model_catalog()
         return ModelCatalog.model_validate(_yaml_content(path, "models.yaml"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
@@ -118,8 +122,16 @@ def load_pipeline_config(
     """
     try:
         path = path or _default_pipeline_path()
-        config = PipelineConfig.model_validate(_yaml_content(path, ""))
-        model_catalog = catalog or load_model_catalog()
+        value = _yaml_content(path, "")
+        if isinstance(value, dict) and value.get("schema_version") == 2:
+            standalone = load_configuration_registry()
+            config = standalone.pipeline(
+                cast(DeclarativePipelineConfig, _model_validate(value, "pipeline"))
+            )
+            model_catalog = catalog or standalone.model_catalog()
+        else:
+            config = PipelineConfig.model_validate(value)
+            model_catalog = catalog or load_model_catalog()
         if registry is None:
             from llm_grounding.orchestration.registry import ComponentRegistry
 
@@ -142,7 +154,15 @@ def load_pipeline_config(
 
 def discover_pipeline_paths(directory: Path | None = None) -> tuple[Path, ...]:
     """Return deterministic YAML pipeline files from the configured directory."""
-    root = directory or _checkout_root() / "configs/pipelines"
+    root = directory or _checkout_root() / "config/pipelines"
+    if directory is None and not root.is_dir():
+        root = _checkout_root() / "configs/pipelines"
+    if directory is None and not root.is_dir():
+        packaged_standalone = (
+            files("llm_grounding.infrastructure.config") / "standalone/pipelines"
+        )
+        if packaged_standalone.is_dir():
+            root = Path(str(packaged_standalone))
     if directory is None and not root.is_dir():
         packaged = files("llm_grounding.infrastructure.config") / "pipelines"
         if packaged.is_dir():
@@ -200,6 +220,74 @@ def _default_pipeline_path() -> Path:
         if path.stem == "basic_rag_v1":
             return path
     raise ConfigurationError("No default basic_rag_v1 pipeline configuration exists")
+
+
+def load_configuration_registry(
+    models_directory: Path | None = None,
+    components_directory: Path | None = None,
+) -> ConfigurationRegistry:
+    """Load the canonical standalone model and component registries."""
+    try:
+        return ConfigurationRegistry.from_directories(
+            models_directory or _standalone_models_directory(),
+            components_directory or _standalone_components_directory(),
+        )
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
+
+
+def _architecture_content(path: Path | None) -> str:
+    """Load canonical architecture YAML, falling back to the legacy resource."""
+    if path is not None:
+        return path.read_text(encoding="utf-8")
+    canonical = _checkout_root() / "config/architectures/baseline_v0.yaml"
+    if canonical.is_file():
+        return canonical.read_text(encoding="utf-8")
+    packaged_canonical = (
+        files("llm_grounding.infrastructure.config")
+        / "standalone/architectures/baseline_v0.yaml"
+    )
+    if packaged_canonical.is_file():
+        return packaged_canonical.read_text(encoding="utf-8")
+    resource = files("llm_grounding.infrastructure.config") / "baseline_v0.yaml"
+    if resource.is_file():
+        return resource.read_text(encoding="utf-8")
+    return (
+        _checkout_root() / "configs/architectures/baseline_v0.yaml"
+    ).read_text(encoding="utf-8")
+
+
+def _standalone_models_directory() -> Path:
+    """Return the checkout or packaged standalone model directory."""
+    checkout = _checkout_root() / "config/models"
+    if checkout.is_dir():
+        return checkout
+    packaged = files("llm_grounding.infrastructure.config") / "standalone/models"
+    return Path(str(packaged))
+
+
+def _standalone_components_directory() -> Path:
+    """Return the checkout or packaged standalone component directory."""
+    checkout = _checkout_root() / "config/components"
+    if checkout.is_dir():
+        return checkout
+    packaged = files("llm_grounding.infrastructure.config") / "standalone/components"
+    return Path(str(packaged))
+
+
+def _model_validate(
+    value: object, kind: str
+) -> DeclarativeArchitectureConfig | DeclarativePipelineConfig:
+    """Validate one canonical source model with loader-level error formatting."""
+    model = (
+        DeclarativeArchitectureConfig
+        if kind == "architecture"
+        else DeclarativePipelineConfig
+    )
+    try:
+        return model.model_validate(value)
+    except ValidationError as exc:
+        raise ConfigurationError(_validation_locations(kind, exc)) from exc
 
 
 def _validation_locations(kind: str, error: ValidationError) -> str:

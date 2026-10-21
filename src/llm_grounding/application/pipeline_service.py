@@ -11,6 +11,10 @@ from llm_grounding.application.pipeline_runtime import (
     ResolvedPipeline,
 )
 from llm_grounding.domain.corpus import Pipeline
+from llm_grounding.infrastructure.config.loader import (
+    ConfigurationError,
+    load_configuration_registry,
+)
 from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
     PipelineConfig,
@@ -450,8 +454,22 @@ class PipelineService:
 
     def catalog(self) -> dict[str, object]:
         """Return registered stages, schemas, and compatibility constraints."""
+        try:
+            standalone = load_configuration_registry()
+            components: dict[str, list[str]] = {}
+            for category, component in standalone.components.values():
+                components.setdefault(category, []).append(component.id)
+            for category in components:
+                components[category].sort()
+            configuration_ids: dict[str, object] = {
+                "models": sorted(standalone.models),
+                "components": components,
+            }
+        except ConfigurationError:
+            configuration_ids = {"models": [], "components": {}}
         return {
             "schema_version": 1,
+            "configuration_ids": configuration_ids,
             "pipeline_kinds": {
                 "ingestion": [
                     "parser",

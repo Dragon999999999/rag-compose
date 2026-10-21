@@ -1,0 +1,21 @@
+schema_version: 2
+name: basic_rag_large_chunks
+version: 1
+description: Grounded retrieval with broad chunks and a larger answer context.
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: knowledge_basic
+  chunker: chunker_large_block_aware
+  embedding: embedding_local_minilm
+  vector_backend: vector_backend_qdrant
+query:
+  retriever: retriever_vector_large
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+    - assessor_source_reference
+  decision_policy: decision_basic_grounding
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10

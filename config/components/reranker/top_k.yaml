@@ -1,0 +1,4 @@
+id: reranker_top_k
+type: top_k
+retrieval_top_k: 20
+rerank_top_k: 5

@@ -1,6 +1,7 @@
 """Lazy Sentence Transformers adapter with cache-only query loading."""
 
 import asyncio
+import os
 
 from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.ingestion.models import EmbeddingConfig
@@ -33,11 +34,15 @@ class SentenceTransformersEmbedder:
             raise RuntimeError(
                 "Install llm-grounding[embeddings] to use sentence_transformers"
             ) from exc
-        self._model = SentenceTransformer(
-            self._config.model,
-            revision=self._config.revision,
-            local_files_only=not allow_download,
-        )
+        kwargs: dict[str, object] = {
+            "revision": self._config.revision,
+            "local_files_only": not allow_download,
+        }
+        if self._config.cache_dir_env is not None:
+            cache_dir = os.environ.get(self._config.cache_dir_env, "").strip()
+            if cache_dir:
+                kwargs["cache_folder"] = cache_dir
+        self._model = SentenceTransformer(self._config.model, **kwargs)
         return self._model
 
     def _encode(

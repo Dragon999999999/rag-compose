@@ -1,0 +1,4 @@
+id: embedder_aqueduct_qwen
+type: openai_compatible
+model_id: aqueduct_qwen_embedding
+batch_size: 32

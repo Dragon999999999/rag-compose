@@ -1,0 +1,4 @@
+id: cross_encoder_minilm
+backend: sentence_transformers
+name: cross-encoder/ms-marco-MiniLM-L6-v2
+dimension: 384

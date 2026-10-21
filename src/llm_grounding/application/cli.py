@@ -94,7 +94,11 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
         "import", help="Synchronize pipeline YAML files into PostgreSQL"
     )
     pipeline_import.add_argument(
-        "directory", type=Path, default=Path("configs/pipelines"), nargs="?"
+        "directory",
+        type=Path,
+        default=None,
+        nargs="?",
+        help="Pipeline directory (default: canonical config/pipelines)",
     )
     deactivate = pipeline_commands.add_parser(
         "delete", help="Deactivate one persisted pipeline"

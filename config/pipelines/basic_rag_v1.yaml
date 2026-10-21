@@ -1,0 +1,22 @@
+schema_version: 2
+name: basic_rag_v1
+version: 1
+description: Default grounded vector-retrieval pipeline.
+is_default: true
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: knowledge_basic
+  chunker: chunker_block_aware
+  embedding: embedding_local_minilm
+  vector_backend: vector_backend_qdrant
+query:
+  retriever: retriever_vector
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+    - assessor_source_reference
+  decision_policy: decision_basic_grounding
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10

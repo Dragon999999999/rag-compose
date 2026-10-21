@@ -1,0 +1,5 @@
+id: retriever_vector_small
+type: vector
+top_k: 6
+context_chars: 10000
+summary_per_facet: 3

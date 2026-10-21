@@ -46,7 +46,10 @@ class AqueductModelClient:
             RuntimeError: If Aqueduct credentials are unavailable.
             ModelRequestError: If the deadline, network call, or validation fails.
         """
-        api_key = resolve_api_key()
+        api_key = resolve_api_key(
+            self._config.api_key_env,
+            self._config.api_key_file_env,
+        )
         try:
             async with asyncio.timeout(self._config.timeout_seconds):
                 async with AsyncOpenAI(

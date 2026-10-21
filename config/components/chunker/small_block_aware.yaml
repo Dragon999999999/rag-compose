@@ -1,0 +1,5 @@
+id: chunker_small_block_aware
+type: block_aware
+version: '1'
+target_chars: 500
+overlap_chars: 80
