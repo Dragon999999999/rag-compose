@@ -11,6 +11,8 @@ export const keys = { projects: ["projects"] as const, pipelines: (includeInacti
 export const useProjects = () => useQuery({ queryKey: keys.projects, queryFn: projectsApi.list });
 export const usePipelines = (includeInactive = false) => useQuery({ queryKey: keys.pipelines(includeInactive), queryFn: () => pipelinesApi.list(includeInactive) });
 export const usePipeline = (pipelineId?: string) => useQuery({ queryKey: ["pipelines", pipelineId], queryFn: () => pipelinesApi.get(pipelineId!), enabled: Boolean(pipelineId) });
+export const usePipelineCatalog = () => useQuery({ queryKey: ["pipeline-catalog"], queryFn: pipelinesApi.catalog });
+export const useModelCatalog = () => useQuery({ queryKey: ["model-catalog"], queryFn: pipelinesApi.models });
 export const useChats = (projectId?: string) => useQuery({ queryKey: keys.chats(projectId ?? ""), queryFn: () => chatsApi.list(projectId!), enabled: !!projectId });
 export const useMessages = (chatId?: string) => useQuery({ queryKey: keys.messages(chatId ?? ""), queryFn: () => chatsApi.messages(chatId!), enabled: !!chatId });
 export const useSources = (projectId?: string) => useQuery({ queryKey: keys.sources(projectId ?? ""), queryFn: () => documentsApi.list(projectId!), enabled: !!projectId });

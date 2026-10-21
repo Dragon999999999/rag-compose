@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { Pipeline, PipelineConfig } from "./types";
+import type { ModelCatalog, Pipeline, PipelineCatalog, PipelineConfig } from "./types";
 
 export const pipelinesApi = {
   list: (includeInactive = false) =>
@@ -21,4 +21,6 @@ export const pipelinesApi = {
     }),
   deactivate: (pipelineId: string) =>
     request<void>(`/pipelines/${pipelineId}`, { method: "DELETE" }),
+  catalog: () => request<PipelineCatalog>("/catalog"),
+  models: () => request<ModelCatalog>("/models"),
 };

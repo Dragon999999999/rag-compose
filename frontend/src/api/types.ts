@@ -1,4 +1,31 @@
 export type Project = { id: string; name: string; created_at: string };
+export type JsonSchema = {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+  const?: unknown;
+  enum?: unknown[];
+  anyOf?: JsonSchema[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+};
+export type CatalogStage = { implementations: string[]; schema: JsonSchema };
+export type PipelineCatalog = {
+  schema_version: number;
+  stages: Record<string, CatalogStage>;
+  compatibility: Record<string, unknown>;
+};
+export type ModelDefinition = Record<string, unknown> & { name?: string; model?: string; dimension?: number; normalize?: boolean };
+export type ModelCatalog = {
+  schema_version: number;
+  embedding: Record<string, ModelDefinition>;
+  reasoning: Record<string, ModelDefinition>;
+};
 export type PipelineConfig = {
   schema_version: number;
   name: string;
