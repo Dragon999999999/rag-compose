@@ -20,6 +20,16 @@ def upgrade() -> None:
     Qdrant is intentionally not represented here: its vectors are derived from
     these canonical rows and may be independently deleted and rebuilt.
     """
+
+    # Allow Alembic revision identifiers longer than 32 characters.
+    # Alembic creates its version table before executing this migration.
+    op.execute(
+        """
+        ALTER TABLE alembic_version
+        ALTER COLUMN version_num TYPE VARCHAR(128)
+        """
+    )
+
     op.create_table(
         "projects",
         sa.Column("id", sa.String(36), primary_key=True),

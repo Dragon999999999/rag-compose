@@ -4,9 +4,9 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-import sqlalchemy as sa
 from alembic import context
 from sqlalchemy import pool
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from llm_grounding.infrastructure.config.env import load_environment
@@ -32,19 +32,9 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection):
-    connection.execute(
-        sa.text("""
-            ALTER TABLE IF EXISTS alembic_version
-            ALTER COLUMN version_num TYPE VARCHAR(128)
-        """)
-    )
-
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-    )
-
+def do_run_migrations(connection: Connection) -> None:
+    """Apply migrations over Alembic's synchronous bridge connection."""
+    context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
 
