@@ -1,6 +1,6 @@
 schema_version: 2
 name: basic_rag_v1
-version: 1
+version: 2
 description: Default grounded vector-retrieval pipeline.
 is_default: true
 representation:
