@@ -157,7 +157,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .status { font-size: 12px; font-weight: 650; }
 .status-ready { color: var(--color-success); }
 .status-failed { color: var(--color-danger); }
-.status-indexing, .status-embedding, .status-parsing, .status-chunking { color: var(--color-accent); }
+.status-uploading, .status-preprocessing, .status-indexing, .status-embedding, .status-parsing, .status-chunking { color: var(--color-accent); }
 
 .dialog-backdrop { align-items: center; background: rgb(0 0 0 / 68%); display: grid; inset: 0; place-items: center; position: fixed; z-index: 20; }
 .dialog { width: min(480px, calc(100vw - 32px)); background: var(--color-surface-raised); border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); padding: 18px; }

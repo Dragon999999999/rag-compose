@@ -15,6 +15,12 @@ type SourcesWorkspaceProps = {
   onOpen: (source: Source) => void;
 };
 
+type PendingUpload = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
 export function SourcesWorkspace({
   sources,
   loading,
@@ -26,6 +32,7 @@ export function SourcesWorkspace({
   onOpen,
 }: SourcesWorkspaceProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);
 
   const selectFile = (candidate?: File): void => {
@@ -36,15 +43,171 @@ export function SourcesWorkspace({
     setFile(candidate);
   };
 
-  const upload = async (): Promise<void> => {
+  const upload = (): void => {
     if (!file) return;
-    try {
-      await onUpload(file);
-      setFile(null);
-    } catch {
-      // The mutation error is rendered in the dialog without exposing a stack trace.
-    }
+    const selectedFile = file;
+    const createdAt = new Date().toISOString();
+    setFile(null);
+    setPendingUpload({
+      id: `uploading-${Date.now()}`,
+      name: selectedFile.name,
+      createdAt,
+    });
+
+    // Keep the upload row visible while the server processes the document after
+    // the confirmation dialog has closed.
+    void onUpload(selectedFile).then(
+      () => setPendingUpload(null),
+      () => setPendingUpload(null),
+    );
   };
 
-  return <section className="sources-workspace"><header><div><h2>Sources</h2><p>Manage the PDFs available to this project.</p></div><Button variant="primary" onClick={() => document.getElementById("pdf-upload")?.click()}>＋ Add PDF</Button><input id="pdf-upload" className="sr-only" type="file" accept="application/pdf" onChange={event => selectFile(event.target.files?.[0])} /></header>{loading && <div className="source-skeleton">Loading sources…</div>}{error && <ErrorState error={error} />}{!loading && !error && !sources?.length && <EmptyState title="No sources yet">Add PDFs to build the evidence corpus for this project.</EmptyState>}{sources?.length ? <div className="sources-table"><div className="sources-head"><span>Filename</span><span>Status</span><span>Added</span><span /></div>{sources.map(source => <div className="source-row source-row-openable" key={source.document.id}><button className="source-name" onClick={() => onOpen(source)}>{source.document.name}</button><StatusBadge status={source.ingestion?.status ?? "pending"} /><time>{new Date(source.document.created_at).toLocaleDateString()}</time><details className="action-menu"><summary aria-label={`Manage ${source.document.name}`}>…</summary><button className="danger-action" onClick={() => setRemoveId(source.document.id)} type="button">Remove source</button></details></div>)}</div> : null}{file && <Dialog title="Upload PDF" onClose={() => !uploading && setFile(null)}><div className="upload-summary"><strong>{file.name}</strong><span>{(file.size / 1_000_000).toFixed(1)} MB</span><p>Upload begins only after confirmation. The source will then progress through its real ingestion stages.</p>{uploadError && <p className="form-error" role="alert">{uploadError.message}</p>}<footer><Button variant="ghost" disabled={uploading} onClick={() => setFile(null)}>Cancel</Button><Button variant="primary" disabled={uploading} onClick={() => void upload()}>{uploading ? "Uploading…" : "Upload PDF"}</Button></footer></div></Dialog>}{removeId && <Dialog title="Remove source?" onClose={() => setRemoveId(null)}><p>This removes the document from this project, but keeps reusable canonical content intact.</p><footer><Button variant="ghost" onClick={() => setRemoveId(null)}>Cancel</Button><Button variant="danger" onClick={() => { onRemove(removeId); setRemoveId(null); }}>Remove source</Button></footer></Dialog>}</section>;
+  const pendingSource: Source | null = pendingUpload
+    ? {
+        document: {
+          id: pendingUpload.id,
+          name: pendingUpload.name,
+          created_at: pendingUpload.createdAt,
+        },
+        ingestion: {
+          id: pendingUpload.id,
+          status: "uploading",
+          error: null,
+          created_at: pendingUpload.createdAt,
+        },
+        summary: null,
+      }
+    : null;
+  const visibleSources = pendingSource
+    ? [pendingSource, ...(sources ?? [])]
+    : (sources ?? []);
+
+  return (
+    <section className="sources-workspace">
+      <header>
+        <div>
+          <h2>Sources</h2>
+          <p>Manage the PDFs available to this project.</p>
+        </div>
+        <Button
+          disabled={uploading}
+          variant="primary"
+          onClick={() => document.getElementById("pdf-upload")?.click()}
+        >
+          ＋ Add PDF
+        </Button>
+        <input
+          id="pdf-upload"
+          className="sr-only"
+          type="file"
+          accept="application/pdf"
+          onChange={(event) => selectFile(event.target.files?.[0])}
+        />
+      </header>
+      {uploadError && (
+        <p className="form-error source-upload-error" role="alert">
+          Upload failed: {uploadError.message}
+        </p>
+      )}
+      {loading && <div className="source-skeleton">Loading sources…</div>}
+      {error && <ErrorState error={error} />}
+      {!loading && !error && !visibleSources.length && (
+        <EmptyState title="No sources yet">
+          Add PDFs to build the evidence corpus for this project.
+        </EmptyState>
+      )}
+      {visibleSources.length ? (
+        <div className="sources-table">
+          <div className="sources-head">
+            <span>Filename</span>
+            <span>Status</span>
+            <span>Added</span>
+            <span />
+          </div>
+          {visibleSources.map((source) => (
+            <div className="source-row source-row-openable" key={source.document.id}>
+              <button
+                className="source-name"
+                disabled={source.document.id === pendingUpload?.id}
+                onClick={() => onOpen(source)}
+              >
+                {source.document.name}
+              </button>
+              <StatusBadge status={source.ingestion?.status ?? "pending"} />
+              <time>{new Date(source.document.created_at).toLocaleDateString()}</time>
+              {source.document.id === pendingUpload?.id ? (
+                <span />
+              ) : (
+                <details className="action-menu">
+                  <summary aria-label={`Manage ${source.document.name}`}>…</summary>
+                  <button
+                    className="danger-action"
+                    onClick={() => setRemoveId(source.document.id)}
+                    type="button"
+                  >
+                    Remove source
+                  </button>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {file && (
+        <Dialog title="Upload PDF" onClose={() => !uploading && setFile(null)}>
+          <div className="upload-summary">
+            <strong>{file.name}</strong>
+            <span>{(file.size / 1_000_000).toFixed(1)} MB</span>
+            <p>
+              Upload begins only after confirmation. The source will then progress
+              through its real ingestion stages.
+            </p>
+            {uploadError && (
+              <p className="form-error" role="alert">
+                {uploadError.message}
+              </p>
+            )}
+            <footer>
+              <Button
+                variant="ghost"
+                disabled={uploading}
+                onClick={() => setFile(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={uploading}
+                onClick={upload}
+              >
+                {uploading ? "Uploading…" : "Upload PDF"}
+              </Button>
+            </footer>
+          </div>
+        </Dialog>
+      )}
+      {removeId && (
+        <Dialog title="Remove source?" onClose={() => setRemoveId(null)}>
+          <p>
+            This removes the document from this project, but keeps reusable
+            canonical content intact.
+          </p>
+          <footer>
+            <Button variant="ghost" onClick={() => setRemoveId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                onRemove(removeId);
+                setRemoveId(null);
+              }}
+            >
+              Remove source
+            </Button>
+          </footer>
+        </Dialog>
+      )}
+    </section>
+  );
 }
