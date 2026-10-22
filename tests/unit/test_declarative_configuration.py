@@ -15,15 +15,15 @@ from llm_grounding.infrastructure.config.loader import (
 from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 
 
-def test_standalone_registry_resolves_ids_and_allows_model_reuse() -> None:
-    """Different internal IDs may target one provider model with different settings."""
+def test_standalone_registry_resolves_ids_and_preserves_model_settings() -> None:
+    """Different internal IDs retain their explicit stage and runtime settings."""
     registry = load_configuration_registry()
 
     first = registry.model("reasoning_001")
     second = registry.model("reasoning_002")
 
     assert first.id != second.id
-    assert first.name == second.name == "qwen-3.5-397b"
+    assert first.stage == second.stage == "reasoner"
     assert first.timeout_seconds != second.timeout_seconds
     assert registry.component("reasoner", "reasoner_basic_summary").model_id == (
         "reasoning_001"
@@ -43,6 +43,18 @@ def test_composition_only_pipeline_has_no_provider_settings() -> None:
     assert "top_k" not in str(value)
 
 
+def test_model_catalog_uses_explicit_stage_tags() -> None:
+    """Standalone model stages determine catalog membership instead of backend type."""
+    catalog = load_configuration_registry().model_catalog()
+
+    assert "aqueduct_qwen_embedding" in catalog.embedding_models
+    assert "aqueduct_qwen_embedding" not in catalog.reasoning_models
+    assert "reasoning_001" in catalog.reasoning_models
+    assert "reasoning_001" not in catalog.embedding_models
+    assert "cross_encoder_minilm" not in catalog.embedding_models
+    assert "cross_encoder_minilm" not in catalog.reasoning_models
+
+
 def test_duplicate_standalone_ids_are_rejected(tmp_path: Path) -> None:
     """IDs, rather than filenames, are authoritative and must be unique."""
     models = tmp_path / "models"
@@ -51,6 +63,7 @@ def test_duplicate_standalone_ids_are_rejected(tmp_path: Path) -> None:
     components.mkdir(parents=True)
     model = """\
 id: duplicate
+stage: embedding
 backend: sentence_transformers
 name: sentence-transformers/all-MiniLM-L6-v2
 """
@@ -83,9 +96,10 @@ def test_missing_component_reference_is_rejected() -> None:
 
 def test_default_architecture_is_resolved_from_component_ids() -> None:
     """The application default now resolves reusable component definitions."""
+    registry = load_configuration_registry()
     config = load_architecture_config()
 
     assert config.parser.type == "pymupdf"
-    assert config.reasoner.model.name == "qwen-3.5-397b"
+    assert config.reasoner.model.name == registry.model("reasoning_001").name
     assert config.embedder is not None
     assert config.embedder.model.name == "qwen3-embedding-4b"

@@ -105,13 +105,9 @@ class ConfigurationRegistry:
         embedding: dict[str, EmbeddingConfig] = {}
         reasoning: dict[str, ModelConfig] = {}
         for model_id, definition in self.models.items():
-            if isinstance(definition, OpenAICompatibleModelDefinition):
-                runtime = self._model_config(model_id)
-                reasoning[model_id] = runtime
-                embedding[model_id] = self._embedding_config(model_id)
-            elif isinstance(
-                definition, (SentenceTransformersModelDefinition, FakeModelDefinition)
-            ):
+            if definition.stage == "reasoner":
+                reasoning[model_id] = self._model_config(model_id)
+            elif definition.stage == "embedding":
                 embedding[model_id] = self._embedding_config(model_id)
         return ModelCatalog(
             embedding_models=embedding,
@@ -299,6 +295,7 @@ class ConfigurationRegistry:
         if definition.model_id is None:
             raise ValueError(f"Embedder component {component_id} requires model_id")
         definition_model = self.model(definition.model_id)
+        self._validate_model_stage(definition.model_id, definition_model, "embedding")
         if isinstance(definition_model, SentenceTransformersModelDefinition):
             model: ModelConfig | LocalModelConfig = LocalModelConfig(
                 provider="sentence_transformers",
@@ -325,7 +322,9 @@ class ConfigurationRegistry:
             )
         values = definition.settings()
         if definition.model_id is not None:
-            values["model_name"] = self.model(definition.model_id).name
+            model = self.model(definition.model_id)
+            self._validate_model_stage(definition.model_id, model, "reranker")
+            values["model_name"] = model.name
         return RerankerConfig.model_validate({"type": definition.type, **values})
 
     def _reasoner(self, component_id: str) -> ReasonerConfig:
@@ -336,7 +335,9 @@ class ConfigurationRegistry:
         return ReasonerConfig.model_validate(
             {
                 "type": definition.type,
-                "model": self._model_config(definition.model_id),
+                "model": self._model_config(
+                    self._model_id_for_component("reasoner", component_id)
+                ),
                 **definition.settings(),
             }
         )
@@ -349,7 +350,7 @@ class ConfigurationRegistry:
         return PipelineReasonerConfig.model_validate(
             {
                 "type": definition.type,
-                "model_ref": definition.model_id,
+                "model_ref": self._model_id_for_component("reasoner", component_id),
                 **definition.settings(),
             }
         )
@@ -359,8 +360,23 @@ class ConfigurationRegistry:
         definition = self.component(category, component_id)
         if definition.model_id is None:
             raise ValueError(f"{category} component {component_id} requires model_id")
-        self.model(definition.model_id)
+        model = self.model(definition.model_id)
+        expected_stage = "embedding" if category == "embedder" else category
+        self._validate_model_stage(definition.model_id, model, expected_stage)
         return definition.model_id
+
+    @staticmethod
+    def _validate_model_stage(
+        model_id: str,
+        model: ModelDefinition,
+        expected_stage: str,
+    ) -> None:
+        """Reject component references to models assigned to another stage."""
+        if model.stage != expected_stage:
+            raise ValueError(
+                f"Model {model_id} is tagged for {model.stage}, "
+                f"not {expected_stage}"
+            )
 
 
 def _yaml_paths(directory: Path) -> tuple[Path, ...]:

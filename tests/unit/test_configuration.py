@@ -7,6 +7,7 @@ import pytest
 from llm_grounding.infrastructure.config.loader import (
     ConfigurationError,
     load_architecture_config,
+    load_configuration_registry,
 )
 from llm_grounding.infrastructure.config.models import ArchitectureConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
@@ -19,7 +20,9 @@ def test_default_configuration_matches_repository_yaml(
     assert load_architecture_config() == config
     assert config.name == "baseline_v0"
     assert config.version == 0
-    assert config.reasoner.model.name == "qwen-3.5-397b"
+    assert config.reasoner.model.name == load_configuration_registry().model(
+        "reasoning_001"
+    ).name
     assert config.embedder is not None
     assert config.embedder.model.name == "qwen3-embedding-4b"
     assert (

@@ -19,6 +19,11 @@ contain only component IDs such as `embedding_local_minilm` and
 `reasoner_basic_grounded`; components reference model IDs internally. Credentials
 are resolved by the existing environment-backed provider adapters.
 
+Each standalone model definition includes a required `stage` tag: `embedding`,
+`reasoner`, or `reranker`. The registry uses this tag to expose models only to
+the matching pipeline stage; backend type alone does not determine stage
+eligibility.
+
 YAML-owned records are updated when their file fingerprint changes. Records
 created or edited through an API are marked `source_kind: api` and are never
 overwritten by startup synchronization with a same-name YAML file.

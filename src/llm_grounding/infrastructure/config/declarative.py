@@ -29,6 +29,9 @@ class ModelDefinitionBase(BaseModel):
         pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$",
         description="Stable internal model-configuration identifier.",
     )
+    stage: Literal["embedding", "reasoner", "reranker"] = Field(
+        description="Pipeline stage allowed to reference this model."
+    )
     name: str = Field(
         min_length=1,
         description="Provider or local runtime model name; not the internal ID.",

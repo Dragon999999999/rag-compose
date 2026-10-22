@@ -1,4 +1,5 @@
 id: embedding_001
+stage: embedding
 backend: sentence_transformers
 name: sentence-transformers/all-MiniLM-L6-v2
 dimension: 384
