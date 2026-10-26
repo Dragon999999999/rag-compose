@@ -103,6 +103,8 @@ function ProjectHome() {
           <Button variant="primary" onClick={() => setCreate(true)}>
             Create project
           </Button>
+          {" "}
+          <Button onClick={() => navigate("/pipelines")}>View pipelines</Button>
         </p>
       </EmptyState>
       {create && (
