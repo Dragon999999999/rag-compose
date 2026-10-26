@@ -45,7 +45,7 @@ def pdf_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def config() -> ArchitectureConfig:
     """Load the checked-in architecture used by the actual application."""
-    return load_architecture_config(Path("configs/architectures/baseline_v0.yaml"))
+    return load_architecture_config(Path("config/architectures/baseline_v0.yaml"))
 
 
 @pytest.fixture

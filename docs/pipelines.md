@@ -3,8 +3,7 @@
 Pipeline YAML is an import mechanism; PostgreSQL is the runtime source of truth.
 Canonical composition files live under `config/pipelines/`. They are validated
 against the standalone model registry in `config/models/` and component registry
-in `config/components/`, then synchronized into the `pipelines` table. The older
-`configs/` layout remains readable as a migration format.
+in `config/components/`, then synchronized into the `pipelines` table.
 
 Each pipeline has two identities:
 

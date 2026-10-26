@@ -165,9 +165,9 @@ class RecordingRuntime:
 
 async def test_pipeline_service_crud_validates_and_invalidates_runtime_async() -> None:
     """API-owned CRUD uses one validated service and clears stale runtimes."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     runtime = RecordingRuntime()
@@ -187,9 +187,9 @@ async def test_pipeline_service_crud_validates_and_invalidates_runtime_async() -
 
 async def test_used_pipeline_reports_changes_and_requires_an_explicit_choice() -> None:
     """Dependent conversations prevent an implicit in-place update."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     service = PipelineService(repository, catalog)  # type: ignore[arg-type]
@@ -218,9 +218,9 @@ async def test_used_pipeline_reports_changes_and_requires_an_explicit_choice() -
 async def test_used_pipeline_can_migrate_query_changes_but_not_representation_changes(
 ) -> None:
     """Migrate query changes while blocking representation changes."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     service = PipelineService(repository, catalog)  # type: ignore[arg-type]
@@ -271,9 +271,9 @@ async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations()
     None
 ):
     """Different stored query parameters create distinct runnable compositions."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     base = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     for index, top_k in enumerate((3, 7, 11), start=1):
@@ -329,9 +329,9 @@ async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations()
 
 async def test_runtime_resolver_rebuilds_after_persisted_hash_changes() -> None:
     """A changed persisted configuration cannot reuse the old runtime instance."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     now = datetime.now(UTC)
     record = Pipeline(
@@ -384,9 +384,9 @@ async def test_runtime_resolver_rebuilds_after_persisted_hash_changes() -> None:
 
 async def test_runtime_resolver_rejects_incompatible_representation_identity() -> None:
     """A stale index identity cannot be silently paired with a pipeline runtime."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     now = datetime.now(UTC)
     record = Pipeline(
@@ -420,7 +420,7 @@ async def test_runtime_resolver_rejects_incompatible_representation_identity() -
 
 async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None:
     """HTTP routes delegate CRUD and discovery to the shared pipeline service."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     repository = PipelineRepository(catalog)
     service = PipelineService(repository, catalog)  # type: ignore[arg-type]
     application = SimpleNamespace(
@@ -431,7 +431,7 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     )
     api = create_api(application)  # type: ignore[arg-type]
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
 
     transport = httpx.ASGITransport(app=api)
@@ -455,7 +455,7 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     assert updated_response.status_code == 200
     assert listed_response.status_code == 200
     assert detail_response.json()["config"] == changed_config.model_copy(
-        update={"version": 2}
+        update={"version": 3}
     ).model_dump(mode="json")
     assert "vector_backend" in catalog_response.json()["stages"]
     assert "embedding_001" in models_response.json()["embedding"]

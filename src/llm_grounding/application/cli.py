@@ -146,7 +146,7 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
         print(f"valid\t{config.name}\t{config.config_hash}")
         return 0
     architecture = load_architecture_config(
-        Path("configs/architectures/basic_rag_v1.yaml")
+        Path("config/architectures/basic_rag_v1.yaml")
     )
     ingestion = load_ingestion_config(getattr(args, "ingestion", None))
     diagnostics_level = GroundingDiagnosticsLevel(

@@ -64,23 +64,23 @@ def load_architecture_config(path: Path | None = None) -> ArchitectureConfig:
 
 
 def load_ingestion_config(path: Path | None = None) -> IngestionConfig:
-    """Read explicit or packaged ingestion settings with the same safe YAML boundary."""
+    """Read explicit or canonical ingestion settings with the safe YAML boundary.
+
+    The canonical ingestion pipeline is resolved into the execution model used
+    by the ingestion service. Explicit paths may still contain the established
+    runtime schema for callers that construct temporary configurations.
+    """
     try:
-        if path is not None:
-            content = path.read_text(encoding="utf-8")
-        else:
-            resource = (
-                files("llm_grounding.infrastructure.config") / "ingestion_default.yaml"
-            )
-            content = (
-                resource.read_text(encoding="utf-8")
-                if resource.is_file()
-                else (
-                    Path(__file__).resolve().parents[4]
-                    / "configs/ingestion/default.yaml"
-                ).read_text(encoding="utf-8")
-            )
-        return IngestionConfig.model_validate(yaml.safe_load(content))
+        ingestion_path = path or _default_ingestion_pipeline_path()
+        value = yaml.safe_load(ingestion_path.read_text(encoding="utf-8"))
+        if isinstance(value, dict) and value.get("schema_version") == 2:
+            pipeline = load_pipeline_config(ingestion_path)
+            if pipeline.kind != "ingestion":
+                raise ConfigurationError(
+                    "The ingestion configuration must select an ingestion pipeline"
+                )
+            return pipeline.resolve_ingestion(load_model_catalog())
+        return IngestionConfig.model_validate(value)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
             "Unable to read ingestion YAML; check its path and syntax."
@@ -90,7 +90,7 @@ def load_ingestion_config(path: Path | None = None) -> IngestionConfig:
 
 
 def load_model_catalog(path: Path | None = None) -> ModelCatalog:
-    """Read the legacy catalog or convert standalone model files into one."""
+    """Read an explicit catalog or convert standalone model files into one."""
     try:
         if path is None and _standalone_models_directory().is_dir():
             return load_configuration_registry().model_catalog()
@@ -156,8 +156,6 @@ def discover_pipeline_paths(directory: Path | None = None) -> tuple[Path, ...]:
     """Return deterministic YAML pipeline files from the configured directory."""
     root = directory or _checkout_root() / "config/pipelines"
     if directory is None and not root.is_dir():
-        root = _checkout_root() / "configs/pipelines"
-    if directory is None and not root.is_dir():
         packaged_standalone = (
             files("llm_grounding.infrastructure.config") / "standalone/pipelines"
         )
@@ -195,11 +193,11 @@ def _yaml_content(path: Path | None, packaged_name: str) -> object:
         content = path.read_text(encoding="utf-8")
     elif packaged_name:
         resource = files("llm_grounding.infrastructure.config") / packaged_name
-        content = (
-            resource.read_text(encoding="utf-8")
-            if resource.is_file()
-            else (_checkout_root() / "configs/models.yaml").read_text(encoding="utf-8")
-        )
+        if not resource.is_file():
+            raise FileNotFoundError(
+                f"Packaged configuration is missing: {packaged_name}"
+            )
+        content = resource.read_text(encoding="utf-8")
     else:
         raise ValueError("An explicit pipeline path is required")
     value = yaml.safe_load(content)
@@ -222,6 +220,15 @@ def _default_pipeline_path() -> Path:
     raise ConfigurationError("No default basic_rag_v1 pipeline configuration exists")
 
 
+def _default_ingestion_pipeline_path() -> Path:
+    """Return the canonical ingestion pipeline used by the execution service."""
+    paths = discover_pipeline_paths()
+    for path in paths:
+        if path.stem == "ingestion_default_v1":
+            return path
+    raise ConfigurationError("No default ingestion pipeline configuration exists")
+
+
 def load_configuration_registry(
     models_directory: Path | None = None,
     components_directory: Path | None = None,
@@ -237,7 +244,7 @@ def load_configuration_registry(
 
 
 def _architecture_content(path: Path | None) -> str:
-    """Load canonical architecture YAML, falling back to the legacy resource."""
+    """Load canonical architecture YAML from the checkout or package."""
     if path is not None:
         return path.read_text(encoding="utf-8")
     canonical = _checkout_root() / "config/architectures/baseline_v0.yaml"
@@ -249,12 +256,7 @@ def _architecture_content(path: Path | None) -> str:
     )
     if packaged_canonical.is_file():
         return packaged_canonical.read_text(encoding="utf-8")
-    resource = files("llm_grounding.infrastructure.config") / "baseline_v0.yaml"
-    if resource.is_file():
-        return resource.read_text(encoding="utf-8")
-    return (
-        _checkout_root() / "configs/architectures/baseline_v0.yaml"
-    ).read_text(encoding="utf-8")
+    raise ConfigurationError("No default architecture configuration exists")
 
 
 def _standalone_models_directory() -> Path:

@@ -20,7 +20,7 @@ UTF-8 key file. Both are stripped of surrounding whitespace. `.env.example`
 documents the variables; the application does not automatically load `.env`.
 
 The default architecture is defined in
-[`configs/architectures/baseline_v0.yaml`](configs/architectures/baseline_v0.yaml).
+[`config/architectures/baseline_v0.yaml`](config/architectures/baseline_v0.yaml).
 It uses `qwen-3.5-397b` for reasoning and declares the OpenAI-compatible
 `qwen3-embedding-4b` embedder at `https://aqueduct.ai.datalab.tuwien.ac.at/v1`.
 Baseline 0 uses full-document retrieval, so that embedder is not constructed or
@@ -30,7 +30,7 @@ Change the model settings in an explicit architecture file when needed:
 
 ```bash
 uv run python -m llm_grounding \
-  --architecture configs/architectures/baseline_v0.yaml \
+  --architecture config/architectures/baseline_v0.yaml \
   path/to/paper.pdf
 ```
 
@@ -42,8 +42,7 @@ Success means the pipeline completed; it does not establish factual correctness.
 The canonical reusable configuration definitions are under [`config/`](config/),
 with standalone models in [`config/models/`](config/models/) and components in
 [`config/components/`](config/components/). See
-[`docs/architecture.md`](docs/architecture.md) for the resolution and migration
-rules. Legacy files under `configs/` remain readable during migration.
+[`docs/architecture.md`](docs/architecture.md) for the resolution rules.
 
 ## Persistent Basic RAG v1 development
 
@@ -100,7 +99,7 @@ src/llm_grounding/
 ├── orchestration/      # Registry, composition, context, and linear execution
 ├── infrastructure/     # Typed YAML and Aqueduct adapter/credentials
 └── application/        # Service and CLI
-configs/architectures/baseline_v0.yaml
+config/architectures/baseline_v0.yaml
 tests/unit/
 tests/integration/
 ```

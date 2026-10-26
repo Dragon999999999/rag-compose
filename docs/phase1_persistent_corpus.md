@@ -52,7 +52,7 @@ assessments, and the decision to stderr. `--grounding-diagnostics verbose` also
 emits document text, chat history, and raw LLM output, so use it only for local
 debugging with data that is appropriate to log.
 
-`configs/ingestion/default.yaml` controls parsing, knowledge building, chunking, and
+`config/pipelines/ingestion_default_v1.yaml` controls parsing, knowledge building, chunking, and
 embedding identity. The identity includes parser, knowledge, chunker, embedding model,
 revision, dimension, normalization, and index versions. Adding the same PDF with the
 same identity reuses the ready representation. Changing a representation-defining value
@@ -60,7 +60,7 @@ creates a new ingestion and keeps the old one intact. Attaching a ready ingestio
 second project reuses its stored derived vectors under the new project association; it
 does not parse or embed the PDF again.
 
-Basic RAG v1 is described by `configs/architectures/basic_rag_v1.yaml`. Query retrieval
+Basic RAG v1 is described by `config/architectures/basic_rag_v1.yaml`. Query retrieval
 filters by project inside the vector-store operation before scoring. It can narrow to
 document IDs when supplied by a request. Retrieval output carries chunk ID, document,
 page span, evidence IDs, and character spans.

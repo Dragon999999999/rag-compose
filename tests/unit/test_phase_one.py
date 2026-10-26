@@ -644,9 +644,11 @@ class _UnusedSummaryRetriever:
 def test_configs_and_reingestion_identity_track_representation_changes() -> None:
     """Architecture/ingestion choices are typed, persisted, and identity-bearing."""
     architecture = load_architecture_config(
-        Path("configs/architectures/basic_rag_v1.yaml")
+        Path("config/architectures/basic_rag_v1.yaml")
     )
-    ingestion = load_ingestion_config(Path("configs/ingestion/default.yaml"))
+    ingestion = load_ingestion_config(
+        Path("config/pipelines/ingestion_default_v1.yaml")
+    )
     assert architecture.name == "basic_rag_v1"
     assert architecture.retriever.type == "vector"
     assert architecture.reasoner.prompt_id == "grounded_qa_v1"

@@ -26,9 +26,9 @@ from llm_grounding.orchestration.basic_rag import BasicRagRunner
 
 def pipeline_records() -> tuple[Pipeline, ...]:
     """Build one default, one compatible, and one incompatible pipeline."""
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     base = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     compatible = base.model_copy(
         update={
@@ -323,7 +323,7 @@ async def test_pipeline_updates_and_deactivation_are_safe() -> None:
     await chats.create_chat("project", "Research", "pipeline-b")
     current = repository.pipeline_records["pipeline-b"]
     changed_config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml")
+        Path("config/pipelines/basic_rag_v1.yaml")
     ).model_copy(update={"name": current.name, "description": "updated"})
     repository.pipeline_records[current.id] = replace(
         current,

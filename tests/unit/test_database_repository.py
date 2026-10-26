@@ -102,7 +102,7 @@ class ExpiringPipelineRow:
         self.config_hash = config.config_hash
         self.representation_hash = config.representation_hash()
         self.source_kind = "yaml"
-        self.source_path = "configs/pipelines/basic_rag_v1.yaml"
+        self.source_path = "config/pipelines/basic_rag_v1.yaml"
         self.source_fingerprint = "fingerprint"
         self.active = True
         self.is_default = config.is_default
@@ -184,9 +184,9 @@ async def test_pipeline_upsert_refreshes_expired_timestamp_before_mapping() -> N
         load_pipeline_config,
     )
 
-    catalog = load_model_catalog(Path("configs/models.yaml"))
+    catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("configs/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
     )
     timestamp = datetime.now(UTC)
     session = ExpiringPipelineSession(ExpiringPipelineRow(config, timestamp))
@@ -194,7 +194,7 @@ async def test_pipeline_upsert_refreshes_expired_timestamp_before_mapping() -> N
 
     record = await repository.upsert_pipeline_from_yaml(
         config,
-        source_path="configs/pipelines/basic_rag_v1.yaml",
+        source_path="config/pipelines/basic_rag_v1.yaml",
         source_fingerprint="fingerprint",
         representation_hash=config.representation_hash(catalog),
     )

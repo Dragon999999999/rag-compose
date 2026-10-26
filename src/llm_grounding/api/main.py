@@ -716,7 +716,7 @@ def main() -> None:
     """Start the browser API using the existing Basic RAG composition root."""
     load_environment()
     architecture = load_architecture_config(
-        Path("configs/architectures/basic_rag_v1.yaml")
+        Path("config/architectures/basic_rag_v1.yaml")
     )
     application = create_phase_one_application(
         architecture, load_ingestion_config(None)

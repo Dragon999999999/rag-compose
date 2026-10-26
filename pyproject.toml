@@ -38,16 +38,6 @@ build-backend = "hatchling.build"
 packages = ["src/llm_grounding"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"configs/architectures/baseline_v0.yaml" = "llm_grounding/infrastructure/config/baseline_v0.yaml"
-"configs/architectures/basic_rag_v1.yaml" = "llm_grounding/infrastructure/config/basic_rag_v1.yaml"
-"configs/ingestion/default.yaml" = "llm_grounding/infrastructure/config/ingestion_default.yaml"
-"configs/models.yaml" = "llm_grounding/infrastructure/config/models.yaml"
-"configs/pipelines/basic_rag_v1.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_v1.yaml"
-"configs/pipelines/basic_rag_small_chunks.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_small_chunks.yaml"
-"configs/pipelines/basic_rag_large_chunks.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_large_chunks.yaml"
-"configs/pipelines/basic_rag_fast_reasoning.yaml" = "llm_grounding/infrastructure/config/pipelines/basic_rag_fast_reasoning.yaml"
-"configs/pipelines/ingestion_default_v1.yaml" = "llm_grounding/infrastructure/config/pipelines/ingestion_default_v1.yaml"
-"configs/pipelines/query_basic_v1.yaml" = "llm_grounding/infrastructure/config/pipelines/query_basic_v1.yaml"
 "config/models" = "llm_grounding/infrastructure/config/standalone/models"
 "config/components" = "llm_grounding/infrastructure/config/standalone/components"
 "config/architectures" = "llm_grounding/infrastructure/config/standalone/architectures"
