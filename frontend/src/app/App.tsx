@@ -81,6 +81,8 @@ function ProjectHome() {
   const ingestionPipelines = usePipelines(false, "ingestion");
   const navigate = useNavigate();
   const [create, setCreate] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [evidenceOpen, setEvidenceOpen] = useState(true);
   const mutations = useProjectMutations();
 
   if (projects.isLoading) {
@@ -95,18 +97,69 @@ function ProjectHome() {
     return <Navigate to={`/projects/${firstProject.id}/sources`} replace />;
   }
 
+  const emptySidebar = (
+    <ProjectSidebar
+      chats={[]}
+      onDeleteChat={() => undefined}
+      onDeleteProject={() => undefined}
+      onNewChat={() => undefined}
+      onNewProject={() => setCreate(true)}
+      onRenameChat={() => undefined}
+      onRenameProject={() => undefined}
+      projects={[]}
+    />
+  );
+  const emptyHeader = (
+    <ProjectHeader
+      chat={undefined}
+      hasChats={false}
+      ingestionPipelines={ingestionPipelines.data ?? []}
+      onNewChat={() => undefined}
+      onPipelineChange={() => undefined}
+      onWorkspaceToggle={() => undefined}
+      project={undefined}
+      queryCompatibility={[]}
+      view="sources"
+    />
+  );
+  const emptyEvidence = (
+    <EvidenceWorkspace
+      activeChunk={null}
+      answer={null}
+      documentEvidence={null}
+      mode="evidence"
+      onBack={() => undefined}
+      onOpenPdf={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
   return (
-    <main className="home-state">
-      <EmptyState title="No projects yet">
-        Create a project to organize source documents and grounded conversations.
-        <p>
-          <Button variant="primary" onClick={() => setCreate(true)}>
-            Create project
-          </Button>
-          {" "}
-          <Button onClick={() => navigate("/pipelines")}>View pipelines</Button>
-        </p>
-      </EmptyState>
+    <>
+      <AppShell
+        evidence={emptyEvidence}
+        evidenceOpen={evidenceOpen}
+        header={emptyHeader}
+        onEvidenceToggle={() => setEvidenceOpen(!evidenceOpen)}
+        onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+        sidebar={emptySidebar}
+        sidebarOpen={sidebarOpen}
+      >
+        <section className="workspace-view">
+          <main className="home-state">
+            <EmptyState title="No projects yet">
+              Create a project to organize source documents and grounded conversations.
+              <p>
+                <Button variant="primary" onClick={() => setCreate(true)}>
+                  Create project
+                </Button>
+                {" "}
+                <Button onClick={() => navigate("/pipelines")}>View pipelines</Button>
+              </p>
+            </EmptyState>
+          </main>
+        </section>
+      </AppShell>
       {create && (
         <ProjectCreateDialog
           error={mutations.create.error}
@@ -123,7 +176,7 @@ function ProjectHome() {
           pending={mutations.create.isPending}
         />
       )}
-    </main>
+    </>
   );
 }
 
