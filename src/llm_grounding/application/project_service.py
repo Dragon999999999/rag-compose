@@ -164,13 +164,6 @@ class ProjectService:
         project = await self._repository.get_project(project_id)
         index = IndexCapabilities.from_mapping(project.index_capabilities)
         records = await self._pipeline_service.list(active_only=True, kind="query")
-        legacy_records = await self._pipeline_service.list(
-            active_only=True, kind="full"
-        )
-        record_ids = {item.id for item in records}
-        records = records + tuple(
-            record for record in legacy_records if record.id not in record_ids
-        )
         result: list[dict[str, object]] = []
         for record in records:
             config = PipelineConfig.model_validate(record.config)

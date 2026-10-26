@@ -1,4 +1,4 @@
-"""Terminal commands for Baseline 0 and persistent Basic RAG v1 workspaces."""
+"""Terminal commands for persistent ingestion and query workspaces."""
 
 import argparse
 import asyncio
@@ -8,11 +8,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from llm_grounding.application.bootstrap import create_phase_one_application
-from llm_grounding.application.service import RagService, validate_pdf_path
+from llm_grounding.application.files import validate_pdf_path
 from llm_grounding.domain.corpus import TaskType
 from llm_grounding.infrastructure.config.env import load_environment
 from llm_grounding.infrastructure.config.loader import (
-    load_architecture_config,
     load_ingestion_config,
     load_pipeline_config,
 )
@@ -21,23 +20,10 @@ from llm_grounding.orchestration.grounding_diagnostics import (
     GroundingDiagnosticsLevel,
     configure_console_grounding_diagnostics,
 )
-from llm_grounding.orchestration.runner import RunFailedError
-
-
-def create_parser() -> argparse.ArgumentParser:
-    """Create the unchanged Baseline 0 command parser."""
-    parser = argparse.ArgumentParser(description="Basic Summary Extraction Baseline")
-    parser.add_argument("pdf_file", type=Path, help="Research paper PDF to process")
-    parser.add_argument(
-        "--architecture",
-        type=Path,
-        help="Architecture YAML (default: packaged baseline_v0)",
-    )
-    return parser
 
 
 def create_phase_one_parser() -> argparse.ArgumentParser:
-    """Create persistent project and chat commands without changing Baseline syntax."""
+    """Create persistent project, chat, and pipeline commands."""
     parser = argparse.ArgumentParser(
         description="LLM Grounding Project corpus commands"
     )
@@ -108,35 +94,17 @@ def create_phase_one_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run a baseline extraction or dispatch a persistent Basic RAG command."""
+    """Dispatch a persistent ingestion, chat, or pipeline command."""
     load_environment()
     arguments = list(sys.argv[1:] if argv is None else argv)
-    phase_one = bool(arguments) and arguments[0] in {"project", "chat", "pipeline"}
-    parser = create_phase_one_parser() if phase_one else create_parser()
+    parser = create_phase_one_parser()
     args = parser.parse_args(arguments)
     try:
-        if phase_one:
-            return asyncio.run(_run_phase_one_command(args))
-        path = validate_pdf_path(args.pdf_file)
-        config = load_architecture_config(args.architecture)
-        service = RagService(config)
-        run = asyncio.run(service.process_pdf(path))
-    except RunFailedError as exc:
-        parser.exit(
-            1,
-            f"error: {exc} Check PDF content, architecture settings, and "
-            "AQUEDUCT_API_KEY or AQUEDUCT_API_KEY_FILE; model requests require "
-            "a reachable endpoint and valid structured output.\n",
-        )
+        return asyncio.run(_run_phase_one_command(args))
     except (OSError, RuntimeError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
     except KeyboardInterrupt:
         parser.exit(130, "Interrupted.\n")
-    if run.answer is None:
-        parser.exit(1, "error: Completed run did not produce an answer.\n")
-    print(run.answer.text)
-    print("\nExtraction successful.")
-    return 0
 
 
 async def _run_phase_one_command(args: argparse.Namespace) -> int:
@@ -145,9 +113,7 @@ async def _run_phase_one_command(args: argparse.Namespace) -> int:
         config = load_pipeline_config(args.config_file)
         print(f"valid\t{config.name}\t{config.config_hash}")
         return 0
-    architecture = load_architecture_config(
-        Path("config/architectures/basic_rag_v1.yaml")
-    )
+    architecture = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
     ingestion = load_ingestion_config(getattr(args, "ingestion", None))
     diagnostics_level = GroundingDiagnosticsLevel(
         getattr(args, "grounding_diagnostics", GroundingDiagnosticsLevel.OFF.value)

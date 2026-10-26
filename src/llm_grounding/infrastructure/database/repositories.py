@@ -558,7 +558,7 @@ class PostgresRepository:
                     raise KeyError(
                         f"Unknown ingestion pipeline: {ingestion_pipeline_id}"
                     )
-                if pipeline.kind not in ("full", "ingestion"):
+                if pipeline.kind != "ingestion":
                     raise ValueError(
                         "Project ingestion selection requires an ingestion pipeline"
                     )
@@ -629,7 +629,7 @@ class PostgresRepository:
             pipeline = await session.get(PipelineRow, pipeline_id)
             if pipeline is None:
                 raise KeyError(f"Unknown pipeline: {pipeline_id}")
-            if pipeline.kind not in ("full", "ingestion"):
+            if pipeline.kind != "ingestion":
                 raise ValueError(
                     "Project ingestion selection requires an ingestion pipeline"
                 )
@@ -1373,6 +1373,7 @@ class PostgresRepository:
                 .where(
                     PipelineRow.active.is_(True),
                     PipelineRow.is_default.is_(True),
+                    PipelineRow.kind == "query",
                 )
                 .order_by(PipelineRow.name, PipelineRow.version.desc())
                 .limit(1)
@@ -1392,7 +1393,7 @@ class PostgresRepository:
             return int(result.rowcount or 0)
 
     async def assign_default_ingestion_to_unassigned_projects(self) -> int:
-        """Backfill legacy projects with the active ingestion/default pipeline."""
+        """Assign the active default ingestion pipeline to unassigned projects."""
         async with self._sessions.begin() as session:
             pipeline = await session.scalar(
                 select(PipelineRow)
@@ -1404,17 +1405,6 @@ class PostgresRepository:
                 .order_by(PipelineRow.name, PipelineRow.version.desc())
                 .limit(1)
             )
-            if pipeline is None:
-                pipeline = await session.scalar(
-                    select(PipelineRow)
-                    .where(
-                        PipelineRow.active.is_(True),
-                        PipelineRow.kind == "full",
-                        PipelineRow.is_default.is_(True),
-                    )
-                    .order_by(PipelineRow.name, PipelineRow.version.desc())
-                    .limit(1)
-                )
             if pipeline is None:
                 return 0
             result = await session.execute(

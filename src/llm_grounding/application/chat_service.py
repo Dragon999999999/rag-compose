@@ -138,18 +138,11 @@ class ChatService:
         indexed_representation = await self._validate_project_pipeline(
             chat.project_id, target
         )
-        current_representation = chat.pipeline_representation_hash
-        if current_representation is None:
-            current = await self._pipeline_for_chat(chat)
-            current_representation = current.representation_hash
-        if (
-            target.kind != "query"
-            and target.representation_hash != current_representation
-        ):
+        if target.kind != "query":
             raise PipelineSelectionError(
-                "incompatible_representation",
-                "The selected pipeline requires an incompatible document "
-                "representation or vector index; re-indexing is required.",
+                "unsupported_pipeline",
+                "Chat conversations require a query pipeline.",
+                422,
             )
         try:
             return await self._repository.set_chat_pipeline(
@@ -180,7 +173,7 @@ class ChatService:
         if pipeline_id is not None:
             chat = await self.set_pipeline(chat_id, pipeline_id)
         selected_runner = self._runner
-        selected_name = "basic_rag_v1"
+        selected_name = "query_basic_v1"
         selected_version = 1
         selected_pipeline: Pipeline | None = None
         if self._pipeline_service is not None:
@@ -192,13 +185,9 @@ class ChatService:
                     503,
                 )
             ingestion = await self._project_ingestion(chat.project_id)
-            try:
-                runtime = await self._pipeline_runtime.resolve(
-                    selected_pipeline.id, ingestion=ingestion
-                )
-            except TypeError:
-                # Keep small test and legacy resolver adapters source-compatible.
-                runtime = await self._pipeline_runtime.resolve(selected_pipeline.id)
+            runtime = await self._pipeline_runtime.resolve(
+                selected_pipeline.id, ingestion=ingestion
+            )
             if not isinstance(runtime.runner, BasicRagRunner):
                 raise PipelineSelectionError(
                     "unsupported_runtime",
@@ -298,6 +287,12 @@ class ChatService:
             status = 404 if pipeline_id is not None else 503
             raise PipelineSelectionError(code, str(exc), status) from exc
         except ValueError as exc:
+            if "not query" in str(exc):
+                raise PipelineSelectionError(
+                    "unsupported_pipeline",
+                    "Chat conversations require a query pipeline.",
+                    422,
+                ) from exc
             raise PipelineSelectionError("pipeline_inactive", str(exc), 409) from exc
 
     async def _pipeline_for_chat(self, chat: Chat) -> Pipeline:
@@ -320,9 +315,14 @@ class ChatService:
                 raise PipelineSelectionError("pipeline_changed", str(exc), 409) from exc
             return selected
         try:
-            selected = await self._pipeline_service.get(chat.pipeline_id)
+            selected = await self._pipeline_service.select(
+                chat.pipeline_id, kind="query"
+            )
         except KeyError as exc:
             raise PipelineSelectionError("pipeline_not_found", str(exc), 404) from exc
+        except ValueError as exc:
+            code = "pipeline_inactive" if "inactive" in str(exc) else "pipeline_changed"
+            raise PipelineSelectionError(code, str(exc), 409) from exc
         if not selected.active:
             raise PipelineSelectionError(
                 "pipeline_inactive",
@@ -332,10 +332,7 @@ class ChatService:
         if chat.pipeline_config_hash is not None and (
             selected.config_hash != chat.pipeline_config_hash
             or selected.version != chat.pipeline_version
-            or (
-                selected.kind != "query"
-                and selected.representation_hash != chat.pipeline_representation_hash
-            )
+            or selected.kind != "query"
         ):
             raise PipelineSelectionError(
                 "pipeline_configuration_changed",
@@ -380,15 +377,11 @@ class ChatService:
         compatibility: CompatibilityResult = validate_query_compatibility(
             config, index, self._pipeline_service.registry
         )
-        if pipeline.kind != "query" and (
-            project.ingestion_representation_hash != pipeline.representation_hash
-        ):
-            compatibility = CompatibilityResult(
-                False,
-                compatibility.required_capabilities,
-                frozenset({"representation"}),
-                "The pipeline representation does not match the project's indexed "
-                "representation; re-indexing is required.",
+        if pipeline.kind != "query":
+            raise PipelineSelectionError(
+                "unsupported_pipeline",
+                "Chat conversations require a query pipeline.",
+                422,
             )
         if not compatibility.compatible:
             missing = ", ".join(sorted(compatibility.missing_capabilities))

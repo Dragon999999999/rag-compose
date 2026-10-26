@@ -65,7 +65,6 @@ const QUERY_STAGES: StageDefinition[] = [
   { key: "decision_policy", label: "Decision policy", section: "query", catalogKey: "decision_policy", description: "Decides whether the grounded answer can be returned." },
   { key: "renderer", label: "Renderer", section: "query", catalogKey: "renderer", description: "Renders the validated answer for the client." },
 ];
-const ALL_STAGES = [...REPRESENTATION_STAGES, ...QUERY_STAGES];
 
 /** Edit complete RAG pipelines through a fixed lifecycle graph and catalog-backed inspector. */
 export function PipelineEditor() {
@@ -93,7 +92,7 @@ export function PipelineEditor() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<DraftSnapshot | null>(null);
   const [updateImpact, setUpdateImpact] = useState<PipelineUpdateImpact | null>(null);
-  const pipelineKind: PipelineKind = source.data?.kind ?? source.data?.config?.kind ?? requestedKind ?? "full";
+  const pipelineKind: PipelineKind = source.data?.kind ?? source.data?.config?.kind ?? requestedKind ?? "query";
   const visibleStages = stagesForKind(pipelineKind);
 
   const template = source.data?.config
@@ -362,7 +361,6 @@ export function PipelineEditor() {
       <div className="pipeline-editor-layout">
         <section className="pipeline-graph" aria-label="Pipeline graph">
           {pipelineKind !== "query" && <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
-          {pipelineKind === "full" && <div className="graph-divider" />}
           {pipelineKind !== "ingestion" && <GraphSection label="Query processing" stages={QUERY_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
           {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
         </section>
@@ -594,13 +592,13 @@ function emptyConfig(kind: PipelineKind): PipelineConfig {
 }
 
 function parsePipelineKind(value: string | null): PipelineKind | undefined {
-  return value === "ingestion" || value === "query" || value === "full" ? value : undefined;
+  return value === "ingestion" || value === "query" ? value : undefined;
 }
 
 function stagesForKind(kind: PipelineKind): StageDefinition[] {
   if (kind === "ingestion") return REPRESENTATION_STAGES;
   if (kind === "query") return QUERY_STAGES;
-  return ALL_STAGES;
+  return QUERY_STAGES;
 }
 
 function cloneConfig(config: PipelineConfig): PipelineConfig {

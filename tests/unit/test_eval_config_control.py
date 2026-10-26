@@ -12,7 +12,7 @@ def test_overrides_are_validated_and_recorded_without_mutating_base_config(
     """An effective configuration contains overrides while the base stays unchanged."""
     architecture = config.model_copy(
         update={
-            "name": "basic_rag_v1",
+            "name": "query_basic_v1",
             "retriever": config.retriever.model_copy(update={"type": "vector"}),
         }
     )
@@ -34,10 +34,10 @@ def test_overrides_are_validated_and_recorded_without_mutating_base_config(
 
 
 def test_unsupported_override_is_rejected(config) -> None:
-    """Advanced stages cannot be silently claimed by basic_rag_v1."""
+    """Advanced stages cannot be silently claimed by query_basic_v1."""
     architecture = config.model_copy(
         update={
-            "name": "basic_rag_v1",
+            "name": "query_basic_v1",
             "retriever": config.retriever.model_copy(update={"type": "vector"}),
         }
     )
@@ -52,7 +52,7 @@ def test_reranking_overrides_are_validated_and_recorded(config) -> None:
     """Evaluation requests can select top-k or local cross-encoder settings."""
     architecture = config.model_copy(
         update={
-            "name": "basic_rag_v1",
+            "name": "query_basic_v1",
             "retriever": config.retriever.model_copy(update={"type": "vector"}),
         }
     )

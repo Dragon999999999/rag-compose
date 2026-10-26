@@ -25,10 +25,10 @@ from llm_grounding.orchestration.basic_rag import BasicRagRunner
 
 
 def pipeline_records() -> tuple[Pipeline, ...]:
-    """Build one default, one compatible, and one incompatible pipeline."""
+    """Build two query pipelines and one ingestion pipeline."""
     catalog = load_model_catalog()
     base = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     compatible = base.model_copy(
         update={
@@ -41,19 +41,9 @@ def pipeline_records() -> tuple[Pipeline, ...]:
             ),
         }
     )
-    incompatible = base.model_copy(
-        update={
-            "name": "incompatible_pipeline",
-            "is_default": False,
-            "representation": base.representation.model_copy(
-                update={
-                    "chunker": base.representation.chunker.model_copy(
-                        update={"target_chars": 600}
-                    )
-                }
-            ),
-        }
-    )
+    incompatible = load_pipeline_config(
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    ).model_copy(update={"name": "incompatible_pipeline", "is_default": False})
     return tuple(
         _record(identifier, config, catalog)
         for identifier, config in (
@@ -83,6 +73,7 @@ def _record(identifier: str, config: PipelineConfig, catalog: ModelCatalog) -> P
         config.is_default,
         now,
         now,
+        config.kind,
     )
 
 
@@ -242,7 +233,9 @@ class RecordingRuntime:
 
         self.runner.run = run  # type: ignore[method-assign]
 
-    async def resolve(self, pipeline_id: str) -> SimpleNamespace:
+    async def resolve(
+        self, pipeline_id: str, *, ingestion: object | None = None
+    ) -> SimpleNamespace:
         """Resolve a pipeline into the recording Basic RAG runner."""
         self.resolved.append(pipeline_id)
         record = await self.repository.get_pipeline(pipeline_id)
@@ -283,8 +276,8 @@ async def test_chat_creation_persists_pipeline_for_messages() -> None:
     )
 
 
-async def test_compatible_switch_persists_and_incompatible_switch_is_atomic() -> None:
-    """Query-only switching succeeds while representation changes stay atomic."""
+async def test_compatible_switch_persists_and_ingestion_switch_is_rejected() -> None:
+    """Query-only switching succeeds while ingestion selection stays separate."""
     records = pipeline_records()
     repository = ChatPipelineRepository(records)
     service = PipelineService(repository, load_model_catalog())  # type: ignore[arg-type]
@@ -301,10 +294,10 @@ async def test_compatible_switch_persists_and_incompatible_switch_is_atomic() ->
     assert switched.pipeline_id == "pipeline-b"
     before_rejected_switch = repository.chat
 
-    with pytest.raises(PipelineSelectionError, match="incompatible") as caught:
+    with pytest.raises(PipelineSelectionError, match="query pipeline") as caught:
         await chats.set_pipeline("chat", "pipeline-c")
 
-    assert caught.value.code == "incompatible_representation"
+    assert caught.value.code == "unsupported_pipeline"
     assert repository.chat == before_rejected_switch
 
 
@@ -323,7 +316,7 @@ async def test_pipeline_updates_and_deactivation_are_safe() -> None:
     await chats.create_chat("project", "Research", "pipeline-b")
     current = repository.pipeline_records["pipeline-b"]
     changed_config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml")
+        Path("config/pipelines/query_basic_v1.yaml")
     ).model_copy(update={"name": current.name, "description": "updated"})
     repository.pipeline_records[current.id] = replace(
         current,
@@ -344,8 +337,8 @@ async def test_pipeline_updates_and_deactivation_are_safe() -> None:
     assert repository.chat.pipeline_id == "pipeline-b"
 
 
-async def test_chat_api_persists_selection_and_rejects_switch() -> None:
-    """Chat endpoints expose selection and preserve atomic switch failures."""
+async def test_chat_api_persists_selection_and_rejects_ingestion_switch() -> None:
+    """Chat endpoints expose query selection and reject ingestion pipelines."""
     records = pipeline_records()
     repository = ChatPipelineRepository(records)
     service = PipelineService(repository, load_model_catalog())  # type: ignore[arg-type]
@@ -379,6 +372,6 @@ async def test_chat_api_persists_selection_and_rejects_switch() -> None:
 
     assert created.status_code == 200
     assert created.json()["pipeline_id"] == "pipeline-a"
-    assert rejected.status_code == 409
-    assert rejected.json()["detail"]["code"] == "incompatible_representation"
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "unsupported_pipeline"
     assert listed.json()[0]["pipeline_id"] == "pipeline-a"

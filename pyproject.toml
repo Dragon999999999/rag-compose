@@ -40,7 +40,6 @@ packages = ["src/llm_grounding"]
 [tool.hatch.build.targets.wheel.force-include]
 "config/models" = "llm_grounding/infrastructure/config/standalone/models"
 "config/components" = "llm_grounding/infrastructure/config/standalone/components"
-"config/architectures" = "llm_grounding/infrastructure/config/standalone/architectures"
 "config/pipelines" = "llm_grounding/infrastructure/config/standalone/pipelines"
 "prompts/registry.yaml" = "llm_grounding/infrastructure/prompts/assets/registry.yaml"
 "prompts/reasoning/grounded_qa_v1.jinja2" = "llm_grounding/infrastructure/prompts/assets/reasoning/grounded_qa_v1.jinja2"

@@ -44,8 +44,8 @@ from llm_grounding.domain.corpus import (
 from llm_grounding.domain.evidence import EvidenceUnit
 from llm_grounding.infrastructure.config.env import load_environment
 from llm_grounding.infrastructure.config.loader import (
-    load_architecture_config,
     load_ingestion_config,
+    load_pipeline_config,
 )
 from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.config.settings import ApiSettings
@@ -715,9 +715,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
 def main() -> None:
     """Start the browser API using the existing Basic RAG composition root."""
     load_environment()
-    architecture = load_architecture_config(
-        Path("config/architectures/basic_rag_v1.yaml")
-    )
+    architecture = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
     application = create_phase_one_application(
         architecture, load_ingestion_config(None)
     )

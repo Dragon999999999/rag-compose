@@ -61,43 +61,6 @@ class ModelConfig(BaseModel):
         return url
 
 
-class LocalModelConfig(BaseModel):
-    """Configure a locally loaded model without a provider endpoint."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-
-    provider: Literal["sentence_transformers"]
-    name: str = Field(min_length=1)
-    revision: str | None = Field(default=None, min_length=1)
-    dimension: int = Field(default=384, ge=1, le=16000)
-    normalize: bool = True
-    batch_size: int = Field(default=32, ge=1, le=512)
-    cache_dir_env: str | None = Field(default=None, min_length=1)
-
-
-class EmbedderConfig(ComponentConfig):
-    """Configure an embedding provider used by retrieval-aware components.
-
-    The nested model keeps provider connection settings consistent with the
-    reasoning model configuration while the component type selects the
-    embedding adapter. The component is optional for backward compatibility;
-    stages such as full-document retrieval do not need to construct it.
-    """
-
-    type: str = Field(default="openai_compatible", min_length=1)
-    model: ModelConfig | LocalModelConfig
-    batch_size: int = Field(default=32, ge=1, le=512)
-
-    def identity(self) -> str:
-        """Return a stable provider/model identity without endpoint details."""
-        import json
-
-        data = self.model_dump(mode="json", exclude={"batch_size"})
-        data["model"].pop("base_url", None)
-        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-        return sha256(canonical.encode()).hexdigest()
-
-
 class ReasonerConfig(ComponentConfig):
     """Select a reasoning implementation and its model configuration."""
 
@@ -193,7 +156,7 @@ class ChatHistoryConfig(BaseModel):
 
 
 class ArchitectureConfig(BaseModel):
-    """Describe linear composition independently of the architecture's name."""
+    """Describe the effective query composition used by the runtime."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -205,7 +168,6 @@ class ArchitectureConfig(BaseModel):
     reranker: RerankerConfig = Field(
         validation_alias=AliasChoices("reranker", "reranking")
     )
-    embedder: EmbedderConfig | None = None
     reasoner: ReasonerConfig
     assessors: tuple[ComponentConfig, ...]
     decision_policy: ComponentConfig
@@ -218,8 +180,6 @@ class ArchitectureConfig(BaseModel):
 
         data = self.model_dump(mode="json")
         data["reasoner"]["model"].pop("base_url", None)
-        if data.get("embedder") is not None:
-            data["embedder"]["model"].pop("base_url", None)
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
@@ -327,10 +287,8 @@ class ModelCatalog(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """Versioned, validated full, ingestion, or query pipeline definition.
+    """Versioned, validated ingestion or query pipeline definition.
 
-    Ingestion pipelines define indexed representations, query pipelines define
-    chat-time behavior, and ``full`` retains the original combined contract.
     Pipeline YAML contains only component identifiers, tuning parameters, and
     model-catalog references. Provider credentials are resolved by infrastructure
     adapters and are never part of the persisted pipeline document.
@@ -339,7 +297,7 @@ class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     schema_version: Literal[1] = 1
-    kind: Literal["full", "ingestion", "query"] = "full"
+    kind: Literal["ingestion", "query"]
     name: str = Field(min_length=1, max_length=255)
     version: int = Field(ge=1)
     description: str = Field(default="", max_length=4000)
@@ -350,9 +308,9 @@ class PipelineConfig(BaseModel):
     @model_validator(mode="after")
     def validate_kind_sections(self) -> "PipelineConfig":
         """Require exactly the stages that belong to the selected pipeline kind."""
-        if self.kind in ("full", "ingestion") and self.representation is None:
+        if self.kind == "ingestion" and self.representation is None:
             raise ValueError(f"{self.kind} pipelines require representation stages")
-        if self.kind in ("full", "query") and self.query is None:
+        if self.kind == "query" and self.query is None:
             raise ValueError(f"{self.kind} pipelines require query stages")
         if self.kind == "ingestion" and self.query is not None:
             raise ValueError("ingestion pipelines must not define query stages")
@@ -361,19 +319,10 @@ class PipelineConfig(BaseModel):
         return self
 
     def identity(self) -> str:
-        """Return a stable hash of the pipeline's semantic configuration.
-
-        ``kind`` was introduced after the original combined pipeline schema.
-        A missing kind means ``full`` through Pydantic's default, so omitting
-        the default from the canonical full-pipeline hash keeps records created
-        before that schema migration semantically identical. Specialized
-        ingestion and query pipelines retain their explicit kind in the hash.
-        """
+        """Return a stable hash of the pipeline's semantic configuration."""
         import json
 
         data = self.model_dump(mode="json")
-        if data.get("kind") == "full":
-            data.pop("kind")
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
@@ -387,49 +336,6 @@ class PipelineConfig(BaseModel):
         if self.representation is None:
             return sha256(b"query-pipeline-no-representation").hexdigest()
         return self.representation.identity(catalog)
-
-    def resolve(
-        self, catalog: ModelCatalog
-    ) -> tuple[ArchitectureConfig, IngestionConfig]:
-        """Resolve named models into the legacy execution configurations.
-
-        The execution engines still consume the established architecture and
-        ingestion models. This adapter keeps their behavior stable while making
-        pipeline configuration the persisted composition boundary.
-        """
-        if self.representation is None or self.query is None:
-            raise ValueError("A full pipeline is required for combined resolution")
-        embedding = catalog.embedding(self.representation.embedding.model_ref)
-        reasoning = catalog.reasoning(self.query.reasoner.model_ref)
-        architecture = ArchitectureConfig(
-            name=self.name,
-            version=self.version,
-            parser=self.representation.parser,
-            knowledge_builder=self.representation.knowledge_builder,
-            retriever=self.query.retriever,
-            reranker=self.query.reranker,
-            embedder=None,
-            reasoner=ReasonerConfig(
-                type=self.query.reasoner.type,
-                model=reasoning,
-                prompt_id=self.query.reasoner.prompt_id,
-            ),
-            assessors=self.query.assessors,
-            decision_policy=self.query.decision_policy,
-            renderer=self.query.renderer,
-            chat_history=self.query.chat_history,
-        )
-        ingestion = IngestionConfig.model_validate(
-            {
-                "parser": self.representation.parser.type,
-                "knowledge_builder": self.representation.knowledge_builder.type,
-                "chunker": self.representation.chunker.model_dump(mode="json"),
-                "embedding": embedding.model_dump(mode="json"),
-                "vector_backend": self.representation.vector_backend.type,
-                "index_version": self.representation.vector_backend.index_version,
-            }
-        )
-        return architecture, ingestion
 
     def resolve_ingestion(self, catalog: ModelCatalog) -> IngestionConfig:
         """Resolve an ingestion pipeline into the effective index configuration."""
@@ -461,7 +367,6 @@ class PipelineConfig(BaseModel):
             knowledge_builder=ComponentConfig(type=ingestion.knowledge_builder),
             retriever=self.query.retriever,
             reranker=self.query.reranker,
-            embedder=None,
             reasoner=ReasonerConfig(
                 type=self.query.reasoner.type,
                 model=reasoning,

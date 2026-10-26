@@ -38,7 +38,7 @@ function mergeIngestionPipelines(
   ingestion: Pipeline[] | undefined,
   all: Pipeline[] | undefined,
 ): Pipeline[] {
-  const records = [...(ingestion ?? []), ...(all ?? []).filter((pipeline) => pipeline.kind === "full")];
+  const records = [...(all ?? []), ...(ingestion ?? [])];
   return records.filter((pipeline, index) => records.findIndex((item) => item.id === pipeline.id) === index);
 }
 

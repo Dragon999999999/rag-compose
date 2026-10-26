@@ -72,7 +72,7 @@ class EvalCorpusRequest(BaseModel):
 
 
 class EvalConfigOverrides(BaseModel):
-    """Per-request settings supported by ``basic_rag_v1``."""
+    """Per-request settings supported by the current query pipeline."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -1,9 +1,4 @@
-"""Typed standalone model, component, and pipeline configuration sources.
-
-These models describe the persisted configuration files, not executable runtime
-objects. The configuration registry resolves them into the established pipeline
-and architecture models after validating internal references.
-"""
+"""Typed standalone model, component, and pipeline configuration sources."""
 
 from typing import Annotated, Literal
 
@@ -146,7 +141,7 @@ class DeclarativePipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     schema_version: Literal[2] = 2
-    kind: Literal["full", "ingestion", "query"] = "full"
+    kind: Literal["ingestion", "query"]
     name: str = Field(min_length=1, max_length=255)
     version: int = Field(ge=1)
     description: str = Field(default="", max_length=4000)
@@ -157,32 +152,12 @@ class DeclarativePipelineConfig(BaseModel):
     @model_validator(mode="after")
     def validate_kind_sections(self) -> "DeclarativePipelineConfig":
         """Require only the composition sections belonging to the pipeline kind."""
-        if self.kind in ("full", "ingestion") and self.representation is None:
+        if self.kind == "ingestion" and self.representation is None:
             raise ValueError(f"{self.kind} pipelines require representation stages")
-        if self.kind in ("full", "query") and self.query is None:
+        if self.kind == "query" and self.query is None:
             raise ValueError(f"{self.kind} pipelines require query stages")
         if self.kind == "ingestion" and self.query is not None:
             raise ValueError("ingestion pipelines must not define query stages")
         if self.kind == "query" and self.representation is not None:
             raise ValueError("query pipelines must not define representation stages")
         return self
-
-
-class DeclarativeArchitectureConfig(BaseModel):
-    """Composition-only architecture source resolved by component IDs."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-
-    schema_version: Literal[2] = 2
-    name: str = Field(min_length=1)
-    version: int = Field(ge=0)
-    parser: str = Field(min_length=1)
-    knowledge_builder: str = Field(min_length=1)
-    embedder: str | None = Field(default=None, min_length=1)
-    retriever: str = Field(min_length=1)
-    reranker: str = Field(min_length=1)
-    reasoner: str = Field(min_length=1)
-    assessors: tuple[str, ...]
-    decision_policy: str = Field(min_length=1)
-    renderer: str = Field(min_length=1)
-    chat_history: dict[str, object] | None = None

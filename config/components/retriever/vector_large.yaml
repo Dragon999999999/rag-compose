@@ -1,5 +1,0 @@
-id: retriever_vector_large
-type: vector
-top_k: 12
-context_chars: 18000
-summary_per_facet: 4

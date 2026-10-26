@@ -138,9 +138,15 @@ def create_phase_one_application(
         RuntimeError: If configuration selects unsupported Phase 1 components.
     """
     if isinstance(architecture, PipelineConfig):
+        if architecture.kind != "query":
+            raise ValueError("Phase One requires a query pipeline")
         catalog = model_catalog or load_model_catalog()
         model_catalog = catalog
-        architecture, ingestion_config = architecture.resolve(catalog)
+        if ingestion_config is None:
+            raise ValueError("A query pipeline requires an ingestion configuration")
+        architecture, ingestion_config = architecture.resolve_query(
+            catalog, ingestion_config
+        )
     if ingestion_config is None:
         raise ValueError("An ingestion configuration is required")
     if (

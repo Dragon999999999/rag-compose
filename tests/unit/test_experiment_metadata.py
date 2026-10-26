@@ -37,7 +37,7 @@ def test_observation_records_model_config_time_and_distinct_status() -> None:
         run_id="run",
         request_id="request",
         corpus_id="corpus",
-        architecture_name="basic_rag_v1",
+        architecture_name="query_basic_v1",
         architecture_version=1,
         status="timeout",
         request={"query": "question"},

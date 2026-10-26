@@ -14,7 +14,6 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from llm_grounding.infrastructure.config.declarative import (
     ComponentDefinition,
-    DeclarativeArchitectureConfig,
     DeclarativePipelineConfig,
     FakeModelDefinition,
     ModelDefinition,
@@ -22,11 +21,8 @@ from llm_grounding.infrastructure.config.declarative import (
     SentenceTransformersModelDefinition,
 )
 from llm_grounding.infrastructure.config.models import (
-    ArchitectureConfig,
     ChatHistoryConfig,
     ComponentConfig,
-    EmbedderConfig,
-    LocalModelConfig,
     ModelCatalog,
     ModelConfig,
     PipelineConfig,
@@ -34,7 +30,6 @@ from llm_grounding.infrastructure.config.models import (
     PipelineQueryConfig,
     PipelineReasonerConfig,
     PipelineRepresentationConfig,
-    ReasonerConfig,
     RerankerConfig,
     RetrieverConfig,
     VectorBackendConfig,
@@ -101,7 +96,7 @@ class ConfigurationRegistry:
         return definition
 
     def model_catalog(self) -> ModelCatalog:
-        """Convert standalone model definitions to the legacy runtime catalog."""
+        """Convert standalone model definitions to the runtime catalog."""
         embedding: dict[str, EmbeddingConfig] = {}
         reasoning: dict[str, ModelConfig] = {}
         for model_id, definition in self.models.items():
@@ -112,42 +107,6 @@ class ConfigurationRegistry:
         return ModelCatalog(
             embedding_models=embedding,
             reasoning_models=reasoning,
-        )
-
-    def architecture(self, source: DeclarativeArchitectureConfig) -> ArchitectureConfig:
-        """Resolve one composition-only architecture into runtime configuration."""
-        parser = self._component("parser", source.parser, ComponentConfig)
-        knowledge = self._component(
-            "knowledge_builder", source.knowledge_builder, ComponentConfig
-        )
-        retriever = self._component("retriever", source.retriever, RetrieverConfig)
-        reranker = self._reranker(source.reranker)
-        reasoner = self._reasoner(source.reasoner)
-        embedder = (
-            self._embedder(source.embedder) if source.embedder is not None else None
-        )
-        return ArchitectureConfig(
-            name=source.name,
-            version=source.version,
-            parser=parser,
-            knowledge_builder=knowledge,
-            retriever=retriever,
-            reranker=reranker,
-            embedder=embedder,
-            reasoner=reasoner,
-            assessors=tuple(
-                self._component("assessor", item, ComponentConfig)
-                for item in source.assessors
-            ),
-            decision_policy=self._component(
-                "decision_policy", source.decision_policy, ComponentConfig
-            ),
-            renderer=self._component("renderer", source.renderer, ComponentConfig),
-            chat_history=(
-                ChatHistoryConfig.model_validate(source.chat_history)
-                if source.chat_history is not None
-                else None
-            ),
         )
 
     def pipeline(self, source: DeclarativePipelineConfig) -> PipelineConfig:
@@ -289,28 +248,6 @@ class ConfigurationRegistry:
             "cannot be used as an ingestion embedder"
         )
 
-    def _embedder(self, component_id: str) -> EmbedderConfig:
-        """Resolve an architecture embedder component and its model reference."""
-        definition = self.component("embedder", component_id)
-        if definition.model_id is None:
-            raise ValueError(f"Embedder component {component_id} requires model_id")
-        definition_model = self.model(definition.model_id)
-        self._validate_model_stage(definition.model_id, definition_model, "embedding")
-        if isinstance(definition_model, SentenceTransformersModelDefinition):
-            model: ModelConfig | LocalModelConfig = LocalModelConfig(
-                provider="sentence_transformers",
-                name=definition_model.name,
-                revision=definition_model.revision,
-                dimension=definition_model.dimension,
-                normalize=definition_model.normalize,
-                batch_size=definition_model.batch_size,
-                cache_dir_env=definition_model.cache_dir_env,
-            )
-        else:
-            model = self._model_config(definition.model_id)
-        values = {"type": definition.type, "model": model, **definition.settings()}
-        return EmbedderConfig.model_validate(values)
-
     def _reranker(self, component_id: str) -> RerankerConfig:
         """Resolve a reranker component and substitute its model ID when needed."""
         definition = self.component("reranker", component_id)
@@ -326,21 +263,6 @@ class ConfigurationRegistry:
             self._validate_model_stage(definition.model_id, model, "reranker")
             values["model_name"] = model.name
         return RerankerConfig.model_validate({"type": definition.type, **values})
-
-    def _reasoner(self, component_id: str) -> ReasonerConfig:
-        """Resolve an architecture reasoner component and its model reference."""
-        definition = self.component("reasoner", component_id)
-        if definition.model_id is None:
-            raise ValueError(f"Reasoner component {component_id} requires model_id")
-        return ReasonerConfig.model_validate(
-            {
-                "type": definition.type,
-                "model": self._model_config(
-                    self._model_id_for_component("reasoner", component_id)
-                ),
-                **definition.settings(),
-            }
-        )
 
     def _pipeline_reasoner(self, component_id: str) -> PipelineReasonerConfig:
         """Resolve a pipeline reasoner to an internal model ID reference."""
@@ -361,8 +283,7 @@ class ConfigurationRegistry:
         if definition.model_id is None:
             raise ValueError(f"{category} component {component_id} requires model_id")
         model = self.model(definition.model_id)
-        expected_stage = "embedding" if category == "embedder" else category
-        self._validate_model_stage(definition.model_id, model, expected_stage)
+        self._validate_model_stage(definition.model_id, model, category)
         return definition.model_id
 
     @staticmethod

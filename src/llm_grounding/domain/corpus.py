@@ -9,6 +9,7 @@ No database, model, or vector-vendor objects cross this boundary.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ class Pipeline:
     is_default: bool
     created_at: datetime
     updated_at: datetime
-    kind: str = "full"
+    kind: Literal["ingestion", "query"] = "query"
 
 
 @dataclass(frozen=True)

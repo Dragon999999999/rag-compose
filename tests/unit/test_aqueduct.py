@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import ProviderPayload
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 
@@ -12,12 +13,11 @@ from llm_grounding.infrastructure.llm.aqueduct import (
     AqueductModelClient,
     ModelRequestError,
 )
-from llm_grounding.reasoning.basic_summary import BasicSummaryPayload
 
 
 async def test_adapter_returns_validated_pydantic_output(
     config: ArchitectureConfig,
-    payload: BasicSummaryPayload,
+    payload: ProviderPayload,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The adapter drives a PydanticAI agent and returns the requested schema."""
@@ -28,7 +28,7 @@ async def test_adapter_returns_validated_pydantic_output(
         lambda *args, **kwargs: TestModel(custom_output_args=payload.model_dump()),
     )
     result = await AqueductModelClient(config.reasoner.model).generate(
-        "paper", BasicSummaryPayload
+        "paper", ProviderPayload
     )
     assert result == payload
 
@@ -47,7 +47,7 @@ async def test_invalid_structured_output_exhausts_bounded_retries(
     )
     with pytest.raises(ModelRequestError, match="valid structured output") as caught:
         await AqueductModelClient(config.reasoner.model).generate(
-            "paper", BasicSummaryPayload
+            "paper", ProviderPayload
         )
     assert isinstance(caught.value.__cause__, UnexpectedModelBehavior)
 
@@ -64,7 +64,7 @@ async def test_adapter_sanitizes_failures_and_preserves_causes(
     monkeypatch.setattr(aqueduct.Agent, "run", AsyncMock(side_effect=failure))
     with pytest.raises(ModelRequestError) as caught:
         await AqueductModelClient(config.reasoner.model).generate(
-            "paper", BasicSummaryPayload
+            "paper", ProviderPayload
         )
     assert caught.value.__cause__ is failure
     assert "sensitive" not in str(caught.value)

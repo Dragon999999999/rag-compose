@@ -65,9 +65,7 @@ class PipelineRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="full", server_default="full"
-    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
     config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     representation_hash: Mapped[str] = mapped_column(String(64), nullable=False)

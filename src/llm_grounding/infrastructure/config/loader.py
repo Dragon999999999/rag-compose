@@ -13,11 +13,9 @@ import yaml
 from pydantic import ValidationError
 
 from llm_grounding.infrastructure.config.declarative import (
-    DeclarativeArchitectureConfig,
     DeclarativePipelineConfig,
 )
 from llm_grounding.infrastructure.config.models import (
-    ArchitectureConfig,
     ModelCatalog,
     PipelineConfig,
 )
@@ -36,51 +34,20 @@ class _PipelineValidator(Protocol):
         """Validate pipeline component and model selections."""
 
 
-def load_architecture_config(path: Path | None = None) -> ArchitectureConfig:
-    """Read explicit YAML or the packaged default, validating its shape.
-
-    The checked-in YAML is bundled in wheels; editable checkouts read that same
-    file. Component identifiers are validated separately by the registry.
-
-    Raises:
-        ConfigurationError: If YAML cannot be read or fails typed validation.
-    """
-    try:
-        value = yaml.safe_load(_architecture_content(path))
-        if isinstance(value, dict) and value.get("schema_version") == 2:
-            return load_configuration_registry().architecture(
-                cast(
-                    DeclarativeArchitectureConfig,
-                    _model_validate(value, "architecture"),
-                )
-            )
-        return ArchitectureConfig.model_validate(value)
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise ConfigurationError(
-            "Unable to read architecture YAML; check its path and syntax."
-        ) from exc
-    except ValidationError as exc:
-        raise ConfigurationError(_validation_locations("architecture", exc)) from exc
-
-
 def load_ingestion_config(path: Path | None = None) -> IngestionConfig:
     """Read explicit or canonical ingestion settings with the safe YAML boundary.
 
-    The canonical ingestion pipeline is resolved into the execution model used
-    by the ingestion service. Explicit paths may still contain the established
-    runtime schema for callers that construct temporary configurations.
+    The ingestion pipeline is resolved into the execution model used by the
+    ingestion service.
     """
     try:
         ingestion_path = path or _default_ingestion_pipeline_path()
-        value = yaml.safe_load(ingestion_path.read_text(encoding="utf-8"))
-        if isinstance(value, dict) and value.get("schema_version") == 2:
-            pipeline = load_pipeline_config(ingestion_path)
-            if pipeline.kind != "ingestion":
-                raise ConfigurationError(
-                    "The ingestion configuration must select an ingestion pipeline"
-                )
-            return pipeline.resolve_ingestion(load_model_catalog())
-        return IngestionConfig.model_validate(value)
+        pipeline = load_pipeline_config(ingestion_path)
+        if pipeline.kind != "ingestion":
+            raise ConfigurationError(
+                "The ingestion configuration must select an ingestion pipeline"
+            )
+        return pipeline.resolve_ingestion(load_model_catalog())
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
             "Unable to read ingestion YAML; check its path and syntax."
@@ -113,7 +80,7 @@ def load_pipeline_config(
 
     Args:
         path: YAML file containing one complete pipeline definition. When omitted,
-            the checked-in or packaged ``basic_rag_v1`` pipeline is used.
+            the checked-in or packaged ``query_basic_v1`` pipeline is used.
         catalog: Shared model catalog; the packaged catalog is used by default.
         registry: Optional component registry, primarily useful for tests.
 
@@ -123,15 +90,11 @@ def load_pipeline_config(
     try:
         path = path or _default_pipeline_path()
         value = _yaml_content(path, "")
-        if isinstance(value, dict) and value.get("schema_version") == 2:
-            standalone = load_configuration_registry()
-            config = standalone.pipeline(
-                cast(DeclarativePipelineConfig, _model_validate(value, "pipeline"))
-            )
-            model_catalog = catalog or standalone.model_catalog()
-        else:
-            config = PipelineConfig.model_validate(value)
-            model_catalog = catalog or load_model_catalog()
+        standalone = load_configuration_registry()
+        config = standalone.pipeline(
+            cast(DeclarativePipelineConfig, _model_validate(value, "pipeline"))
+        )
+        model_catalog = catalog or standalone.model_catalog()
         if registry is None:
             from llm_grounding.orchestration.registry import ComponentRegistry
 
@@ -215,9 +178,9 @@ def _default_pipeline_path() -> Path:
     """Return the packaged or checkout default pipeline YAML path."""
     paths = discover_pipeline_paths()
     for path in paths:
-        if path.stem == "basic_rag_v1":
+        if path.stem == "query_basic_v1":
             return path
-    raise ConfigurationError("No default basic_rag_v1 pipeline configuration exists")
+    raise ConfigurationError("No default query pipeline configuration exists")
 
 
 def _default_ingestion_pipeline_path() -> Path:
@@ -243,22 +206,6 @@ def load_configuration_registry(
         raise ConfigurationError(str(exc)) from exc
 
 
-def _architecture_content(path: Path | None) -> str:
-    """Load canonical architecture YAML from the checkout or package."""
-    if path is not None:
-        return path.read_text(encoding="utf-8")
-    canonical = _checkout_root() / "config/architectures/baseline_v0.yaml"
-    if canonical.is_file():
-        return canonical.read_text(encoding="utf-8")
-    packaged_canonical = (
-        files("llm_grounding.infrastructure.config")
-        / "standalone/architectures/baseline_v0.yaml"
-    )
-    if packaged_canonical.is_file():
-        return packaged_canonical.read_text(encoding="utf-8")
-    raise ConfigurationError("No default architecture configuration exists")
-
-
 def _standalone_models_directory() -> Path:
     """Return the checkout or packaged standalone model directory."""
     checkout = _checkout_root() / "config/models"
@@ -279,15 +226,10 @@ def _standalone_components_directory() -> Path:
 
 def _model_validate(
     value: object, kind: str
-) -> DeclarativeArchitectureConfig | DeclarativePipelineConfig:
+) -> DeclarativePipelineConfig:
     """Validate one canonical source model with loader-level error formatting."""
-    model = (
-        DeclarativeArchitectureConfig
-        if kind == "architecture"
-        else DeclarativePipelineConfig
-    )
     try:
-        return model.model_validate(value)
+        return DeclarativePipelineConfig.model_validate(value)
     except ValidationError as exc:
         raise ConfigurationError(_validation_locations(kind, exc)) from exc
 

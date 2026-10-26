@@ -156,7 +156,7 @@ class DocumentSummaryService:
             await self._repository.record_run(
                 run_id,
                 project_id,
-                "basic_rag_v1",
+                "query_basic_v1",
                 1,
                 str(metadata["status"]),
                 metadata,

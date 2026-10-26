@@ -1,7 +1,7 @@
-# Phase 1: persistent corpus and Basic RAG v1
+# Persistent corpus and split pipelines
 
-Phase 1 adds a project-scoped corpus without changing the Baseline 0 PDF-summary
-command. PostgreSQL is the canonical store for projects, content-addressed document
+The application uses separate ingestion and query pipelines. PostgreSQL is the
+canonical store for projects, content-addressed document
 metadata, project/document associations, immutable ingestion representations,
 evidence, chunks, chats, messages, and RAG run metadata. Original PDFs are canonical
 MinIO artifacts. Qdrant holds only a derived vector index and can be rebuilt from
@@ -60,7 +60,7 @@ creates a new ingestion and keeps the old one intact. Attaching a ready ingestio
 second project reuses its stored derived vectors under the new project association; it
 does not parse or embed the PDF again.
 
-Basic RAG v1 is described by `config/architectures/basic_rag_v1.yaml`. Query retrieval
+The current query pipeline is described by `config/pipelines/query_basic_v1.yaml`. Query retrieval
 filters by project inside the vector-store operation before scoring. It can narrow to
 document IDs when supplied by a request. Retrieval output carries chunk ID, document,
 page span, evidence IDs, and character spans.

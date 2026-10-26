@@ -70,7 +70,7 @@ def create_eval_router(service: EvalService) -> APIRouter:
         """Expose supported request overrides and the recorded effective schema."""
         return {
             "protocol_version": "1",
-            "supported_architecture": "basic_rag_v1",
+            "supported_pipeline": "query_basic_v1",
             "schema": {
                 "overrides": EvalConfigOverrides.model_json_schema(),
                 "effective_configuration": EffectiveConfiguration.model_json_schema(),

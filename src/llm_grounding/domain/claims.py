@@ -1,4 +1,4 @@
-"""Minimal claims for future grounding; Baseline 0 does not invent claims."""
+"""Minimal claims for grounded answers."""
 
 from dataclasses import dataclass
 

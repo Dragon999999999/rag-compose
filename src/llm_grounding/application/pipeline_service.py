@@ -180,7 +180,7 @@ class PipelineService:
         self, *, active_only: bool = False, kind: str | None = None
     ) -> tuple[Pipeline, ...]:
         """List persisted pipeline records, optionally restricted by kind."""
-        if kind is not None and kind not in {"full", "ingestion", "query"}:
+        if kind is not None and kind not in {"ingestion", "query"}:
             raise ValueError(f"Unsupported pipeline kind: {kind}")
         try:
             records = await self._repository.list_pipelines(
@@ -192,7 +192,7 @@ class PipelineService:
                 records = tuple(
                     record
                     for record in records
-                    if record.kind in {kind, "full"}
+                    if record.kind == kind
                 )
         return records
 
@@ -209,8 +209,7 @@ class PipelineService:
                 (
                     record
                     for record in records
-                    if record.name
-                    in {"basic_rag_v1", "ingestion_default_v1", "query_basic_v1"}
+                    if record.name in {"ingestion_default_v1", "query_basic_v1"}
                 ),
                 None,
             ),
@@ -230,7 +229,7 @@ class PipelineService:
         )
         if not selected.active:
             raise ValueError(f"Pipeline {selected.id!r} is inactive")
-        if kind is not None and selected.kind not in {kind, "full"}:
+        if kind is not None and selected.kind != kind:
             raise ValueError(
                 f"Pipeline {selected.id!r} is a {selected.kind} pipeline, not {kind}"
             )
@@ -240,19 +239,13 @@ class PipelineService:
         """Resolve an active project-level ingestion pipeline."""
         if pipeline_id is not None:
             return await self.select(pipeline_id, kind="ingestion")
-        try:
-            return await self.select(None, kind="ingestion")
-        except KeyError:
-            return await self.select(None, kind="full")
+        return await self.select(None, kind="ingestion")
 
     async def select_query(self, pipeline_id: str | None = None) -> Pipeline:
         """Resolve an active chat-level query pipeline."""
         if pipeline_id is not None:
             return await self.select(pipeline_id, kind="query")
-        try:
-            return await self.select(None, kind="query")
-        except KeyError:
-            return await self.select(None, kind="full")
+        return await self.select(None, kind="query")
 
     async def create(self, config: PipelineConfig) -> Pipeline:
         """Validate and persist an API-owned pipeline configuration."""
@@ -359,7 +352,7 @@ class PipelineService:
             else 0
         )
         representation_changed = existing.kind != config.kind or (
-            existing.kind in {"full", "ingestion"}
+            existing.kind == "ingestion"
             and config.representation_hash(self._catalog)
             != existing.representation_hash
         )

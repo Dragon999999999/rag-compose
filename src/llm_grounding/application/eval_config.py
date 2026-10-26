@@ -52,7 +52,7 @@ class EvaluationConfigService:
     ) -> EvaluationConfig:
         """Return an immutable effective configuration for one request.
 
-        Only components implemented by ``basic_rag_v1`` are accepted. The
+        Only components implemented by the current query pipeline are accepted. The
         returned Pydantic configuration is built from copies and never changes
         the application composition root, so simultaneous evaluations remain
         isolated from one another.
@@ -65,8 +65,8 @@ class EvaluationConfigService:
                 + ", ".join(unsupported)
             )
         self._validate_values(values)
-        if architecture.name != "basic_rag_v1":
-            raise ValueError("Evaluation configuration requires basic_rag_v1")
+        if architecture.name != "query_basic_v1":
+            raise ValueError("Evaluation configuration requires query_basic_v1")
         if architecture.retriever.type != "vector":
             raise ValueError("Evaluation configuration requires the vector retriever")
         architecture_copy = architecture.model_copy(deep=True)

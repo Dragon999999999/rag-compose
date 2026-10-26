@@ -22,7 +22,7 @@ def test_observation_round_trips_advanced_optional_fields() -> None:
         target_run_id="target-run",
         request={"query": "question"},
         corpus_id="eval-corpus",
-        architecture_name="basic_rag_v1",
+        architecture_name="query_basic_v1",
         architecture_version=1,
         status="abstained",
         generation=GenerationInfo(

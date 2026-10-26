@@ -1,4 +1,4 @@
-"""Verify parsing provenance, immutable knowledge, and baseline evidence selection."""
+"""Verify parsing provenance and immutable knowledge."""
 
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
@@ -11,11 +11,7 @@ import pytest
 from llm_grounding.domain.documents import DocumentSource
 from llm_grounding.domain.evidence import EvidenceType
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
-from llm_grounding.knowledge.models import KnowledgeBase
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
-from llm_grounding.retrieval.full_document import FullDocumentRetriever
-from llm_grounding.retrieval.models import RetrievalRequest
-from llm_grounding.retrieval.reranking.identity import IdentityReranker
 
 
 async def test_parser_retains_pages_blocks_boxes_and_source_order(
@@ -115,35 +111,3 @@ async def test_knowledge_skips_nontext_and_empty_elements(pdf_path: Path) -> Non
     )
     knowledge = await BasicKnowledgeBuilder().build(parsed)
     assert len(knowledge.evidence) == 1
-
-
-async def test_full_document_retrieval_filters_modalities_and_sorts_source_order(
-    pdf_path: Path,
-) -> None:
-    """The baseline returns all text in source order with query state on selections."""
-    parsed = await PyMuPDFDocumentParser().parse(DocumentSource("paper", pdf_path))
-    knowledge = await BasicKnowledgeBuilder().build(parsed)
-    figure = replace(
-        knowledge.evidence[0],
-        evidence_id="figure",
-        evidence_type=EvidenceType.FIGURE,
-        text=None,
-    )
-    blank = replace(knowledge.evidence[0], evidence_id="blank", text=" ")
-    scrambled = KnowledgeBase((*reversed(knowledge.evidence), figure, blank))
-    response = await FullDocumentRetriever().retrieve(
-        RetrievalRequest("any query", scrambled)
-    )
-    assert tuple(result.evidence for result in response.results) == knowledge.evidence
-    assert [result.rank for result in response.results] == [1, 2, 3]
-    assert all(result.score is None for result in response.results)
-    assert await IdentityReranker().rerank(response) is response
-
-
-async def test_empty_retrieval_and_identity_are_valid() -> None:
-    """No knowledge yields no candidates, which reranking preserves."""
-    response = await FullDocumentRetriever().retrieve(
-        RetrievalRequest("query", KnowledgeBase(()))
-    )
-    assert response.results == ()
-    assert await IdentityReranker().rerank(response) == response

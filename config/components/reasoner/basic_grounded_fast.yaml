@@ -1,4 +1,0 @@
-id: reasoner_basic_grounded_fast
-type: basic_grounded
-model_id: reasoning_002
-prompt_id: grounded_qa_v1

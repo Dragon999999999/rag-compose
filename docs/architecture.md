@@ -24,7 +24,6 @@ Canonical definitions live under `config/`:
 config/
 ├── models/                         # one provider/local model per YAML file
 ├── components/<category>/          # reusable stage configurations
-├── architectures/                  # composition-only architecture examples
 └── pipelines/                      # composition-only pipeline examples
 ```
 
@@ -52,11 +51,10 @@ category ownership, resolves model references, and converts the result into the
 established runtime schemas. `ComponentRegistry` then validates that each
 implementation is registered before any provider is constructed.
 
-`load_architecture_config`, `load_pipeline_config`, and
-`load_model_catalog` accept the standalone format. Existing architecture,
-pipeline, and model-catalog YAML remains readable as a compatibility format, so
-persisted pipeline records and API clients can migrate incrementally. New files
-should use `schema_version: 2` and internal IDs.
+`load_ingestion_config`, `load_pipeline_config`, and `load_model_catalog` accept
+the standalone format. Pipeline YAML uses `schema_version: 2` and must declare
+either `kind: ingestion` with representation stages or `kind: query` with query
+stages. There is no combined pipeline format.
 
 The runtime still owns execution order and persistence. Configuration file
 organization does not leak into retrievers, reasoners, assessors, renderers, or

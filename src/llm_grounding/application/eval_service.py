@@ -351,7 +351,7 @@ class EvalService:
         return (
             self._application.architecture.name
             if self._application.architecture
-            else "basic_rag_v1"
+            else "query_basic_v1"
         )
 
     @property

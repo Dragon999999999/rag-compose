@@ -1,8 +1,6 @@
 """Verify unified pipeline validation and representation compatibility identities."""
 
-import json
 from datetime import UTC, datetime
-from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -27,13 +25,9 @@ def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
     catalog = load_model_catalog()
     paths = sorted(Path("config/pipelines").glob("*.yaml"))
 
-    assert len(paths) == 6
+    assert len(paths) == 2
     configs = [load_pipeline_config(path, catalog=catalog) for path in paths]
     assert {config.name for config in configs} == {
-        "basic_rag_v1",
-        "basic_rag_small_chunks",
-        "basic_rag_large_chunks",
-        "basic_rag_fast_reasoning",
         "ingestion_default_v1",
         "query_basic_v1",
     }
@@ -43,7 +37,7 @@ def test_representation_changes_produce_distinct_index_identity() -> None:
     """Chunking changes cannot silently reuse an existing representation index."""
     catalog = load_model_catalog()
     base = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
     )
     changed = base.model_copy(
         update={
@@ -59,21 +53,6 @@ def test_representation_changes_produce_distinct_index_identity() -> None:
 
     assert base.representation_hash(catalog) != changed.representation_hash(catalog)
 
-
-def test_full_pipeline_hash_preserves_pre_kind_migration_identity() -> None:
-    """The new default kind does not change hashes of legacy full pipelines."""
-    catalog = load_model_catalog()
-    config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
-    )
-    legacy_payload = config.model_dump(mode="json")
-    legacy_payload.pop("kind")
-    legacy_hash = sha256(
-        json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-    assert config.kind == "full"
-    assert config.config_hash == legacy_hash
 
 
 def test_ingestion_and_query_pipeline_specs_resolve_separately() -> None:
@@ -124,10 +103,12 @@ def test_pipeline_loader_rejects_unknown_components_without_echoing_secret(
     tmp_path: Path,
 ) -> None:
     """Component references remain closed and invalid values are not leaked."""
-    source = Path("config/pipelines/basic_rag_v1.yaml").read_text(encoding="utf-8")
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    )
     path = tmp_path / "invalid.yaml"
     path.write_text(
-        source.replace("embedding: embedding_local_minilm", "embedding: secret-model"),
+        source.replace("parser: parser_pymupdf", "parser: secret-model"),
         encoding="utf-8",
     )
 
@@ -152,7 +133,7 @@ def test_pipeline_row_persists_jsonb_configuration_and_ownership_fields() -> Non
 
 def test_registry_keeps_pipeline_registration_closed() -> None:
     """A pipeline cannot select arbitrary Python import paths."""
-    config = load_pipeline_config(Path("config/pipelines/basic_rag_v1.yaml"))
+    config = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
     settings = config.model_dump()
     settings["query"]["renderer"]["type"] = "python:os.system"
 
@@ -221,7 +202,7 @@ async def test_startup_synchronizer_discovers_and_fingerprints_yaml(
     tmp_path: Path,
 ) -> None:
     """Startup imports new files and remains idempotent on the next pass."""
-    source = Path("config/pipelines/basic_rag_v1.yaml")
+    source = Path("config/pipelines/query_basic_v1.yaml")
     (tmp_path / source.name).write_text(
         source.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -242,7 +223,7 @@ async def test_startup_sync_rejects_changed_yaml_without_version_bump(
     tmp_path: Path,
 ) -> None:
     """A changed YAML document cannot overwrite an immutable version snapshot."""
-    source = Path("config/pipelines/basic_rag_v1.yaml")
+    source = Path("config/pipelines/query_basic_v1.yaml")
     pipeline_path = tmp_path / source.name
     pipeline_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     repository = RecordingPipelineRepository()
@@ -251,27 +232,30 @@ async def test_startup_sync_rejects_changed_yaml_without_version_bump(
     await synchronizer.synchronize()
     pipeline_path.write_text(
         pipeline_path.read_text(encoding="utf-8").replace(
-            "description: Default grounded vector-retrieval pipeline.",
-            "description: Changed grounded vector-retrieval pipeline.",
+            "description: Default query pipeline for indexed project documents.",
+            "description: Changed query pipeline for indexed project documents.",
         ),
         encoding="utf-8",
     )
 
     with pytest.raises(
         ValueError,
-        match=r"Pipeline basic_rag_v1 version 2 already contains a different",
+        match=r"Pipeline query_basic_v1 version 1 already contains a different",
     ):
         await synchronizer.synchronize()
 
-    assert repository.records["basic_rag_v1"].version == 2
-    assert repository.records["basic_rag_v1"].config["query"]["retriever"]["top_k"] == 8
+    assert repository.records["query_basic_v1"].version == 1
+    assert (
+        repository.records["query_basic_v1"].config["query"]["retriever"]["top_k"]
+        == 8
+    )
 
 
 async def test_startup_sync_accepts_changed_yaml_after_version_bump(
     tmp_path: Path,
 ) -> None:
     """A changed YAML document imports normally once its version is incremented."""
-    source = Path("config/pipelines/basic_rag_v1.yaml")
+    source = Path("config/pipelines/query_basic_v1.yaml")
     pipeline_path = tmp_path / source.name
     pipeline_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     repository = RecordingPipelineRepository()
@@ -280,9 +264,9 @@ async def test_startup_sync_accepts_changed_yaml_after_version_bump(
     await synchronizer.synchronize()
     changed = pipeline_path.read_text(encoding="utf-8")
     pipeline_path.write_text(
-        changed.replace("\nversion: 2\n", "\nversion: 3\n", 1).replace(
-            "description: Default grounded vector-retrieval pipeline.",
-            "description: Changed grounded vector-retrieval pipeline.",
+        changed.replace("\nversion: 1\n", "\nversion: 2\n", 1).replace(
+            "description: Default query pipeline for indexed project documents.",
+            "description: Changed query pipeline for indexed project documents.",
         ),
         encoding="utf-8",
     )
@@ -292,5 +276,8 @@ async def test_startup_sync_accepts_changed_yaml_after_version_bump(
 
     assert updated.updated == 1
     assert repeated.updated == 0
-    assert repository.records["basic_rag_v1"].version == 3
-    assert repository.records["basic_rag_v1"].config["query"]["retriever"]["top_k"] == 8
+    assert repository.records["query_basic_v1"].version == 2
+    assert (
+        repository.records["query_basic_v1"].config["query"]["retriever"]["top_k"]
+        == 8
+    )

@@ -1,3 +1,0 @@
-id: embedding_aqueduct_qwen
-type: openai_compatible
-model_id: aqueduct_qwen_embedding

@@ -5,10 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from llm_grounding.domain.corpus import CorpusRequest, EvidenceReference, RetrievalUnit
-from llm_grounding.embedding.factory import build_architecture_embedder, build_embedder
+from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.embedding.openai_compatible import OpenAICompatibleEmbedder
-from llm_grounding.infrastructure.config.models import EmbedderConfig, ModelConfig
 from llm_grounding.infrastructure.vector.memory import InMemoryVectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
@@ -183,45 +182,3 @@ async def test_openai_compatible_embedder_batches_requests(
 
     assert calls == [["one", "two"], ["three"]]
     assert len(vectors) == 3
-
-
-async def test_architecture_embedder_uses_nested_model_settings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Architecture configuration constructs the same OpenAI-compatible adapter."""
-    calls: list[dict[str, object]] = []
-
-    class FakeEmbeddings:
-        async def create(self, **kwargs: object) -> SimpleNamespace:
-            calls.append(kwargs)
-            return SimpleNamespace(
-                data=[SimpleNamespace(index=0, embedding=[1.0, 0.0])]
-            )
-
-    class FakeClient:
-        def __init__(self, **kwargs: object) -> None:
-            calls.append(kwargs)
-            self.embeddings = FakeEmbeddings()
-
-    monkeypatch.setattr(
-        "llm_grounding.embedding.openai_compatible.AsyncOpenAI", FakeClient
-    )
-    monkeypatch.setattr(
-        "llm_grounding.embedding.openai_compatible.resolve_api_key",
-        lambda: "test-key",
-    )
-    config = EmbedderConfig(
-        type="openai_compatible",
-        model=ModelConfig(
-            provider="aqueduct",
-            name="qwen3-embedding-4b",
-            base_url="https://example.test/v1",
-        ),
-        batch_size=4,
-    )
-
-    vectors = await build_architecture_embedder(config).embed_documents(["text"])
-
-    assert vectors[0].dimension == 2
-    assert calls[0]["api_key"] == "test-key"
-    assert calls[1] == {"model": "qwen3-embedding-4b", "input": ["text"]}

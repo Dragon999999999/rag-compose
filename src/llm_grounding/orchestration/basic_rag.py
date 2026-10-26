@@ -1,4 +1,4 @@
-"""Basic RAG v1 query orchestration, separate from document ingestion and Baseline 0."""
+"""Current grounded query orchestration, separate from document ingestion."""
 
 import json
 from collections.abc import Callable
@@ -373,18 +373,15 @@ class BasicRagRunner:
 
     @staticmethod
     def _runtime_values(runtime_config: dict[str, Any] | None) -> dict[str, Any]:
-        """Merge legacy flat settings with an optional structured ``config`` map."""
+        """Read the structured runtime configuration map."""
         values = dict(runtime_config or {})
         nested = values.get("config")
-        if isinstance(nested, dict):
-            values.update(nested)
-        return values
+        return dict(nested) if isinstance(nested, dict) else values
 
     def _request_embedder(self, values: dict[str, Any]) -> Embedder | None:
         """Resolve and cache a request-specific embedding provider when requested."""
         requested = values.get("embedding", values.get("embedding_config"))
-        legacy_type = values.get("embedder")
-        if requested is None and legacy_type is None:
+        if requested is None:
             return None
         base = self._embedding_config
         if isinstance(requested, EmbeddingConfig):
@@ -397,14 +394,8 @@ class BasicRagRunner:
             config = EmbeddingConfig.model_validate(
                 {**base.model_dump(mode="json"), **requested}
             )
-        elif requested is not None:
-            raise ValueError("embedding override must be an EmbeddingConfig or object")
         else:
-            if base is None or not isinstance(legacy_type, str):
-                raise ValueError("embedder override requires a configured embedding")
-            config = EmbeddingConfig.model_validate(
-                {**base.model_dump(mode="json"), "type": legacy_type}
-            )
+            raise ValueError("embedding override must be an EmbeddingConfig or object")
         identity = config.identity()
         embedder = self._embedders.get(identity)
         if embedder is None:

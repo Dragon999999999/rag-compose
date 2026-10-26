@@ -1,4 +1,4 @@
-export type PipelineKind = "full" | "ingestion" | "query";
+export type PipelineKind = "ingestion" | "query";
 export type Project = {
   id: string;
   name: string;

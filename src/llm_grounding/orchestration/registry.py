@@ -7,37 +7,21 @@ architecture names. A supplied model client replaces external generation for tes
 
 from collections.abc import Callable, Collection
 
-from llm_grounding.assessment.noop import NoOpAssessor
-from llm_grounding.assessment.protocol import Assessor
-from llm_grounding.decision.accept_all import AcceptAllDecisionPolicy
-from llm_grounding.decision.protocol import DecisionPolicy
-from llm_grounding.embedding.factory import build_architecture_embedder
-from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
-    ArchitectureConfig,
-    EmbedderConfig,
     ModelCatalog,
     PipelineConfig,
     RerankerConfig,
 )
-from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
-from llm_grounding.infrastructure.llm.protocol import StructuredModelClient
 from llm_grounding.infrastructure.prompts import PromptLibrary, PromptLibraryError
-from llm_grounding.ingestion.models import ChunkerConfig, IngestionConfig
+from llm_grounding.ingestion.models import ChunkerConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
-from llm_grounding.orchestration.architecture import Architecture
 from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
-from llm_grounding.reasoning.basic_summary import BasicSummaryReasoner
-from llm_grounding.reasoning.protocol import ReasoningEngine
-from llm_grounding.rendering.basic_summary import BasicSummaryRenderer
-from llm_grounding.rendering.protocol import Renderer
-from llm_grounding.retrieval.full_document import FullDocumentRetriever
 from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
@@ -57,7 +41,7 @@ class ComponentRegistry:
     """Map stage-local names to typed constructors and validate complete composition."""
 
     def __init__(self) -> None:
-        """Register the minimal baseline implementations without creating providers."""
+        """Register the supported split-pipeline implementations."""
         self.parsers: dict[str, Callable[[], DocumentParser]] = {
             "pymupdf": PyMuPDFDocumentParser
         }
@@ -65,7 +49,6 @@ class ComponentRegistry:
             "basic": BasicKnowledgeBuilder
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
-            "full_document": FullDocumentRetriever,
             "vector": _vector_retriever_requires_runtime_dependencies,
         }
         self.rerankers: dict[str, Callable[[RerankerConfig], Reranker]] = {
@@ -78,57 +61,15 @@ class ComponentRegistry:
                 top_k=config.rerank_top_k,
             ),
         }
-        self.reasoners: dict[
-            str, Callable[[StructuredModelClient], ReasoningEngine]
-        ] = {"basic_summary": BasicSummaryReasoner}
-        self.assessors: dict[str, Callable[[], Assessor]] = {"noop": NoOpAssessor}
-        self.decision_policies: dict[str, Callable[[], DecisionPolicy]] = {
-            "accept_all": AcceptAllDecisionPolicy
-        }
-        self.renderers: dict[str, Callable[[], Renderer]] = {
-            "basic_summary": BasicSummaryRenderer
-        }
-        self.embedders: dict[str, Callable[[EmbedderConfig], Embedder]] = {
-            "openai_compatible": build_architecture_embedder,
-        }
-        self.pipeline_reasoners = frozenset({"basic_summary", "basic_grounded"})
-        self.pipeline_assessors = frozenset({"noop", "source_reference"})
-        self.pipeline_decision_policies = frozenset({"accept_all", "basic_grounding"})
-        self.pipeline_renderers = frozenset({"basic_summary", "grounded_answer"})
+        self.pipeline_reasoners = frozenset({"basic_grounded"})
+        self.pipeline_assessors = frozenset({"source_reference"})
+        self.pipeline_decision_policies = frozenset({"basic_grounding"})
+        self.pipeline_renderers = frozenset({"grounded_answer"})
         self.chunkers: dict[str, Callable[[ChunkerConfig], Chunker]] = {
             "block_aware": BlockAwareChunker,
             "fixed_window": FixedWindowChunker,
         }
         self.vector_backends: frozenset[str] = frozenset({"qdrant"})
-
-    def validate(self, config: ArchitectureConfig) -> None:
-        """Reject unknown identifiers with stage context before constructing clients."""
-        selections: list[tuple[str, str, Collection[str]]] = [
-            ("parser", config.parser.type, self.parsers),
-            (
-                "knowledge_builder",
-                config.knowledge_builder.type,
-                self.knowledge_builders,
-            ),
-            ("retriever", config.retriever.type, self.retrievers),
-            ("reranker", config.reranker.type, self.rerankers),
-            ("reasoner", config.reasoner.type, self.reasoners),
-            ("decision_policy", config.decision_policy.type, self.decision_policies),
-            ("renderer", config.renderer.type, self.renderers),
-        ]
-        if config.embedder is not None:
-            selections.append(
-                ("embedder", config.embedder.type, self.embedders)
-            )
-        selections.extend(
-            ("assessor", item.type, self.assessors) for item in config.assessors
-        )
-        for stage, name, factories in selections:
-            if name not in factories:
-                raise ConfigurationError(
-                    f"Unknown {stage} component {name!r}; "
-                    f"available: {', '.join(factories)}"
-                )
 
     def validate_pipeline(
         self, config: PipelineConfig, catalog: ModelCatalog | None = None
@@ -232,62 +173,11 @@ class ComponentRegistry:
             except PromptLibraryError as exc:
                 raise ConfigurationError(str(exc)) from exc
 
-    def resolve_pipeline(
-        self, config: PipelineConfig, catalog: ModelCatalog
-    ) -> tuple[ArchitectureConfig, IngestionConfig]:
-        """Validate and resolve a pipeline into existing execution configurations."""
-        self.validate_pipeline(config, catalog)
-        return config.resolve(catalog)
-
     def query_capabilities(self, retriever_type: str) -> frozenset[str]:
         """Return the index capabilities required by a registered retriever."""
         if retriever_type == "vector":
             return frozenset({"chunk_vectors"})
-        if retriever_type == "full_document":
-            return frozenset({"full_text"})
         raise ConfigurationError(f"Unknown retriever component {retriever_type!r}")
-
-    def build(
-        self,
-        config: ArchitectureConfig,
-        model_client: StructuredModelClient | None = None,
-    ) -> Architecture:
-        """Resolve components and defer credential loading until generation."""
-        self.validate(config)
-        client = (
-            model_client
-            if model_client is not None
-            else AqueductModelClient(config.reasoner.model)
-        )
-        return Architecture(
-            name=config.name,
-            version=config.version,
-            parser=self.parsers[config.parser.type](),
-            knowledge_builder=self.knowledge_builders[config.knowledge_builder.type](),
-            retriever=self.retrievers[config.retriever.type](),
-            reranker=self.rerankers[config.reranker.type](config.reranker),
-            embedder=(
-                self.embedders[config.embedder.type](config.embedder)
-                if config.embedder is not None
-                and config.retriever.type != "full_document"
-                else None
-            ),
-            reasoner=self.reasoners[config.reasoner.type](client),
-            assessors=tuple(self.assessors[item.type]() for item in config.assessors),
-            decision_policy=self.decision_policies[config.decision_policy.type](),
-            renderer=self.renderers[config.renderer.type](),
-        )
-
-    def build_embedder(self, config: EmbedderConfig) -> Embedder:
-        """Construct one architecture-level embedder from validated settings."""
-        try:
-            factory = self.embedders[config.type]
-        except KeyError as exc:
-            raise ConfigurationError(
-                f"Unknown embedder component {config.type!r}; "
-                f"available: {', '.join(self.embedders)}"
-            ) from exc
-        return factory(config)
 
     def build_reranker(self, config: RerankerConfig) -> Reranker:
         """Construct one reranker from validated settings without loading models."""

@@ -69,9 +69,9 @@ export function PipelineLibrary() {
       </header>
 
       <nav aria-label="Pipeline type" className="pipeline-tabs">
-        {(["all", "ingestion", "query", "full"] as KindFilter[]).map((option) => (
+        {(["all", "ingestion", "query"] as KindFilter[]).map((option) => (
           <button className={kind === option ? "active" : ""} key={option} onClick={() => setKind(option)} type="button">
-            {option === "all" ? "All pipelines" : option === "full" ? "Legacy full" : `${option[0].toUpperCase()}${option.slice(1)} pipelines`}
+            {option === "all" ? "All pipelines" : `${option[0].toUpperCase()}${option.slice(1)} pipelines`}
           </button>
         ))}
       </nav>
@@ -186,7 +186,7 @@ function PipelineRow({
         <button className="pipeline-name" onClick={onEdit} type="button">{pipeline.name}</button>
         <span className="pipeline-description">{pipeline.description || "No description"}</span>
         <span className="pipeline-source">{pipeline.source_kind ?? "configuration"}</span>
-        <span className="pipeline-kind">{pipeline.kind === "full" ? "Legacy full" : `${pipeline.kind} pipeline`}</span>
+        <span className="pipeline-kind">{`${pipeline.kind} pipeline`}</span>
       </th>
       <td>{embedding ?? "—"}</td>
       <td>{reasoning ?? "—"}</td>
@@ -211,12 +211,12 @@ function PipelineRow({
   );
 }
 
-function CreatePipelineDialog({ onClose, onChoose }: { onClose: () => void; onChoose: (mode: "default" | "blank", kind: Exclude<PipelineKind, "full">) => void }) {
-  const [kind, setKind] = useState<Exclude<PipelineKind, "full">>("query");
+function CreatePipelineDialog({ onClose, onChoose }: { onClose: () => void; onChoose: (mode: "default" | "blank", kind: PipelineKind) => void }) {
+  const [kind, setKind] = useState<PipelineKind>("query");
   return (
     <Dialog title="Create pipeline" onClose={onClose}>
       <p>Choose the pipeline responsibility and starting point. The editor sends the final typed configuration to the backend for validation.</p>
-      <label className="dialog-form-label">Pipeline type<select value={kind} onChange={(event) => setKind(event.target.value as Exclude<PipelineKind, "full">)}><option value="query">Query pipeline</option><option value="ingestion">Ingestion pipeline</option></select></label>
+      <label className="dialog-form-label">Pipeline type<select value={kind} onChange={(event) => setKind(event.target.value as PipelineKind)}><option value="query">Query pipeline</option><option value="ingestion">Ingestion pipeline</option></select></label>
       <div className="create-pipeline-options">
         <button onClick={() => onChoose("default", kind)} type="button"><strong>From default</strong><span>Start with the current default {kind} configuration.</span></button>
         <button onClick={() => onChoose("blank", kind)} type="button"><strong>Blank configuration</strong><span>Build the {kind} specification using registered stages.</span></button>

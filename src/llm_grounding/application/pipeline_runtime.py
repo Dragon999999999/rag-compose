@@ -23,7 +23,6 @@ from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.orchestration.registry import ComponentRegistry
-from llm_grounding.orchestration.runner import ArchitectureRunner
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
@@ -41,7 +40,7 @@ class ResolvedPipeline:
     config: PipelineConfig
     architecture: ArchitectureConfig
     ingestion: IngestionConfig
-    runner: BasicRagRunner | ArchitectureRunner
+    runner: BasicRagRunner
 
 
 class PipelineRuntimeResolver:
@@ -76,7 +75,7 @@ class PipelineRuntimeResolver:
     async def resolve(
         self, pipeline_id: str, *, ingestion: IngestionConfig | None = None
     ) -> ResolvedPipeline:
-        """Load, validate, and construct a query or complete pipeline runtime."""
+        """Load, validate, and construct a query pipeline runtime."""
         record = await self._repository.get_pipeline(pipeline_id)
         if not record.active:
             raise PipelineResolutionError(f"Pipeline {pipeline_id!r} is inactive")
@@ -143,24 +142,14 @@ class PipelineRuntimeResolver:
     ) -> ResolvedPipeline:
         """Build a runtime while retaining existing execution engines."""
         try:
-            if config.kind == "full":
-                architecture, effective_ingestion = config.resolve(self._catalog)
-            elif config.kind == "query":
-                if ingestion is None:
-                    raise PipelineResolutionError(
-                        "A query pipeline requires a project index configuration"
-                    )
-                architecture, effective_ingestion = config.resolve_query(
-                    self._catalog, ingestion
-                )
-            else:
+            if config.kind != "query" or ingestion is None:
                 raise PipelineResolutionError(
-                    "Ingestion pipelines are not executable query runtimes"
+                    "A query pipeline requires the project's index configuration"
                 )
-            if architecture.retriever.type == "vector":
-                runner = self._build_basic_rag(architecture, effective_ingestion)
-            else:
-                runner = ArchitectureRunner(self._registry.build(architecture))
+            architecture, effective_ingestion = config.resolve_query(
+                self._catalog, ingestion
+            )
+            runner = self._build_basic_rag(architecture, effective_ingestion)
             return ResolvedPipeline(
                 record, config, architecture, effective_ingestion, runner
             )

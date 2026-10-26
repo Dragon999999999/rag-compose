@@ -10,7 +10,6 @@ from llm_grounding.domain.answers import (
     ReasoningResult,
 )
 from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest
-from llm_grounding.domain.runs import TraceEvent
 from llm_grounding.observability.models import (
     AssessmentModel,
     CitationModel,
@@ -52,7 +51,6 @@ class ObservationBuilder:
         retrieval_stages: list[Any] | None = None,
         stages: list[StageSnapshot] | None = None,
         trace: list[TraceSpan] | tuple[TraceSpan, ...] = (),
-        legacy_trace: list[TraceEvent] | tuple[TraceEvent, ...] = (),
         usage: RagUsage | None = None,
         effective_configuration: EffectiveConfiguration | None = None,
         status: str = "completed",
@@ -105,7 +103,7 @@ class ObservationBuilder:
                 for index, item in enumerate(assessments, 1)
             ],
             decision=self._decision(decision, assessments),
-            trace=list(trace) + self._legacy_trace(legacy_trace),
+            trace=list(trace),
             usage=usage or RagUsage(),
             effective_configuration=effective_configuration,
             created_at=created_at or datetime.now(UTC),
@@ -342,23 +340,6 @@ class ObservationBuilder:
             ],
             metadata=decision.metadata,
         )
-
-    @staticmethod
-    def _legacy_trace(
-        events: list[TraceEvent] | tuple[TraceEvent, ...],
-    ) -> list[TraceSpan]:
-        """Represent existing append-only stage events in the canonical trace shape."""
-        return [
-            TraceSpan(
-                span_id=f"legacy_{index}",
-                name=event.stage,
-                started_at=event.timestamp,
-                ended_at=event.timestamp,
-                duration_ms=event.elapsed_seconds * 1000,
-                status=event.status,
-            )
-            for index, event in enumerate(events, 1)
-        ]
 
     @staticmethod
     def _datetime(value: object) -> datetime | None:

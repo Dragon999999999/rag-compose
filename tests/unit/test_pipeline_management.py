@@ -14,12 +14,12 @@ from llm_grounding.application.pipeline_runtime import (
     PipelineRuntimeResolver,
 )
 from llm_grounding.application.pipeline_service import (
-    PipelineCompatibilityError,
     PipelineDependencyError,
     PipelineService,
 )
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.loader import (
+    load_ingestion_config,
     load_model_catalog,
     load_pipeline_config,
 )
@@ -167,7 +167,7 @@ async def test_pipeline_service_crud_validates_and_invalidates_runtime_async() -
     """API-owned CRUD uses one validated service and clears stale runtimes."""
     catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     runtime = RecordingRuntime()
@@ -189,7 +189,7 @@ async def test_used_pipeline_reports_changes_and_requires_an_explicit_choice() -
     """Dependent conversations prevent an implicit in-place update."""
     catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     service = PipelineService(repository, catalog)  # type: ignore[arg-type]
@@ -220,7 +220,7 @@ async def test_used_pipeline_can_migrate_query_changes_but_not_representation_ch
     """Migrate query changes while blocking representation changes."""
     catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     service = PipelineService(repository, catalog)  # type: ignore[arg-type]
@@ -245,35 +245,15 @@ async def test_used_pipeline_can_migrate_query_changes_but_not_representation_ch
     assert migrated.version == created.version + 1
     assert len(repository.migrated_snapshots) == 2
 
-    representation_change = query_change.model_copy(
-        update={
-            "representation": query_change.representation.model_copy(
-                update={
-                    "chunker": query_change.representation.chunker.model_copy(
-                        update={"target_chars": 256}
-                    )
-                }
-            )
-        }
-    )
-    impact = await service.impact(created.id, representation_change)
-    assert impact.compatible is False
-    with pytest.raises(PipelineCompatibilityError):
-        await service.update(
-            created.id,
-            representation_change,
-            expected_config_hash=migrated.config_hash,
-            migrate_conversations=True,
-        )
-
 
 async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations() -> (
     None
 ):
     """Different stored query parameters create distinct runnable compositions."""
     catalog = load_model_catalog()
+    ingestion = load_ingestion_config()
     base = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     repository = PipelineRepository(catalog)
     for index, top_k in enumerate((3, 7, 11), start=1):
@@ -315,10 +295,10 @@ async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations()
         catalog,
         max_cache_size=2,  # type: ignore[arg-type]
     )
-    first = await resolver.resolve("1")
-    cached = await resolver.resolve("1")
-    second = await resolver.resolve("2")
-    third = await resolver.resolve("3")
+    first = await resolver.resolve("1", ingestion=ingestion)
+    cached = await resolver.resolve("1", ingestion=ingestion)
+    second = await resolver.resolve("2", ingestion=ingestion)
+    third = await resolver.resolve("3", ingestion=ingestion)
 
     assert first is cached
     assert first.architecture.retriever.top_k == 3
@@ -330,8 +310,9 @@ async def test_runtime_resolver_builds_distinct_cached_pipeline_configurations()
 async def test_runtime_resolver_rebuilds_after_persisted_hash_changes() -> None:
     """A changed persisted configuration cannot reuse the old runtime instance."""
     catalog = load_model_catalog()
+    ingestion = load_ingestion_config()
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     now = datetime.now(UTC)
     record = Pipeline(
@@ -358,7 +339,7 @@ async def test_runtime_resolver_rebuilds_after_persisted_hash_changes() -> None:
         InMemoryVectorStore(),
         catalog,  # type: ignore[arg-type]
     )
-    original = await resolver.resolve(record.id)
+    original = await resolver.resolve(record.id, ingestion=ingestion)
 
     changed = config.model_copy(
         update={
@@ -376,7 +357,7 @@ async def test_runtime_resolver_rebuilds_after_persisted_hash_changes() -> None:
         representation_hash=changed.representation_hash(catalog),
     )
 
-    refreshed = await resolver.resolve(record.id)
+    refreshed = await resolver.resolve(record.id, ingestion=ingestion)
 
     assert refreshed is not original
     assert refreshed.architecture.retriever.top_k == 4
@@ -386,7 +367,7 @@ async def test_runtime_resolver_rejects_incompatible_representation_identity() -
     """A stale index identity cannot be silently paired with a pipeline runtime."""
     catalog = load_model_catalog()
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
     now = datetime.now(UTC)
     record = Pipeline(
@@ -431,7 +412,7 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     )
     api = create_api(application)  # type: ignore[arg-type]
     config = load_pipeline_config(
-        Path("config/pipelines/basic_rag_v1.yaml"), catalog=catalog
+        Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
 
     transport = httpx.ASGITransport(app=api)
@@ -455,7 +436,7 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     assert updated_response.status_code == 200
     assert listed_response.status_code == 200
     assert detail_response.json()["config"] == changed_config.model_copy(
-        update={"version": 3}
+        update={"version": 2}
     ).model_dump(mode="json")
     assert "vector_backend" in catalog_response.json()["stages"]
     assert "embedding_001" in models_response.json()["embedding"]

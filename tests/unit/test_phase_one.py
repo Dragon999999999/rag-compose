@@ -22,8 +22,9 @@ from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 from llm_grounding.embedding.fake import DeterministicFakeEmbedder
 from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.infrastructure.config.loader import (
-    load_architecture_config,
     load_ingestion_config,
+    load_model_catalog,
+    load_pipeline_config,
 )
 from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.vector.memory import InMemoryVectorStore
@@ -643,13 +644,12 @@ class _UnusedSummaryRetriever:
 
 def test_configs_and_reingestion_identity_track_representation_changes() -> None:
     """Architecture/ingestion choices are typed, persisted, and identity-bearing."""
-    architecture = load_architecture_config(
-        Path("config/architectures/basic_rag_v1.yaml")
-    )
+    query = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
     ingestion = load_ingestion_config(
         Path("config/pipelines/ingestion_default_v1.yaml")
     )
-    assert architecture.name == "basic_rag_v1"
+    architecture = query.resolve_query(load_model_catalog(), ingestion)[0]
+    assert architecture.name == "query_basic_v1"
     assert architecture.retriever.type == "vector"
     assert architecture.reasoner.prompt_id == "grounded_qa_v1"
     assert (

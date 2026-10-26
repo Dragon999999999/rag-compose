@@ -8,7 +8,7 @@ def test_config_override_is_recorded_in_effective_hash(config) -> None:
     """Two effective top-k settings produce different reproducibility identities."""
     architecture = config.model_copy(
         update={
-            "name": "basic_rag_v1",
+            "name": "query_basic_v1",
             "retriever": config.retriever.model_copy(update={"type": "vector"}),
         }
     )

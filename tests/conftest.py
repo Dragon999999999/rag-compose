@@ -5,12 +5,22 @@ from pathlib import Path
 
 import pymupdf
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import models
 
-from llm_grounding.infrastructure.config.loader import load_architecture_config
+from llm_grounding.infrastructure.config.loader import (
+    load_ingestion_config,
+    load_model_catalog,
+    load_pipeline_config,
+)
 from llm_grounding.infrastructure.config.models import ArchitectureConfig
-from llm_grounding.reasoning.basic_summary import BasicSummaryPayload
+
+
+class ProviderPayload(BaseModel):
+    """Stable flat schema used only for provider transport tests."""
+
+    keywords: list[str] = Field(min_length=5, max_length=8)
+    summary: str = Field(min_length=20, max_length=500)
 
 
 @pytest.fixture(autouse=True)
@@ -44,23 +54,24 @@ def pdf_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def config() -> ArchitectureConfig:
-    """Load the checked-in architecture used by the actual application."""
-    return load_architecture_config(Path("config/architectures/baseline_v0.yaml"))
+    """Load the effective query configuration used by the actual application."""
+    query = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
+    return query.resolve_query(load_model_catalog(), load_ingestion_config())[0]
 
 
 @pytest.fixture
-def payload() -> BasicSummaryPayload:
-    """Supply a valid deterministic extraction without claiming model quality."""
-    return BasicSummaryPayload(
-        keywords=["grounding", "evidence", "research", "extraction", "validation"],
-        summary="The paper describes structured extraction. It establishes a baseline.",
+def payload() -> ProviderPayload:
+    """Supply a valid deterministic structured payload."""
+    return ProviderPayload(
+        keywords=["grounding", "evidence", "research", "validation", "retrieval"],
+        summary="The paper describes structured grounding in indexed evidence.",
     )
 
 
 class RecordingModelClient:
     """Record prompts and validate fixture output through the requested schema."""
 
-    def __init__(self, payload: BasicSummaryPayload) -> None:
+    def __init__(self, payload: ProviderPayload) -> None:
         """Store fixed output and a fresh prompt history."""
         self.payload = payload
         self.prompts: list[str] = []
@@ -74,6 +85,6 @@ class RecordingModelClient:
 
 
 @pytest.fixture
-def model_client(payload: BasicSummaryPayload) -> RecordingModelClient:
+def model_client(payload: ProviderPayload) -> RecordingModelClient:
     """Create a fresh deterministic generation dependency for each test."""
     return RecordingModelClient(payload)

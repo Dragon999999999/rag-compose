@@ -1,9 +1,8 @@
 # LLM Grounding Project
 
-Baseline 0 is a **Basic Summary Extraction Baseline** for scientific PDFs. It
-extracts all available text, asks Aqueduct/Qwen for 5–8 keywords and a short
-summary, and returns the result through the application's configured pipeline.
-It performs no semantic search, claim verification, or grounding assessment.
+The project provides a grounded question-answering workflow with separate
+ingestion and query pipelines. Ingestion builds a reusable vector
+representation; query pipelines retrieve, assess, and render grounded answers.
 
 ## Run
 
@@ -12,32 +11,23 @@ Requires Python 3.13+ and `uv`.
 ```bash
 uv sync --locked
 export AQUEDUCT_API_KEY_FILE=/path/to/aqueduct-key.txt
-uv run python -m llm_grounding path/to/paper.pdf
+uv run python -m llm_grounding project add-document PROJECT_ID path/to/paper.pdf
 ```
 
 Alternatively, set `AQUEDUCT_API_KEY`; a nonempty value takes precedence over the
 UTF-8 key file. Both are stripped of surrounding whitespace. `.env.example`
 documents the variables; the application does not automatically load `.env`.
 
-The default architecture is defined in
-[`config/architectures/baseline_v0.yaml`](config/architectures/baseline_v0.yaml).
-It uses `qwen-3.5-397b` for reasoning and declares the OpenAI-compatible
-`qwen3-embedding-4b` embedder at `https://aqueduct.ai.datalab.tuwien.ac.at/v1`.
-Baseline 0 uses full-document retrieval, so that embedder is not constructed or
-called for the summary workflow. Embedding-aware stages use the same
-`AQUEDUCT_API_KEY` or `AQUEDUCT_API_KEY_FILE` as reasoning requests.
-Change the model settings in an explicit architecture file when needed:
+The canonical pipeline definitions are under [`config/pipelines`](config/pipelines).
+Change model and component settings in those pipeline files when needed:
 
 ```bash
 uv run python -m llm_grounding \
-  --architecture config/architectures/baseline_v0.yaml \
-  path/to/paper.pdf
+  pipeline validate config/pipelines/query_basic_v1.yaml
 ```
 
 The installed `llm-grounding` command exposes the same CLI. Default YAML is bundled
 in the wheel, so installed usage does not depend on the working directory.
-Output contains numbered keywords, the summary, and an extraction-success line.
-Success means the pipeline completed; it does not establish factual correctness.
 
 The canonical reusable configuration definitions are under [`config/`](config/),
 with standalone models in [`config/models/`](config/models/) and components in
@@ -91,15 +81,15 @@ src/llm_grounding/
 ├── parsing/            # Structured PDF blocks with provenance
 ├── knowledge/          # In-memory canonical evidence
 ├── retrieval/          # Retrieval plus top-k and local cross-encoder reranking
-├── reasoning/          # Versioned prompt and typed summary extraction
-├── assessment/         # No-op measurements
-├── decision/           # Unconditional baseline acceptance
-├── rendering/          # Deterministic general Answer
-├── evaluation/         # Offline structural checks and test-suite runner
-├── orchestration/      # Registry, composition, context, and linear execution
+├── reasoning/          # Grounded prompt and typed answer generation
+├── assessment/         # Grounding assessments
+├── decision/           # Grounding decisions
+├── rendering/          # Grounded answer rendering
+├── orchestration/      # Split-pipeline query execution
 ├── infrastructure/     # Typed YAML and Aqueduct adapter/credentials
 └── application/        # Service and CLI
-config/architectures/baseline_v0.yaml
+config/pipelines/ingestion_default_v1.yaml
+config/pipelines/query_basic_v1.yaml
 tests/unit/
 tests/integration/
 ```
@@ -140,9 +130,8 @@ loaded only on the first reranking request and cached in
 mount that directory as a persistent volume if the application container should
 reuse downloaded weights across restarts. No API key or model server is needed.
 
-Persistent project corpora and Basic RAG v1 are documented in
-[`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md). Baseline 0
-continues to use its original single-PDF CLI syntax.
+Persistent project corpora and the separate ingestion/query workflow are documented
+in [`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md).
 
 ## Development checks
 
@@ -187,10 +176,8 @@ configuration, and prompt/schema identity.
 
 ## Limitations and next phase
 
-Reading order is a positional heuristic, and OCR is not implemented. Whole-document
-input can exceed the model context window; this baseline does not silently truncate
-or chunk it. Keyword count (5–8) and summary length (20–500 characters) are schema
-constraints; 1–3 words per keyword and 2–3 summary sentences are prompt instructions.
+Reading order is a positional heuristic, and OCR is not implemented. Query results
+are grounded only in indexed evidence; insufficient evidence is returned explicitly.
 The model is nondeterministic and its remote alias can change.
 
 Later work can introduce additional parsers, substantive assessors, decision

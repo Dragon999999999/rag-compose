@@ -60,7 +60,7 @@ def test_builder_preserves_claim_citation_and_stage_identity() -> None:
         run_id="run-1",
         request_id="request-1",
         corpus_id="corpus-1",
-        architecture_name="basic_rag_v1",
+        architecture_name="query_basic_v1",
         architecture_version=1,
         request=CorpusRequest("corpus-1", "What is supported?"),
         chunks=(result,),
