@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
-import type { Chat, Evidence, GroundedAnswer, Pipeline, Project } from "../api/types";
+import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
 import { ChatWorkspace } from "../components/chats/ChatWorkspace";
 import { ChatCreateDialog, Dialog, ProjectCreateDialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";
@@ -33,14 +33,6 @@ import "./App.css";
 type DeleteTarget =
   | { kind: "project"; item: Project }
   | { kind: "chat"; item: Chat };
-
-function mergeIngestionPipelines(
-  ingestion: Pipeline[] | undefined,
-  all: Pipeline[] | undefined,
-): Pipeline[] {
-  const records = [...(all ?? []), ...(ingestion ?? [])];
-  return records.filter((pipeline, index) => records.findIndex((item) => item.id === pipeline.id) === index);
-}
 
 export function App() {
   return (
@@ -87,7 +79,6 @@ export function App() {
 function ProjectHome() {
   const projects = useProjects();
   const ingestionPipelines = usePipelines(false, "ingestion");
-  const allPipelines = usePipelines();
   const navigate = useNavigate();
   const [create, setCreate] = useState(false);
   const mutations = useProjectMutations();
@@ -117,7 +108,7 @@ function ProjectHome() {
       {create && (
         <ProjectCreateDialog
           error={mutations.create.error}
-          pipelines={mergeIngestionPipelines(ingestionPipelines.data, allPipelines.data)}
+          pipelines={ingestionPipelines.data ?? []}
           onClose={() => setCreate(false)}
           onSubmit={(name, ingestionPipelineId) =>
             mutations.create.mutate({ name, ingestionPipelineId }, {
@@ -139,7 +130,6 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const navigate = useNavigate();
   const projects = useProjects();
   const chats = useChats(projectId);
-  const pipelines = usePipelines();
   const ingestionPipelines = usePipelines(false, "ingestion");
   const compatibleQueryPipelines = useCompatibleQueryPipelines(projectId);
   const sources = useSources(projectId);
@@ -377,7 +367,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       onNewChat={() => createChat()}
       onWorkspaceToggle={toggleWorkspace}
       project={project}
-      ingestionPipelines={mergeIngestionPipelines(ingestionPipelines.data, pipelines.data)}
+      ingestionPipelines={ingestionPipelines.data ?? []}
       queryCompatibility={compatibleQueryPipelines.data ?? []}
       compatibilityError={compatibleQueryPipelines.error}
       ingestionError={projectMutations.updateIngestion.error}
@@ -526,7 +516,7 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
       {createProject && (
         <ProjectCreateDialog
           error={projectMutations.create.error}
-          pipelines={mergeIngestionPipelines(ingestionPipelines.data, pipelines.data)}
+          pipelines={ingestionPipelines.data ?? []}
           onClose={() => setCreateProject(false)}
           onSubmit={(name, ingestionPipelineId) =>
             projectMutations.create.mutate({ name, ingestionPipelineId }, {
