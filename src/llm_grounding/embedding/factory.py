@@ -21,7 +21,7 @@ def build_embedder(config: EmbeddingConfig) -> Embedder:
         return SentenceTransformersEmbedder(config)
     if config.type == "fake":
         return DeterministicFakeEmbedder(
-            config.dimension, model_identity=config.identity()
+            config.dimension, model_identity=config.vector_identity()
         )
     if config.type == "openai_compatible":
         return OpenAICompatibleEmbedder(config)

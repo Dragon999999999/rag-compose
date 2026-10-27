@@ -173,10 +173,19 @@ class ConfigurationRegistry:
             )
         query = None
         if source.query is not None:
+            retriever = self._component(
+                "retriever", source.query.retriever, RetrieverConfig
+            )
+            if retriever.query_embedder is not None:
+                retriever = retriever.model_copy(
+                    update={
+                        "query_embedder": self._embedding_model_ref(
+                            retriever.query_embedder
+                        )
+                    }
+                )
             query = PipelineQueryConfig(
-                retriever=self._component(
-                    "retriever", source.query.retriever, RetrieverConfig
-                ),
+                retriever=retriever,
                 reranker=self._reranker(source.query.reranker),
                 reasoner=self._pipeline_reasoner(source.query.reasoner),
                 assessors=tuple(
@@ -269,6 +278,9 @@ class ConfigurationRegistry:
                 type="openai_compatible",
                 provider=definition.provider,
                 model=definition.name,
+                embedding_space_id=definition.embedding_space_id,
+                representation=definition.representation,
+                similarity_metric=definition.similarity_metric,
                 dimension=getattr(definition, "dimension", 384) or 384,
                 base_url=definition.base_url,
                 api_key_env=definition.auth.env_var,
@@ -280,6 +292,9 @@ class ConfigurationRegistry:
             return EmbeddingConfig(
                 type="sentence_transformers",
                 model=definition.name,
+                embedding_space_id=definition.embedding_space_id,
+                representation=definition.representation,
+                similarity_metric=definition.similarity_metric,
                 revision=definition.revision,
                 dimension=definition.dimension,
                 normalize=definition.normalize,
@@ -290,6 +305,9 @@ class ConfigurationRegistry:
             return EmbeddingConfig(
                 type="fake",
                 model=definition.name,
+                embedding_space_id=definition.embedding_space_id,
+                representation=definition.representation,
+                similarity_metric=definition.similarity_metric,
                 dimension=definition.dimension,
                 normalize=definition.normalize,
                 batch_size=definition.batch_size,
@@ -336,6 +354,13 @@ class ConfigurationRegistry:
         model = self.model(definition.model_id)
         self._validate_model_stage(definition.model_id, model, category)
         return definition.model_id
+
+    def _embedding_model_ref(self, reference: str) -> str:
+        """Resolve either an embedding component ID or a catalog model ID."""
+        if reference in self.models:
+            self._validate_model_stage(reference, self.models[reference], "embedding")
+            return reference
+        return self._model_id_for_component("embedding", reference)
 
     @staticmethod
     def _validate_model_stage(

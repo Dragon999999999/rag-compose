@@ -7,7 +7,12 @@ from math import sqrt
 
 @dataclass(frozen=True)
 class EmbeddingVector:
-    """Represent one dense vector in a named compatible embedding space."""
+    """Represent one vector in a named compatible embedding space.
+
+    ``model_identity`` is retained as the serialized field name for backward
+    compatibility. For explicitly declared spaces it is a provider-independent
+    space identity; legacy configurations continue to use their old identity.
+    """
 
     values: tuple[float, ...]
     model_identity: str

@@ -72,12 +72,45 @@ class ReasonerConfig(ComponentConfig):
     )
 
 
+RetrieverRequirement = Literal[
+    "postgres_fts", "dense_vector_index", "compatible_query_embedder"
+]
+
+
+class RetrieverRequirements(BaseModel):
+    """Resources a retriever must have before it can execute."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    required: tuple[RetrieverRequirement, ...] = (
+        "dense_vector_index",
+        "compatible_query_embedder",
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_requirements(self) -> "RetrieverRequirements":
+        """Reject duplicate resource declarations in component YAML."""
+        if len(set(self.required)) != len(self.required):
+            raise ValueError("Retriever requirements must be unique")
+        return self
+
+
 class RetrieverConfig(ComponentConfig):
     """Select retrieval implementation and bounded context settings when applicable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     top_k: int | None = Field(default=None, ge=1, le=100)
     context_chars: int | None = Field(default=None, ge=1, le=200000)
     summary_per_facet: int | None = Field(default=None, ge=1, le=20)
+    query_embedder: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Optional embedding model-catalog reference for query encoding.",
+    )
+    requirements: RetrieverRequirements = Field(
+        default_factory=RetrieverRequirements
+    )
 
 
 class RerankerConfig(ComponentConfig):
@@ -253,13 +286,19 @@ class PipelineRepresentationConfig(BaseModel):
             backend.pop("representation", None)
             backend.pop("similarity_metric", None)
         if catalog is not None and self.embedding is not None:
-            data["embedding_model"] = catalog.embedding(
-                self.embedding.model_ref
-            ).model_dump(mode="json")
-            if data["embedding_model"].get("representation") == "dense":
-                data["embedding_model"].pop("representation", None)
-            if data["embedding_model"].get("similarity_metric") == "cosine":
-                data["embedding_model"].pop("similarity_metric", None)
+            embedding_config = catalog.embedding(self.embedding.model_ref)
+            data["embedding_model"] = (
+                embedding_config.specification().model_dump(mode="json")
+                if embedding_config.embedding_space_id is not None
+                else embedding_config.model_dump(mode="json")
+            )
+            if embedding_config.embedding_space_id is None:
+                if data["embedding_model"].get("embedding_space_id") is None:
+                    data["embedding_model"].pop("embedding_space_id", None)
+                if data["embedding_model"].get("representation") == "dense":
+                    data["embedding_model"].pop("representation", None)
+                if data["embedding_model"].get("similarity_metric") == "cosine":
+                    data["embedding_model"].pop("similarity_metric", None)
         return sha256(
             json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()

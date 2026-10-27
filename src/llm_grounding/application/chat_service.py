@@ -382,7 +382,10 @@ class ChatService:
         config = PipelineConfig.model_validate(pipeline.config)
         index = IndexCapabilities.from_mapping(project.index_capabilities)
         compatibility: CompatibilityResult = validate_query_compatibility(
-            config, index, self._pipeline_service.registry
+            config,
+            index,
+            self._pipeline_service.registry,
+            self._pipeline_service.model_catalog,
         )
         if pipeline.kind != "query":
             raise PipelineSelectionError(

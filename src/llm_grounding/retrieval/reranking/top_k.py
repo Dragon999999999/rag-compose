@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from llm_grounding.retrieval.models import RetrievalResponse
+from llm_grounding.retrieval.models import RerankResponse
 
 
 class TopKReranker:
@@ -15,8 +15,8 @@ class TopKReranker:
         self._top_k = top_k
 
     async def rerank(
-        self, response: RetrievalResponse, *, top_k: int | None = None
-    ) -> RetrievalResponse:
+        self, response: RerankResponse, *, top_k: int | None = None
+    ) -> RerankResponse:
         """Truncate candidates while preserving identifiers, metadata, and order."""
         limit = top_k if top_k is not None else self._top_k
         if limit is not None and limit < 1:
@@ -27,4 +27,4 @@ class TopKReranker:
         )
         if results == response.results:
             return response
-        return RetrievalResponse(response.query, results)
+        return RerankResponse(response.query, results)

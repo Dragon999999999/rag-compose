@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from llm_grounding.retrieval.models import RetrievalResponse
+from llm_grounding.retrieval.models import RerankResponse
 
 DEFAULT_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L6-v2"
 DEFAULT_CACHE_DIR = Path("~/.cache/rag-eval/models")
@@ -58,8 +58,8 @@ class CrossEncoderReranker:
         return self._model
 
     async def rerank(
-        self, response: RetrievalResponse, *, top_k: int | None = None
-    ) -> RetrievalResponse:
+        self, response: RerankResponse, *, top_k: int | None = None
+    ) -> RerankResponse:
         """Score candidates in descending order while preserving metadata."""
         if not response.results:
             return response
@@ -77,7 +77,7 @@ class CrossEncoderReranker:
         )
         if limit is not None:
             ordered = ordered[:limit]
-        return RetrievalResponse(
+        return RerankResponse(
             response.query,
             tuple(
                 replace(result, rank=rank, score=score)

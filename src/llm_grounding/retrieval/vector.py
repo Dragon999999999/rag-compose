@@ -6,6 +6,11 @@ from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig
+from llm_grounding.retrieval.models import (
+    RetrievalContext,
+    RetrievalRequest,
+    RetrievalResponse,
+)
 
 SUMMARY_FACETS = (
     "objective and problem addressed",
@@ -46,16 +51,50 @@ class VectorRetriever:
 
     async def retrieve(
         self,
-        request: CorpusRequest,
+        request: RetrievalRequest | CorpusRequest,
+        context: RetrievalContext | None = None,
         *,
         top_k: int | None = None,
         embedder: Embedder | None = None,
-    ) -> tuple[ChunkRetrievalResult, ...]:
-        """Return query-relevant chunks using an optional request-local embedder."""
-        query = await (embedder or self._embedder).embed_query(request.task)
+    ) -> RetrievalResponse:
+        """Return query-relevant chunks using the canonical retrieval contract.
+
+        ``CorpusRequest`` and keyword overrides remain accepted for existing
+        application callers; new code should pass ``RetrievalRequest`` and a
+        ``RetrievalContext``.
+        """
+        canonical = (
+            RetrievalRequest.from_corpus(request, top_k=top_k)
+            if isinstance(request, CorpusRequest)
+            else request
+        )
+        active_context = context or RetrievalContext()
+        if (
+            active_context.embedding_config is not None
+            and self.embedding_config is not None
+            and not active_context.embedding_config.is_compatible_with(
+                self.embedding_config
+            )
+        ):
+            raise ValueError(
+                "Query embedding configuration is incompatible with the indexed "
+                "embedding space"
+            )
+        active_embedder = embedder or active_context.embedder or self._embedder
+        store = active_context.vector_store or self._store
+        query = await active_embedder.embed_query(canonical.query)
         self._last_query_embedding = query
-        return await self._store.search(
-            request.project_id, query, top_k or self._top_k, request.document_ids
+        results = await store.search(
+            canonical.project_id,
+            query,
+            canonical.top_k or top_k or self._top_k,
+            canonical.document_ids,
+        )
+        return RetrievalResponse(
+            canonical.query,
+            results,
+            query,
+            metadata={"embedding_identity": query.model_identity},
         )
 
 
@@ -77,39 +116,57 @@ class SummaryRetriever:
 
     async def retrieve(
         self,
-        request: CorpusRequest,
+        request: RetrievalRequest | CorpusRequest,
+        context: RetrievalContext | None = None,
         *,
         top_k: int | None = None,
         context_chars: int | None = None,
         per_facet: int | None = None,
         embedder: Embedder | None = None,
-    ) -> tuple[ChunkRetrievalResult, ...]:
+    ) -> RetrievalResponse:
         """Avoid a naive single 'summarize' query that would bias coverage."""
-        if request.task_type != TaskType.SUMMARY:
-            return await self._vector.retrieve(request, top_k=top_k, embedder=embedder)
-        active_context_chars = context_chars or self._context_chars
-        active_per_facet = per_facet or self._per_facet
-        all_chunks = await self._repository.chunks_for_project(
-            request.project_id, request.document_ids
+        canonical = (
+            RetrievalRequest.from_corpus(request, top_k=top_k)
+            if isinstance(request, CorpusRequest)
+            else request
         )
-        if sum(len(chunk.text) for chunk in all_chunks) <= active_context_chars:
-            return tuple(
-                ChunkRetrievalResult(chunk, rank, "summary_all_chunks", None)
-                for rank, chunk in enumerate(all_chunks, 1)
-            )
-        selected: dict[str, ChunkRetrievalResult] = {}
-        for facet in SUMMARY_FACETS:
-            results = await self._vector.retrieve(
-                CorpusRequest(
-                    request.project_id,
-                    f"{facet}. {request.task}",
-                    TaskType.QA,
-                    request.document_ids,
-                ),
+        active_context = context or RetrievalContext()
+        if canonical.task_type != TaskType.SUMMARY:
+            return await self._vector.retrieve(
+                canonical,
+                active_context,
                 top_k=top_k,
                 embedder=embedder,
             )
-            for result in results[:active_per_facet]:
+        repository = active_context.repository or self._repository
+        active_context_chars = context_chars or self._context_chars
+        active_per_facet = per_facet or self._per_facet
+        all_chunks = await repository.chunks_for_project(
+            canonical.project_id, canonical.document_ids
+        )
+        if sum(len(chunk.text) for chunk in all_chunks) <= active_context_chars:
+            return RetrievalResponse(
+                canonical.query,
+                tuple(
+                    ChunkRetrievalResult(chunk, rank, "summary_all_chunks", None)
+                    for rank, chunk in enumerate(all_chunks, 1)
+                ),
+            )
+        selected: dict[str, ChunkRetrievalResult] = {}
+        for facet in SUMMARY_FACETS:
+            response = await self._vector.retrieve(
+                RetrievalRequest(
+                    canonical.project_id,
+                    f"{facet}. {canonical.query}",
+                    canonical.document_ids,
+                    top_k,
+                    TaskType.QA,
+                ),
+                active_context,
+                top_k=top_k,
+                embedder=embedder,
+            )
+            for result in response.results[:active_per_facet]:
                 selected.setdefault(result.chunk.chunk_id, result)
         ordered = sorted(
             selected.values(),
@@ -122,7 +179,10 @@ class SummaryRetriever:
                 continue
             bounded.append(result)
             size += len(result.chunk.text)
-        return tuple(
-            ChunkRetrievalResult(item.chunk, rank, "summary_facets", item.score)
-            for rank, item in enumerate(bounded, 1)
+        return RetrievalResponse(
+            canonical.query,
+            tuple(
+                ChunkRetrievalResult(item.chunk, rank, "summary_facets", item.score)
+                for rank, item in enumerate(bounded, 1)
+            ),
         )

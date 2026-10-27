@@ -126,7 +126,9 @@ class DocumentIngestionService:
             document.id,
             config.identity(),
             config.model_dump_json(),
-            config.embedding.identity() if config.embedding is not None else None,
+            config.embedding.vector_identity()
+            if config.embedding is not None
+            else None,
             config.embedding.dimension if config.embedding is not None else None,
         )
         association = await self._repository.attach_document(

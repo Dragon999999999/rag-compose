@@ -8,12 +8,23 @@ protocols do not limit the number of retrievals in a run. See docs/architecture.
 
 from typing import Protocol
 
-from llm_grounding.retrieval.models import RetrievalRequest, RetrievalResponse
+from llm_grounding.retrieval.models import (
+    RetrievalContext,
+    RetrievalRequest,
+    RetrievalResponse,
+)
 
 
 class Retriever(Protocol):
-    """Define the interchangeable retrieval component contract."""
+    """Select project evidence from resolved runtime resources.
 
-    async def retrieve(self, request: RetrievalRequest) -> RetrievalResponse:
-        """Return candidates using the documented selection and ordering rules."""
+    Implementations must return the shared chunk/provenance result shape and may
+    perform I/O through the supplied context. They must not construct providers
+    or silently substitute unavailable resources.
+    """
+
+    async def retrieve(
+        self, request: RetrievalRequest, context: RetrievalContext
+    ) -> RetrievalResponse:
+        """Return ranked candidates for the project-scoped request."""
         ...

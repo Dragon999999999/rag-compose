@@ -21,8 +21,8 @@ class SentenceTransformersEmbedder:
 
     @property
     def model_identity(self) -> str:
-        """Return the configuration identity used by compatible vector indexes."""
-        return self._config.identity()
+        """Return the provider-independent identity stored with vectors."""
+        return self._config.vector_identity()
 
     def _load_model(self, *, allow_download: bool) -> object:
         """Load one shared model, optionally allowing cache population for ingestion."""

@@ -44,7 +44,7 @@ class OpenAICompatibleEmbedder:
                 raise ValueError("OpenAI-compatible embeddings require base_url")
             self._model = config.model
             self._base_url = str(config.base_url)
-            self._model_identity = config.identity()
+            self._model_identity = config.vector_identity()
             self._timeout_seconds = config.timeout_seconds
             self._retries = config.retries
             self._batch_size = config.batch_size

@@ -16,8 +16,13 @@ from llm_grounding.infrastructure.config.loader import (
     load_model_catalog,
     load_pipeline_config,
 )
+from llm_grounding.infrastructure.config.models import ModelCatalog
 from llm_grounding.infrastructure.database.models import PipelineRow
-from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
+from llm_grounding.ingestion.models import (
+    EmbeddingConfig,
+    EmbeddingSpecification,
+    IngestionConfig,
+)
 from llm_grounding.orchestration.registry import ComponentRegistry
 
 
@@ -181,6 +186,123 @@ def test_postgresql_only_capabilities_do_not_advertise_vectors() -> None:
     assert "chunk_vectors" not in capabilities.capabilities
     assert capabilities.embedding_identity is None
     assert capabilities.dimension is None
+
+
+def test_retriever_requirements_are_loaded_from_component_yaml() -> None:
+    """The executable dense retriever declares its resource requirements in YAML."""
+    config = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
+
+    assert config.query is not None
+    assert config.query.retriever.requirements.required == (
+        "dense_vector_index",
+        "compatible_query_embedder",
+    )
+
+
+def test_postgresql_only_project_cannot_select_dense_retriever() -> None:
+    """Declared dense requirements are checked against actual project resources."""
+    query = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
+    index = IndexCapabilities.from_ingestion(
+        IngestionConfig(embedding=None, vector_backend=None)
+    )
+
+    result = validate_query_compatibility(query, index, ComponentRegistry())
+
+    assert not result.compatible
+    assert "dense_vector_index" in result.missing_capabilities
+
+
+def test_unimplemented_retriever_is_not_advertised_as_executable() -> None:
+    """Resource availability does not register a planned retrieval algorithm."""
+    query = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
+    assert query.query is not None
+    planned = query.model_copy(
+        update={
+            "query": query.query.model_copy(
+                update={
+                    "retriever": query.query.retriever.model_copy(
+                        update={"type": "sparse"}
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ConfigurationError, match="Unknown retriever"):
+        ComponentRegistry().validate_pipeline(planned, load_model_catalog())
+
+
+def test_embedding_space_compatibility_ignores_provider_transport() -> None:
+    """Compatible providers share a vector identity despite different transports."""
+    local = EmbeddingConfig(
+        type="fake",
+        provider="local_gpu",
+        model="bge-m3",
+        embedding_space_id="bge-m3-dense-v1",
+        dimension=1024,
+    )
+    remote = EmbeddingConfig(
+        type="openai_compatible",
+        provider="remote_api",
+        model="bge-m3",
+        embedding_space_id="bge-m3-dense-v1",
+        dimension=1024,
+        base_url="https://embeddings.example.test/v1",
+    )
+
+    assert local.identity() != remote.identity()
+    assert local.vector_identity() == remote.vector_identity()
+    assert local.is_compatible_with(remote)
+
+
+def test_embedding_space_compatibility_rejects_equal_dimension_mismatch() -> None:
+    """Dimensions alone do not establish compatibility between embedding spaces."""
+    left = EmbeddingConfig(
+        type="fake", model="model-a", embedding_space_id="space-a", dimension=384
+    )
+    right = EmbeddingConfig(
+        type="fake", model="model-b", embedding_space_id="space-b", dimension=384
+    )
+
+    assert not left.is_compatible_with(right)
+
+
+def test_query_embedder_compatibility_uses_the_indexed_embedding_spec() -> None:
+    """An explicitly selected query provider must match persisted space metadata."""
+    ingestion = EmbeddingConfig(
+        type="fake",
+        provider="local",
+        model="shared",
+        embedding_space_id="shared-v1",
+        dimension=3,
+    )
+    query_embedding = ingestion.model_copy(update={"provider": "remote"})
+    catalog = ModelCatalog(embedding_models={"query_provider": query_embedding})
+    base_query = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
+    assert base_query.query is not None
+    query = base_query.model_copy(
+        update={
+            "query": base_query.query.model_copy(
+                update={
+                    "retriever": base_query.query.retriever.model_copy(
+                        update={"query_embedder": "query_provider"}
+                    )
+                }
+            )
+        }
+    )
+    index = IndexCapabilities.from_ingestion(
+        IngestionConfig(embedding=ingestion, vector_backend="qdrant")
+    )
+
+    result = validate_query_compatibility(
+        query, index, ComponentRegistry(), catalog
+    )
+
+    assert result.compatible
+    assert index.embedding_specification == EmbeddingSpecification.model_validate(
+        index.as_dict()["embedding_specification"]
+    )
 
 
 def test_representation_changes_produce_distinct_index_identity() -> None:

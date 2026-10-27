@@ -7,15 +7,15 @@ implementations may perform I/O and must propagate failures. Empty input is vali
 
 from typing import Protocol
 
-from llm_grounding.retrieval.models import RetrievalResponse
+from llm_grounding.retrieval.models import RerankResponse
 
 
 class Reranker(Protocol):
     """Define the interchangeable reranking component contract."""
 
     async def rerank(
-        self, response: RetrievalResponse, *, top_k: int | None = None
-    ) -> RetrievalResponse:
+        self, response: RerankResponse, *, top_k: int | None = None
+    ) -> RerankResponse:
         """Return refined candidates drawn only from the supplied response.
 
         Args:

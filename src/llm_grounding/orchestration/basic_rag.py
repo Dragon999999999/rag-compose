@@ -32,7 +32,12 @@ from llm_grounding.orchestration.retrieval_stages import (
 )
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
-from llm_grounding.retrieval.models import RetrievalResponse
+from llm_grounding.retrieval.models import (
+    RerankResponse,
+    RetrievalContext,
+    RetrievalRequest,
+    RetrievalResponse,
+)
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
@@ -71,8 +76,13 @@ class BasicRagRunner:
         self._diagnostics = diagnostics or GroundingDiagnostics()
         self._embedding_config = embedding_config or vector.embedding_config
         self._embedders: dict[str, Embedder] = {
-            vector.default_embedder.model_identity: vector.default_embedder
+            (
+                self._embedding_config.identity()
+                if self._embedding_config is not None
+                else vector.default_embedder.model_identity
+            ): vector.default_embedder
         }
+        self._last_retrieval_response: RetrievalResponse | None = None
 
     async def run(
         self,
@@ -94,7 +104,11 @@ class BasicRagRunner:
         chunks = await self._rerank_chunks(request.task, candidates, values)
         usage.add_reranker()
         traces.end(rerank_span, output_count=len(chunks))
-        query_embedding = self._vector.last_query_embedding
+        query_embedding = (
+            self._last_retrieval_response.query_embedding
+            if self._last_retrieval_response is not None
+            else self._vector.last_query_embedding
+        )
         if query_embedding is not None:
             usage.add_embedding()
         if not chunks:
@@ -139,6 +153,7 @@ class BasicRagRunner:
                         if query_embedding is not None
                         else None
                     ),
+                    "query_embedding_configuration": self._embedding_metadata(),
                     "answer_payload": {},
                     "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
@@ -228,6 +243,7 @@ class BasicRagRunner:
                     if query_embedding is not None
                     else None
                 ),
+                "query_embedding_configuration": self._embedding_metadata(),
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )
@@ -261,28 +277,23 @@ class BasicRagRunner:
             else None
         )
         embedder = self._request_embedder(values)
-        if embedder is None:
-            return await (
-                self._summary.retrieve(
-                    request,
-                    top_k=top_k,
-                    context_chars=context_chars,
-                    per_facet=per_facet,
-                )
-                if request.task_type == TaskType.SUMMARY
-                else self._vector.retrieve(request, top_k=top_k)
-            )
-        return await (
+        retrieval_request = RetrievalRequest.from_corpus(request, top_k=top_k)
+        context = RetrievalContext(
+            embedder=embedder,
+            embedding_config=self._embedding_config,
+        )
+        response = await (
             self._summary.retrieve(
-                request,
-                top_k=top_k,
+                retrieval_request,
+                context,
                 context_chars=context_chars,
                 per_facet=per_facet,
-                embedder=embedder,
             )
             if request.task_type == TaskType.SUMMARY
-            else self._vector.retrieve(request, top_k=top_k, embedder=embedder)
+            else self._vector.retrieve(retrieval_request, context)
         )
+        self._last_retrieval_response = response
+        return response.results
 
     async def _rerank_chunks(
         self,
@@ -293,7 +304,7 @@ class BasicRagRunner:
         """Adapt persistent chunks to the shared reranker response contract."""
         if not candidates:
             return ()
-        response = RetrievalResponse(
+        response = RerankResponse(
             query,
             tuple(
                 RetrievalResult(
@@ -396,12 +407,34 @@ class BasicRagRunner:
             )
         else:
             raise ValueError("embedding override must be an EmbeddingConfig or object")
+        if base is not None and not config.is_compatible_with(base):
+            raise ValueError(
+                "Query embedding configuration is incompatible with the indexed "
+                "embedding space"
+            )
         identity = config.identity()
         embedder = self._embedders.get(identity)
         if embedder is None:
             embedder = build_embedder(config)
             self._embedders[identity] = embedder
         return embedder
+
+    def _embedding_metadata(self) -> dict[str, object] | None:
+        """Return the effective query embedding contract without credentials."""
+        if self._embedding_config is None:
+            return None
+        return {
+            "provider": self._embedding_config.provider,
+            "model": self._embedding_config.model,
+            "revision": self._embedding_config.revision,
+            "embedding_space_id": self._embedding_config.embedding_space_id,
+            "vector_kind": self._embedding_config.representation,
+            "dimensions": self._embedding_config.dimension,
+            "normalization": self._embedding_config.normalize,
+            "similarity_metric": self._embedding_config.similarity_metric,
+            "configuration_identity": self._embedding_config.identity(),
+            "vector_identity": self._embedding_config.vector_identity(),
+        }
 
     @staticmethod
     def _usage_with_trace(usage: UsageAccumulator, traces: TraceRecorder) -> RagUsage:

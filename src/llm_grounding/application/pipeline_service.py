@@ -19,6 +19,7 @@ from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
     PipelineConfig,
     PipelineEmbeddingConfig,
+    RetrieverConfig,
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import IngestionConfig
@@ -424,6 +425,11 @@ class PipelineService:
         """Expose the closed registry to shared compatibility validators."""
         return self._registry
 
+    @property
+    def model_catalog(self) -> ModelCatalog:
+        """Expose the credential-free catalog for query compatibility checks."""
+        return self._catalog
+
     def summaries(self, records: tuple[Pipeline, ...]) -> list[dict[str, object]]:
         """Serialize list metadata without including complete JSON configuration."""
         return [
@@ -516,6 +522,14 @@ class PipelineService:
                 "vector_retriever_requires": {"vector_backend": ["qdrant"]},
                 "retriever_capabilities": {
                     name: sorted(self._registry.query_capabilities(name))
+                    for name in self._registry.retrievers
+                },
+                "retriever_requirements": {
+                    name: sorted(
+                        self._registry.query_requirements(
+                            RetrieverConfig(type=name)
+                        )
+                    )
                     for name in self._registry.retrievers
                 },
                 "basic_grounded_requires": {

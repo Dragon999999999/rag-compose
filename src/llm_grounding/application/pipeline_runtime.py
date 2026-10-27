@@ -20,7 +20,7 @@ from llm_grounding.infrastructure.database.repositories import PostgresRepositor
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.vector.protocol import VectorStore
-from llm_grounding.ingestion.models import IngestionConfig
+from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.orchestration.registry import ComponentRegistry
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
@@ -193,7 +193,26 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError(
                 "The selected dense query pipeline has no vector backend available"
             )
-        embedder = self._embedder(ingestion)
+        query_embedding = ingestion.embedding
+        if architecture.retriever.query_embedder is not None:
+            if query_embedding is None:
+                raise PipelineResolutionError(
+                    "An explicit query embedder requires a dense indexed ingestion"
+                )
+            try:
+                query_embedding = self._catalog.embedding(
+                    architecture.retriever.query_embedder
+                )
+            except ValueError as exc:
+                raise PipelineResolutionError(str(exc)) from exc
+            if not query_embedding.is_compatible_with(ingestion.embedding):
+                raise PipelineResolutionError(
+                    "The selected query embedder is incompatible with the indexed "
+                    "embedding space"
+                )
+        if query_embedding is None:
+            raise PipelineResolutionError("Dense query runtime requires an embedder")
+        embedder = self._embedder(query_embedding)
         retrieval_top_k = (
             architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
         )
@@ -201,7 +220,7 @@ class PipelineRuntimeResolver:
             embedder,
             self._vectors,
             retrieval_top_k,
-            embedding_config=ingestion.embedding,
+            embedding_config=query_embedding,
         )
         summary = SummaryRetriever(
             self._repository,
@@ -228,16 +247,14 @@ class PipelineRuntimeResolver:
             reranker_builder=self._registry.build_reranker,
         )
 
-    def _embedder(self, ingestion: IngestionConfig) -> Embedder:
+    def _embedder(self, config: EmbeddingConfig) -> Embedder:
         """Reuse embedding adapters by representation identity with LRU bounds."""
-        if ingestion.embedding is None:
-            raise PipelineResolutionError("Dense query runtime requires an embedder")
-        identity = ingestion.embedding.identity()
+        identity = config.identity()
         cached = self._embedders.get(identity)
         if cached is not None:
             self._embedders.move_to_end(identity)
             return cached
-        embedder = build_embedder(ingestion.embedding)
+        embedder = build_embedder(config)
         self._embedders[identity] = embedder
         self._embedders.move_to_end(identity)
         while len(self._embedders) > self._max_cache_size:

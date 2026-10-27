@@ -1456,19 +1456,25 @@ class PostgresRepository:
                 if len(identities) != 1:
                     continue
                 config = configs[0]
-                capability_names = ["full_text", "metadata_filtering"]
+                capability_names = ["full_text", "metadata_filtering", "postgres_fts"]
                 if config.embedding is not None and config.vector_backend == "qdrant":
-                    capability_names.append("chunk_vectors")
+                    capability_names.extend(("chunk_vectors", "dense_vector_index"))
                 capabilities = {
                     "capabilities": capability_names,
                     "embedding_identity": (
-                        config.embedding.identity()
+                        config.embedding.vector_identity()
                         if config.embedding is not None
                         else None
                     ),
                     "dimension": (
                         config.embedding.dimension
                         if config.embedding is not None
+                        else None
+                    ),
+                    "embedding_specification": (
+                        config.embedding.specification().model_dump(mode="json")
+                        if config.embedding is not None
+                        and config.embedding.embedding_space_id is not None
                         else None
                     ),
                     "ingestion_pipeline_id": project.ingestion_pipeline_id,

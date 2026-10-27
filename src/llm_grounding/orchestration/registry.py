@@ -12,6 +12,7 @@ from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
     PipelineConfig,
     RerankerConfig,
+    RetrieverConfig,
 )
 from llm_grounding.infrastructure.prompts import PromptLibrary, PromptLibraryError
 from llm_grounding.ingestion.models import ChunkerConfig
@@ -160,6 +161,8 @@ class ComponentRegistry:
                 if config.representation is not None:
                     if config.representation.embedding is not None:
                         catalog.embedding(config.representation.embedding.model_ref)
+                if config.query is not None and config.query.retriever.query_embedder:
+                    catalog.embedding(config.query.retriever.query_embedder)
                 if config.query is not None:
                     catalog.reasoning(config.query.reasoner.model_ref)
             except ValueError as exc:
@@ -191,10 +194,19 @@ class ComponentRegistry:
                 raise ConfigurationError(str(exc)) from exc
 
     def query_capabilities(self, retriever_type: str) -> frozenset[str]:
-        """Return the index capabilities required by a registered retriever."""
+        """Return backward-compatible resource capabilities for a retriever type."""
         if retriever_type == "vector":
-            return frozenset({"chunk_vectors"})
+            return frozenset({"chunk_vectors", "dense_vector_index"})
         raise ConfigurationError(f"Unknown retriever component {retriever_type!r}")
+
+    def query_requirements(self, config: RetrieverConfig) -> frozenset[str]:
+        """Return declarative requirements for a registered retriever definition."""
+        if config.type not in self.retrievers:
+            raise ConfigurationError(
+                f"Unknown retriever component {config.type!r}; available: "
+                f"{', '.join(sorted(self.retrievers))}"
+            )
+        return frozenset(config.requirements.required)
 
     def build_reranker(self, config: RerankerConfig) -> Reranker:
         """Construct one reranker from validated settings without loading models."""

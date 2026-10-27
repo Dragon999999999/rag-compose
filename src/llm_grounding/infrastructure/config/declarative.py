@@ -43,6 +43,9 @@ class OpenAICompatibleModelDefinition(ModelDefinitionBase):
     timeout_seconds: float = Field(default=120, gt=0, le=3600, allow_inf_nan=False)
     retries: int = Field(default=2, ge=0, le=5)
     dimension: int | None = Field(default=None, ge=1, le=16000)
+    embedding_space_id: str | None = Field(default=None, min_length=1)
+    representation: Literal["dense", "sparse"] = "dense"
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
 
     @model_validator(mode="after")
     def reject_url_credentials(self) -> "OpenAICompatibleModelDefinition":
@@ -68,6 +71,9 @@ class SentenceTransformersModelDefinition(ModelDefinitionBase):
     normalize: bool = True
     batch_size: int = Field(default=32, ge=1, le=512)
     cache_dir_env: str | None = Field(default=None, min_length=1)
+    embedding_space_id: str | None = Field(default=None, min_length=1)
+    representation: Literal["dense", "sparse"] = "dense"
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
 
 
 class FakeModelDefinition(ModelDefinitionBase):
@@ -77,6 +83,9 @@ class FakeModelDefinition(ModelDefinitionBase):
     dimension: int = Field(default=32, ge=2, le=16000)
     normalize: bool = True
     batch_size: int = Field(default=32, ge=1, le=512)
+    embedding_space_id: str | None = Field(default=None, min_length=1)
+    representation: Literal["dense", "sparse"] = "dense"
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
 
 
 ModelDefinition = Annotated[

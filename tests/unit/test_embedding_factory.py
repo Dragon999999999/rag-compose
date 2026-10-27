@@ -25,8 +25,20 @@ def test_fake_factory_uses_persisted_embedding_identity() -> None:
 
 async def test_runner_uses_request_embedding_override() -> None:
     """A structured embedding override reaches query-time vector encoding."""
-    default_config = EmbeddingConfig(type="fake", model="default", dimension=3)
-    override_config = EmbeddingConfig(type="fake", model="alternate", dimension=3)
+    default_config = EmbeddingConfig(
+        type="fake",
+        provider="local",
+        model="shared-space",
+        embedding_space_id="shared-fake-v1",
+        dimension=3,
+    )
+    override_config = EmbeddingConfig(
+        type="fake",
+        provider="remote",
+        model="shared-space",
+        embedding_space_id="shared-fake-v1",
+        dimension=3,
+    )
     override = build_embedder(override_config)
     chunk = RetrievalUnit(
         "chunk",
@@ -65,7 +77,9 @@ async def test_runner_uses_request_embedding_override() -> None:
 
     assert [item.chunk.chunk_id for item in results] == ["chunk"]
     assert vector.last_query_embedding is not None
-    assert vector.last_query_embedding.model_identity == override_config.identity()
+    assert (
+        vector.last_query_embedding.model_identity == override_config.vector_identity()
+    )
 
 
 async def test_incompatible_override_dimension_fails_clearly() -> None:

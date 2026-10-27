@@ -4,7 +4,14 @@ import json
 from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    model_validator,
+)
 
 
 class ChunkerConfig(BaseModel):
@@ -24,6 +31,20 @@ class ChunkerConfig(BaseModel):
         return self
 
 
+class EmbeddingSpecification(BaseModel):
+    """Describe the representation contract shared by query and document encoders."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    model: str = Field(min_length=1)
+    revision: str | None = Field(default=None, min_length=1)
+    embedding_space_id: str | None = Field(default=None, min_length=1)
+    vector_kind: Literal["dense", "sparse"] = "dense"
+    dimensions: int = Field(ge=1, le=16000)
+    normalization: bool = True
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
+
+
 class EmbeddingConfig(BaseModel):
     """Identify an embedding space and its provider connection settings.
 
@@ -38,11 +59,23 @@ class EmbeddingConfig(BaseModel):
     )
     provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    representation: Literal["dense", "sparse"] = "dense"
+    embedding_space_id: str | None = Field(default=None, min_length=1)
+    representation: Literal["dense", "sparse"] = Field(
+        default="dense",
+        validation_alias=AliasChoices("representation", "vector_kind"),
+    )
     similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
     revision: str | None = None
-    dimension: int = Field(default=384, ge=1, le=16000)
-    normalize: bool = True
+    dimension: int = Field(
+        default=384,
+        ge=1,
+        le=16000,
+        validation_alias=AliasChoices("dimension", "dimensions"),
+    )
+    normalize: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("normalize", "normalization"),
+    )
     batch_size: int = Field(default=32, ge=1, le=512)
     cache_dir_env: str | None = Field(default=None, min_length=1)
     base_url: HttpUrl | None = None
@@ -65,6 +98,46 @@ class EmbeddingConfig(BaseModel):
                 raise ValueError("base_url must not contain query or fragment")
         return self
 
+    def specification(self) -> EmbeddingSpecification:
+        """Return provider-independent properties that define the vector space."""
+        return EmbeddingSpecification(
+            model=self.model,
+            revision=self.revision,
+            embedding_space_id=self.embedding_space_id,
+            vector_kind=self.representation,
+            dimensions=self.dimension,
+            normalization=self.normalize,
+            similarity_metric=self.similarity_metric,
+        )
+
+    def vector_identity(self) -> str:
+        """Return the identity stored with vectors and used by index filtering.
+
+        Legacy configurations retain their exact provider-aware identity. Explicit
+        embedding-space declarations instead use only representation-defining
+        properties, allowing compatible providers to share one index.
+        """
+        if self.embedding_space_id is None:
+            return self.identity()
+        content = json.dumps(
+            self.specification().model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return sha256(content).hexdigest()
+
+    def is_compatible_with(self, other: "EmbeddingConfig") -> bool:
+        """Check whether two provider configurations can address one index."""
+        if self.embedding_space_id is None or other.embedding_space_id is None:
+            return self.identity() == other.identity()
+        return self.specification() == other.specification()
+
+    def is_compatible_with_spec(self, other: EmbeddingSpecification) -> bool:
+        """Compare an explicitly declared provider against persisted space metadata."""
+        if self.embedding_space_id is None or other.embedding_space_id is None:
+            return False
+        return self.specification() == other
+
     def identity(self) -> str:
         """Hash embedding semantics; transport tuning does not change space."""
         data = self.model_dump(
@@ -78,6 +151,8 @@ class EmbeddingConfig(BaseModel):
                 "api_key_file_env",
             },
         )
+        if self.embedding_space_id is None:
+            data.pop("embedding_space_id", None)
         if self.representation == "dense":
             data.pop("representation", None)
         if self.similarity_metric == "cosine":
@@ -127,10 +202,17 @@ class IngestionConfig(BaseModel):
         data = self.model_dump(mode="json")
         embedding = data.get("embedding")
         if isinstance(embedding, dict) and self.embedding is not None:
-            if self.embedding.representation == "dense":
-                embedding.pop("representation", None)
-            if self.embedding.similarity_metric == "cosine":
-                embedding.pop("similarity_metric", None)
+            if self.embedding.embedding_space_id is not None:
+                data["embedding"] = self.embedding.specification().model_dump(
+                    mode="json"
+                )
+                embedding = data["embedding"]
+            else:
+                embedding.pop("embedding_space_id", None)
+                if self.embedding.representation == "dense":
+                    embedding.pop("representation", None)
+                if self.embedding.similarity_metric == "cosine":
+                    embedding.pop("similarity_metric", None)
         return sha256(
             json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode(
                 "utf-8"
