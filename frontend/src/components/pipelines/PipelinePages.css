@@ -78,7 +78,9 @@
 .graph-node small { color: var(--color-warning); display: block; font-size: 10px; margin-top: 7px; }
 .graph-node-caption { color: var(--color-accent) !important; font-weight: 650; }
 .graph-node.reused { background: rgb(148 163 184 / 8%); border-style: dashed; opacity: .7; }
+.graph-node.alternative-stage { background: rgb(146 147 246 / 7%); border-top-color: var(--color-primary); }
 .reused-node { z-index: 2; }
+.alternative-stage-node { z-index: 2; }
 .reused-node .graph-add-branch { opacity: .82; }
 .graph-arrow { color: var(--color-primary); font-size: 20px; line-height: 1; }
 .graph-canvas-scroll { max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; padding: 8px 8px 18px 86px; scrollbar-gutter: stable; }

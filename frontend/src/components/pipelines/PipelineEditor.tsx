@@ -562,11 +562,17 @@ function AlternativesGraph({
 }) {
   const alternatives = readQueryAlternatives(config);
   const latestAlternative = alternatives[alternatives.length - 1];
+  const [pendingRestartAlternativeId, setPendingRestartAlternativeId] = useState<string | null>(null);
   const alternativeRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => {
     if (alternatives.length <= 1 || !latestAlternative) return;
     alternativeRefs.current[latestAlternative.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [alternatives.length, latestAlternative?.id]);
+  useEffect(() => {
+    if (pendingRestartAlternativeId && !alternatives.some((alternative) => alternative.id === pendingRestartAlternativeId)) {
+      setPendingRestartAlternativeId(null);
+    }
+  }, [alternatives, pendingRestartAlternativeId]);
   return (
     <section className="alternatives-graph" aria-label="Query pipeline alternatives">
       {alternatives.map((alternative, index) => (
@@ -585,7 +591,7 @@ function AlternativesGraph({
             </div>}
           </header>
           {alternative.source && <div className="alternative-restart-picker">
-            <span>Select the restart stage. Ghosted stages reuse the selected source path.</span>
+            <span>{pendingRestartAlternativeId === alternative.id ? "Choose the first stage to execute. Ghosted stages reuse the selected source path." : `Restart begins at ${humanize(alternative.source.restart_stage)}. Click stages to configure them.`}</span>
             <select aria-label={`Source path for ${alternative.id}`} value={alternative.source.path_id} onChange={(event) => onSelectRestart(alternative.id, alternative.source!.restart_stage, event.target.value)}>
               {sourcePathOptions(config, alternative).map((pathId) => <option key={pathId} value={pathId}>{pathId}</option>)}
             </select>
@@ -607,10 +613,17 @@ function AlternativesGraph({
             onAddBranch={(stage, branchId) => onAddBranch(alternative.id, stage, branchId)}
             onRemoveBranch={(branchId) => onRemoveBranch(alternative.id, branchId)}
             onSelect={(stage) => onSelect(stage, alternative.id)}
-            onSelectRestart={(stage) => onSelectRestart(alternative.id, stage, alternative.source?.path_id ?? "primary")}
+            onSelectRestart={pendingRestartAlternativeId === alternative.id ? (stage) => {
+              setPendingRestartAlternativeId(null);
+              onSelectRestart(alternative.id, stage, alternative.source?.path_id ?? "primary");
+              onSelect(stage === "assessor" ? "assessors" : stage, alternative.id);
+            } : undefined}
             selected={selected}
           />
-          {latestAlternative?.id === alternative.id && <button className="add-alternative-button" onClick={() => onAddAlternative(alternative.id)} type="button"><span>＋</span> Add Alternative</button>}
+          {latestAlternative?.id === alternative.id && <button className="add-alternative-button" onClick={() => {
+            setPendingRestartAlternativeId(nextAlternativeId(alternatives));
+            onAddAlternative(alternative.id);
+          }} type="button"><span>＋</span> Add Alternative</button>}
         </section>
       ))}
     </section>
@@ -670,15 +683,17 @@ function BranchingGraph({
           {layout.nodes.map((node) => {
             const configured = Boolean(readStage(config, node.definition, alternativeId));
             const branch = node.branchId ? layout.branches.find((item) => item.id === node.branchId) : undefined;
-            const caption = node.reused ? "Reused output" : node.shared ? "Shared" : branch?.label;
+            const alternativeStage = Boolean(alternative?.source && !node.reused);
+            const caption = node.reused ? "Reused output" : alternativeStage && node.shared ? "Alternative stage" : node.shared ? "Shared" : branch?.label;
             const branchStart = stageToBranchStart(node.definition.key);
             const selectRestart = Boolean(alternative?.source && branchStart && onSelectRestart);
             return (
-              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"} ${node.reused ? "reused-node" : ""}`} key={node.key} style={{ left: node.x, top: node.y }}>
+              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"} ${node.reused ? "reused-node" : ""} ${alternativeStage ? "alternative-stage-node" : ""}`} key={node.key} style={{ left: node.x, top: node.y }}>
                 <StageNode
                   caption={caption}
                   configured={configured}
                   definition={node.definition}
+                  alternativeStage={alternativeStage}
                   reused={node.reused}
                   selected={selected === node.definition.key}
                   onSelect={() => selectRestart && branchStart ? onSelectRestart?.(branchStart) : onSelect(node.definition.key)}
@@ -694,8 +709,8 @@ function BranchingGraph({
   );
 }
 
-function StageNode({ definition, selected, configured, caption, reused, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; reused?: boolean; onSelect: () => void }) {
-  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"} ${reused ? "reused" : ""}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
+function StageNode({ definition, selected, configured, caption, reused, alternativeStage, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; reused?: boolean; alternativeStage?: boolean; onSelect: () => void }) {
+  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"} ${reused ? "reused" : ""} ${alternativeStage ? "alternative-stage" : ""}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
 }
 
 function readQueryAlternatives(config: PipelineConfig): PipelineAlternative[] {
