@@ -55,18 +55,22 @@ def build_effective_configuration(
             overlap=ingestion.chunker.overlap_chars,
             config_hash=ingestion.identity(),
         ),
-        embedding=EmbeddingConfiguration(
-            model_id=ingestion.embedding.model,
-            provider=ingestion.embedding.provider or ingestion.embedding.type,
-            version=ingestion.embedding.revision,
-            dimension=ingestion.embedding.dimension,
-            normalization=ingestion.embedding.normalize,
-            endpoint_hash=(
-                _hash(str(ingestion.embedding.base_url))
-                if ingestion.embedding.base_url is not None
-                else None
-            ),
-            embedding_hash=ingestion.embedding.identity(),
+        embedding=(
+            EmbeddingConfiguration(
+                model_id=ingestion.embedding.model,
+                provider=ingestion.embedding.provider or ingestion.embedding.type,
+                version=ingestion.embedding.revision,
+                dimension=ingestion.embedding.dimension,
+                normalization=ingestion.embedding.normalize,
+                endpoint_hash=(
+                    _hash(str(ingestion.embedding.base_url))
+                    if ingestion.embedding.base_url is not None
+                    else None
+                ),
+                embedding_hash=ingestion.embedding.identity(),
+            )
+            if ingestion.embedding is not None
+            else EmbeddingConfiguration()
         ),
         retrieval=RetrievalConfiguration(
             type=architecture.retriever.type,

@@ -134,6 +134,7 @@ class ComponentRegistry:
             )
         if (
             config.representation is not None
+            and config.representation.vector_backend is not None
             and config.representation.vector_backend.type not in self.vector_backends
         ):
             raise ConfigurationError(
@@ -141,10 +142,24 @@ class ComponentRegistry:
                 f"{config.representation.vector_backend.type!r}; available: "
                 f"{', '.join(sorted(self.vector_backends))}"
             )
+        if config.representation is not None:
+            if config.representation.embedding is None and (
+                config.representation.vector_backend is not None
+            ):
+                raise ConfigurationError(
+                    "vector_backend requires an embedding configuration"
+                )
+            if config.representation.embedding is not None and (
+                config.representation.vector_backend is None
+            ):
+                raise ConfigurationError(
+                    "An embedding configuration requires a resolved vector_backend"
+                )
         if catalog is not None:
             try:
                 if config.representation is not None:
-                    catalog.embedding(config.representation.embedding.model_ref)
+                    if config.representation.embedding is not None:
+                        catalog.embedding(config.representation.embedding.model_ref)
                 if config.query is not None:
                     catalog.reasoning(config.query.reasoner.model_ref)
             except ValueError as exc:
@@ -155,6 +170,7 @@ class ComponentRegistry:
             and config.query.retriever.type == "vector"
             and (
                 config.representation is not None
+                and config.representation.vector_backend is not None
                 and config.representation.vector_backend.type != "qdrant"
             )
         ):

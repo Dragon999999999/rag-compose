@@ -69,6 +69,10 @@ class EvaluationConfigService:
             raise ValueError("Evaluation configuration requires query_basic_v1")
         if architecture.retriever.type != "vector":
             raise ValueError("Evaluation configuration requires the vector retriever")
+        if ingestion.embedding is None or ingestion.vector_backend is None:
+            raise ValueError(
+                "Evaluation configuration requires a dense indexed ingestion"
+            )
         architecture_copy = architecture.model_copy(deep=True)
         ingestion_copy = ingestion.model_copy(deep=True)
         architecture_copy, ingestion_copy = self._apply(
@@ -129,6 +133,9 @@ class EvaluationConfigService:
         values: dict[str, Any],
     ) -> tuple[ArchitectureConfig, IngestionConfig]:
         """Apply validated scalar values to request-local configuration copies."""
+        if ingestion.embedding is None:
+            raise ValueError("Evaluation configuration requires a dense embedding")
+        embedding_config = ingestion.embedding
         expected = {
             "parser": "pymupdf",
             "chunker": ("fixed_window", "block_aware"),
@@ -154,7 +161,7 @@ class EvaluationConfigService:
         if "embedder" in values:
             ingestion = ingestion.model_copy(
                 update={
-                    "embedding": ingestion.embedding.model_copy(
+                    "embedding": embedding_config.model_copy(
                         update={"type": values["embedder"]}
                     )
                 }
@@ -166,7 +173,7 @@ class EvaluationConfigService:
                     {
                         **ingestion.model_dump(mode="json"),
                         "embedding": {
-                            **ingestion.embedding.model_dump(mode="json"),
+                            **embedding_config.model_dump(mode="json"),
                             **embedding_value,
                         },
                     }

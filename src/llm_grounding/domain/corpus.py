@@ -11,8 +11,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from llm_grounding.domain.documents import JsonObject
-
 
 @dataclass(frozen=True)
 class Project:
@@ -99,8 +97,8 @@ class DocumentIngestion:
     document_id: str
     config_hash: str
     config_json: str
-    embedding_hash: str
-    dimension: int
+    embedding_hash: str | None
+    dimension: int | None
     status: IngestionStatus
     created_at: datetime
     error: str | None = None
@@ -142,7 +140,7 @@ class RetrievalUnit:
     page_start: int | None
     page_end: int | None
     evidence_refs: tuple[EvidenceReference, ...]
-    metadata: JsonObject = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

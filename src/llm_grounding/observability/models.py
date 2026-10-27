@@ -344,7 +344,7 @@ class IngestionConfiguration(ObservationModel):
 class EmbeddingConfiguration(ObservationModel):
     """Effective embedding-space identity."""
 
-    model_id: str
+    model_id: str | None = None
     provider: str | None = None
     version: str | None = None
     dimension: int | None = None

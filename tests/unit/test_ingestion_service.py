@@ -250,3 +250,65 @@ async def test_existing_ingestion_without_vectors_is_rebuilt(
     )
     assert indexed
     assert all(item.chunk.ingestion_id == ingestion.id for item in indexed)
+
+
+async def test_postgresql_only_ingestion_skips_embedding_and_vector_store(
+    tmp_path: Path,
+) -> None:
+    """Persist evidence and chunks without constructing dense dependencies."""
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.7 test")
+    config = IngestionConfig(
+        chunker=ChunkerConfig(target_chars=64, overlap_chars=0),
+        embedding=None,
+        vector_backend=None,
+    )
+    document = Document(
+        "document",
+        source.name,
+        "stored-digest",
+        "pdf/stored-digest.pdf",
+        datetime.now(UTC),
+    )
+    ingestion = DocumentIngestion(
+        "ingestion",
+        document.id,
+        config.identity(),
+        config.model_dump_json(),
+        None,
+        None,
+        IngestionStatus.PENDING,
+        datetime.now(UTC),
+    )
+    parsed = ParsedDocument(
+        DocumentSource(document.id, source),
+        (DocumentElement(document.id, 1, 0, 0, "PostgreSQL-only content."),),
+        1,
+    )
+    repository = SimpleNamespace(
+        clear_ingestion_representation=AsyncMock(),
+        set_ingestion_status=AsyncMock(),
+        store_evidence=AsyncMock(),
+        store_chunks=AsyncMock(),
+    )
+    artifacts = SimpleNamespace(path_for=AsyncMock(return_value=source))
+    parser = SimpleNamespace(parse=AsyncMock(return_value=parsed))
+    service = DocumentIngestionService(
+        repository,  # type: ignore[arg-type]
+        artifacts,  # type: ignore[arg-type]
+        parser,  # type: ignore[arg-type]
+        None,
+        FixedWindowChunker(config.chunker),
+        None,
+        None,
+    )
+
+    await service.ingest("project", document, ingestion, config)
+
+    assert repository.store_evidence.await_count == 1
+    assert repository.store_chunks.await_count == 1
+    assert repository.set_ingestion_status.await_args_list[-1].args == (
+        ingestion.id,
+        IngestionStatus.READY,
+    )
+    parser.parse.assert_awaited_once()

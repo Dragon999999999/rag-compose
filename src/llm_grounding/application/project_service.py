@@ -23,7 +23,7 @@ class ProjectService:
         self,
         repository: PostgresRepository,
         ingestion: DocumentIngestionService,
-        vectors: VectorStore,
+        vectors: VectorStore | None,
         summaries: DocumentSummaryService | None = None,
         pipeline_service: PipelineService | None = None,
     ) -> None:
@@ -88,7 +88,8 @@ class ProjectService:
 
     async def delete_project(self, project_id: str) -> None:
         """Remove a project and only its derived Qdrant payload membership."""
-        await self._vectors.remove_project(project_id)
+        if self._vectors is not None:
+            await self._vectors.remove_project(project_id)
         await self._repository.delete_project(project_id)
 
     async def list_documents(
@@ -151,7 +152,7 @@ class ProjectService:
                 representation_hash=selected_pipeline.representation_hash,
                 index_capabilities=capabilities.as_dict(),
             )
-        if self._summaries is not None:
+        if self._summaries is not None and ingestion.embedding_hash is not None:
             await self._summaries.schedule_summary(project_id, document, ingestion)
         return document, ingestion
 

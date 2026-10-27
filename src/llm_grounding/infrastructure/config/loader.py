@@ -7,7 +7,7 @@ references before a configuration can reach persistence or a provider adapter.
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 import yaml
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from llm_grounding.infrastructure.config.declarative import (
     DeclarativePipelineConfig,
 )
 from llm_grounding.infrastructure.config.models import (
+    ApplicationDefaults,
     ModelCatalog,
     PipelineConfig,
 )
@@ -75,6 +76,7 @@ def load_pipeline_config(
     *,
     catalog: ModelCatalog | None = None,
     registry: _PipelineValidator | None = None,
+    defaults_path: Path | None = None,
 ) -> PipelineConfig:
     """Read, type-check, and closed-registry validate one pipeline YAML file.
 
@@ -83,6 +85,7 @@ def load_pipeline_config(
             the checked-in or packaged ``query_basic_v1`` pipeline is used.
         catalog: Shared model catalog; the packaged catalog is used by default.
         registry: Optional component registry, primarily useful for tests.
+        defaults_path: Optional application defaults YAML used for automatic stages.
 
     Raises:
         ConfigurationError: If YAML, schema, component, or model validation fails.
@@ -90,11 +93,12 @@ def load_pipeline_config(
     try:
         path = path or _default_pipeline_path()
         value = _yaml_content(path, "")
-        standalone = load_configuration_registry()
-        config = standalone.pipeline(
-            cast(DeclarativePipelineConfig, _model_validate(value, "pipeline"))
-        )
+        standalone = load_configuration_registry(defaults_path=defaults_path)
         model_catalog = catalog or standalone.model_catalog()
+        config = standalone.pipeline(
+            _model_validate(value, "pipeline"),
+            model_catalog,
+        )
         if registry is None:
             from llm_grounding.orchestration.registry import ComponentRegistry
 
@@ -110,6 +114,14 @@ def load_pipeline_config(
     except ValidationError as exc:
         raise ConfigurationError(_validation_locations("pipeline", exc)) from exc
     except ValueError as exc:
+        message = str(exc)
+        if (
+            "embedding configuration" in message
+            or "vector backend" in message
+            or "embeddings" in message
+            or "similarity" in message
+        ):
+            raise ConfigurationError(message) from exc
         raise ConfigurationError(
             "Invalid pipeline component or model reference"
         ) from exc
@@ -195,12 +207,14 @@ def _default_ingestion_pipeline_path() -> Path:
 def load_configuration_registry(
     models_directory: Path | None = None,
     components_directory: Path | None = None,
+    defaults_path: Path | None = None,
 ) -> ConfigurationRegistry:
     """Load the canonical standalone model and component registries."""
     try:
         return ConfigurationRegistry.from_directories(
             models_directory or _standalone_models_directory(),
             components_directory or _standalone_components_directory(),
+            defaults=load_application_defaults(defaults_path),
         )
     except ValueError as exc:
         raise ConfigurationError(str(exc)) from exc
@@ -222,6 +236,41 @@ def _standalone_components_directory() -> Path:
         return checkout
     packaged = files("llm_grounding.infrastructure.config") / "standalone/components"
     return Path(str(packaged))
+
+
+def load_application_defaults(path: Path | None = None) -> ApplicationDefaults:
+    """Load application defaults used when a pipeline omits a compatible stage."""
+    try:
+        value = _yaml_content(path or _default_defaults_path(), "defaults.yaml")
+        return _load_defaults_value(value)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ConfigurationError(
+            "Unable to read application defaults YAML; check its path and syntax."
+        ) from exc
+    except ValidationError as exc:
+        raise ConfigurationError(
+            _validation_locations("application defaults", exc)
+        ) from exc
+    except ValueError as exc:
+        raise ConfigurationError("Invalid application defaults configuration") from exc
+
+
+def _load_defaults_value(value: object) -> ApplicationDefaults:
+    """Validate the nested defaults section used by the application settings file."""
+    if not isinstance(value, dict):
+        raise ValueError("Application defaults YAML must contain a defaults mapping")
+    return ApplicationDefaults.model_validate(value.get("defaults", value))
+
+
+def _default_defaults_path() -> Path:
+    """Return the checkout or packaged application defaults YAML path."""
+    checkout = _checkout_root() / "config/defaults.yaml"
+    if checkout.is_file():
+        return checkout
+    resource = files("llm_grounding.infrastructure.config") / "defaults.yaml"
+    if resource.is_file():
+        return Path(str(resource))
+    raise ConfigurationError("No application defaults configuration exists")
 
 
 def _model_validate(

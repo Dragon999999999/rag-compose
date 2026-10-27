@@ -21,6 +21,7 @@ from llm_grounding.infrastructure.config.declarative import (
     SentenceTransformersModelDefinition,
 )
 from llm_grounding.infrastructure.config.models import (
+    ApplicationDefaults,
     ChatHistoryConfig,
     ComponentConfig,
     ModelCatalog,
@@ -46,12 +47,15 @@ class ConfigurationRegistry:
 
     models: dict[str, ModelDefinition]
     components: dict[str, tuple[str, ComponentDefinition]]
+    defaults: ApplicationDefaults = ApplicationDefaults()
 
     @classmethod
     def from_directories(
         cls,
         models_directory: Path,
         components_directory: Path,
+        *,
+        defaults: ApplicationDefaults | None = None,
     ) -> "ConfigurationRegistry":
         """Load and validate all standalone YAML definitions in deterministic order."""
         models: dict[str, ModelDefinition] = {}
@@ -71,7 +75,7 @@ class ConfigurationRegistry:
                     f"Duplicate component configuration ID: {component_definition.id}"
                 )
             components[component_definition.id] = (category, component_definition)
-        return cls(models, components)
+        return cls(models, components, defaults or ApplicationDefaults())
 
     def model(self, model_id: str) -> ModelDefinition:
         """Return one model definition or raise an actionable reference error."""
@@ -109,10 +113,39 @@ class ConfigurationRegistry:
             reasoning_models=reasoning,
         )
 
-    def pipeline(self, source: DeclarativePipelineConfig) -> PipelineConfig:
+    def pipeline(
+        self,
+        source: DeclarativePipelineConfig,
+        catalog: ModelCatalog | None = None,
+    ) -> PipelineConfig:
         """Resolve one composition-only pipeline into the stable pipeline schema."""
         representation = None
         if source.representation is not None:
+            model_catalog = catalog or self.model_catalog()
+            embedding = source.representation.embedding
+            vector_backend_id = source.representation.vector_backend
+            if embedding is None and vector_backend_id is not None:
+                raise ValueError(
+                    "vector_backend requires an embedding configuration; set both "
+                    "to null for PostgreSQL-only ingestion"
+                )
+            vector_backend = None
+            if embedding is not None:
+                embedding_config = model_catalog.embedding(
+                    self._model_id_for_component("embedding", embedding)
+                )
+                vector_backend_id = vector_backend_id or self.defaults.vector_backend
+                if vector_backend_id is None:
+                    raise ValueError(
+                        "An embedding configuration requires a vector_backend or "
+                        "defaults.vector_backend"
+                    )
+                vector_backend = self._component(
+                    "vector_backend", vector_backend_id, VectorBackendConfig
+                )
+                self._validate_backend_compatibility(
+                    embedding_config, vector_backend
+                )
             representation = PipelineRepresentationConfig(
                 parser=self._component(
                     "parser", source.representation.parser, ComponentConfig
@@ -129,16 +162,14 @@ class ConfigurationRegistry:
                 chunker=self._component(
                     "chunker", source.representation.chunker, ChunkerConfig
                 ),
-                embedding=PipelineEmbeddingConfig(
-                    model_ref=self._model_id_for_component(
-                        "embedding", source.representation.embedding
+                embedding=(
+                    PipelineEmbeddingConfig(
+                        model_ref=self._model_id_for_component("embedding", embedding)
                     )
+                    if embedding is not None
+                    else None
                 ),
-                vector_backend=self._component(
-                    "vector_backend",
-                    source.representation.vector_backend,
-                    VectorBackendConfig,
-                ),
+                vector_backend=vector_backend,
             )
         query = None
         if source.query is not None:
@@ -174,6 +205,22 @@ class ConfigurationRegistry:
             representation=representation,
             query=query,
         )
+
+    @staticmethod
+    def _validate_backend_compatibility(
+        embedding: EmbeddingConfig, backend: VectorBackendConfig
+    ) -> None:
+        """Reject embedding representations unsupported by the selected backend."""
+        if embedding.representation != backend.representation:
+            raise ValueError(
+                f"Vector backend {backend.type!r} does not support "
+                f"{embedding.representation} embeddings"
+            )
+        if embedding.similarity_metric != backend.similarity_metric:
+            raise ValueError(
+                f"Vector backend {backend.type!r} does not support "
+                f"{embedding.similarity_metric} similarity"
+            )
 
     def _component(
         self,

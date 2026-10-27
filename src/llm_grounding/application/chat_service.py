@@ -61,7 +61,7 @@ class ChatService:
     def __init__(
         self,
         repository: PostgresRepository,
-        runner: BasicRagRunner,
+        runner: BasicRagRunner | None,
         max_history: int = 10,
         pipeline_runtime: PipelineRuntimeResolver | None = None,
         pipeline_service: PipelineService | None = None,
@@ -197,6 +197,13 @@ class ChatService:
             selected_runner = runtime.runner
             selected_name = runtime.architecture.name
             selected_version = runtime.architecture.version
+        if selected_runner is None:
+            raise PipelineSelectionError(
+                "runtime_unavailable",
+                "This project has no dense vector runtime; select a compatible "
+                "query pipeline after building a dense index.",
+                409,
+            )
         generate_chat_name = not chat.chat_name_set
         await self._repository.add_message(chat_id, "user", message)
         history = await self._repository.recent_messages(chat_id, self._max_history)

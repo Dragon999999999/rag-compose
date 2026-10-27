@@ -835,8 +835,8 @@ class PostgresRepository:
         document_id: str,
         config_hash: str,
         config_json: str,
-        embedding_hash: str,
-        dimension: int,
+        embedding_hash: str | None,
+        dimension: int | None,
     ) -> DocumentIngestion:
         """Create a pending immutable representation before parsing and indexing."""
         async with self._sessions.begin() as session:
@@ -1457,12 +1457,20 @@ class PostgresRepository:
                     continue
                 config = configs[0]
                 capability_names = ["full_text", "metadata_filtering"]
-                if config.vector_backend == "qdrant":
+                if config.embedding is not None and config.vector_backend == "qdrant":
                     capability_names.append("chunk_vectors")
                 capabilities = {
                     "capabilities": capability_names,
-                    "embedding_identity": config.embedding.identity(),
-                    "dimension": config.embedding.dimension,
+                    "embedding_identity": (
+                        config.embedding.identity()
+                        if config.embedding is not None
+                        else None
+                    ),
+                    "dimension": (
+                        config.embedding.dimension
+                        if config.embedding is not None
+                        else None
+                    ),
                     "ingestion_pipeline_id": project.ingestion_pipeline_id,
                     "ingestion_pipeline_version": project.ingestion_pipeline_version,
                     "ingestion_pipeline_config_hash": (

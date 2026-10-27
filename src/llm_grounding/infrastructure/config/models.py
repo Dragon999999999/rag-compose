@@ -192,8 +192,19 @@ class ArchitectureConfig(BaseModel):
 class VectorBackendConfig(ComponentConfig):
     """Select the registered vector backend and its immutable index contract."""
 
-    type: Literal["qdrant"]
+    type: str = Field(min_length=1)
     index_version: str = Field(default="1", min_length=1, max_length=32)
+    representation: Literal["dense"] = "dense"
+    similarity_metric: Literal["cosine"] = "cosine"
+
+
+class ApplicationDefaults(BaseModel):
+    """Select application-wide defaults without hardcoding backend identifiers."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    schema_version: Literal[1] = 1
+    vector_backend: str | None = Field(default=None, min_length=1)
 
 
 class ModelReference(BaseModel):
@@ -229,18 +240,26 @@ class PipelineRepresentationConfig(BaseModel):
     parser: ComponentConfig
     knowledge_builder: ComponentConfig | None = None
     chunker: ChunkerConfig
-    embedding: PipelineEmbeddingConfig
-    vector_backend: VectorBackendConfig
+    embedding: PipelineEmbeddingConfig | None = None
+    vector_backend: VectorBackendConfig | None = None
 
     def identity(self, catalog: "ModelCatalog | None" = None) -> str:
         """Hash all choices that can make a persisted vector index incompatible."""
         import json
 
         data = self.model_dump(mode="json")
-        if catalog is not None:
+        backend = data.get("vector_backend")
+        if isinstance(backend, dict):
+            backend.pop("representation", None)
+            backend.pop("similarity_metric", None)
+        if catalog is not None and self.embedding is not None:
             data["embedding_model"] = catalog.embedding(
                 self.embedding.model_ref
             ).model_dump(mode="json")
+            if data["embedding_model"].get("representation") == "dense":
+                data["embedding_model"].pop("representation", None)
+            if data["embedding_model"].get("similarity_metric") == "cosine":
+                data["embedding_model"].pop("similarity_metric", None)
         return sha256(
             json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -323,6 +342,12 @@ class PipelineConfig(BaseModel):
         import json
 
         data = self.model_dump(mode="json")
+        representation = data.get("representation")
+        if isinstance(representation, dict):
+            backend = representation.get("vector_backend")
+            if isinstance(backend, dict):
+                backend.pop("representation", None)
+                backend.pop("similarity_metric", None)
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode()).hexdigest()
 
@@ -341,7 +366,11 @@ class PipelineConfig(BaseModel):
         """Resolve an ingestion pipeline into the effective index configuration."""
         if self.representation is None:
             raise ValueError("An ingestion pipeline requires representation stages")
-        embedding = catalog.embedding(self.representation.embedding.model_ref)
+        embedding = (
+            catalog.embedding(self.representation.embedding.model_ref)
+            if self.representation.embedding is not None
+            else None
+        )
         return IngestionConfig.model_validate(
             {
                 "parser": self.representation.parser.type,
@@ -351,9 +380,17 @@ class PipelineConfig(BaseModel):
                     else None
                 ),
                 "chunker": self.representation.chunker.model_dump(mode="json"),
-                "embedding": embedding.model_dump(mode="json"),
-                "vector_backend": self.representation.vector_backend.type,
-                "index_version": self.representation.vector_backend.index_version,
+                "embedding": embedding.model_dump(mode="json") if embedding else None,
+                "vector_backend": (
+                    self.representation.vector_backend.type
+                    if self.representation.vector_backend is not None
+                    else None
+                ),
+                "index_version": (
+                    self.representation.vector_backend.index_version
+                    if self.representation.vector_backend is not None
+                    else "1"
+                ),
             }
         )
 

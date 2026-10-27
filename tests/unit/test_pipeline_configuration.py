@@ -17,6 +17,7 @@ from llm_grounding.infrastructure.config.loader import (
     load_pipeline_config,
 )
 from llm_grounding.infrastructure.database.models import PipelineRow
+from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
 
 
@@ -84,6 +85,102 @@ def test_ingestion_pipeline_can_omit_knowledge_builder(
     assert config.representation is not None
     assert config.representation.knowledge_builder is None
     assert resolved.knowledge_builder is None
+
+
+@pytest.mark.parametrize(
+    "dense_yaml",
+    [
+        "  embedding: null\n  vector_backend: null\n",
+        "",
+    ],
+    ids=["explicit-null", "omitted"],
+)
+def test_ingestion_pipeline_can_disable_dense_index(
+    tmp_path: Path, dense_yaml: str
+) -> None:
+    """PostgreSQL-only representation configurations resolve without dense stages."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    path = tmp_path / "postgres-only-ingestion.yaml"
+    path.write_text(
+        source.replace(
+            "  embedding: embedding_local_minilm\n  vector_backend: "
+            "vector_backend_qdrant\n",
+            dense_yaml,
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_pipeline_config(path)
+    resolved = config.resolve_ingestion(load_model_catalog())
+
+    assert config.representation is not None
+    assert config.representation.embedding is None
+    assert config.representation.vector_backend is None
+    assert resolved.embedding is None
+    assert resolved.vector_backend is None
+
+
+def test_embedding_without_backend_uses_application_default(tmp_path: Path) -> None:
+    """An omitted backend is resolved through the configured defaults file."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    ).replace("  vector_backend: vector_backend_qdrant\n", "  vector_backend: null\n")
+    path = tmp_path / "default-backend-ingestion.yaml"
+    path.write_text(source, encoding="utf-8")
+    defaults = tmp_path / "defaults.yaml"
+    defaults.write_text(
+        "schema_version: 1\ndefaults:\n  vector_backend: vector_backend_qdrant\n",
+        encoding="utf-8",
+    )
+
+    config = load_pipeline_config(path, defaults_path=defaults)
+    resolved = config.resolve_ingestion(load_model_catalog())
+
+    assert config.representation is not None
+    assert config.representation.vector_backend is not None
+    assert config.representation.vector_backend.type == "qdrant"
+    assert resolved.vector_backend == "qdrant"
+
+
+def test_vector_backend_without_embedding_is_rejected(tmp_path: Path) -> None:
+    """A vector backend cannot be configured for PostgreSQL-only ingestion."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    ).replace("  embedding: embedding_local_minilm\n", "  embedding: null\n")
+    path = tmp_path / "invalid-vector-only-ingestion.yaml"
+    path.write_text(source, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="vector_backend requires"):
+        load_pipeline_config(path)
+
+
+def test_incompatible_embedding_representation_is_rejected() -> None:
+    """The configured backend must support the selected embedding representation."""
+    catalog = load_model_catalog().model_copy(
+        update={
+            "embedding_models": {
+                "embedding_001": EmbeddingConfig(representation="sparse")
+            }
+        }
+    )
+
+    with pytest.raises(ConfigurationError, match="does not support sparse embeddings"):
+        load_pipeline_config(
+            Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+        )
+
+
+def test_postgresql_only_capabilities_do_not_advertise_vectors() -> None:
+    """Capability snapshots distinguish persisted chunks from dense indexes."""
+    capabilities = IndexCapabilities.from_ingestion(
+        IngestionConfig(embedding=None, vector_backend=None)
+    )
+
+    assert "chunk_vectors" not in capabilities.capabilities
+    assert capabilities.embedding_identity is None
+    assert capabilities.dimension is None
 
 
 def test_representation_changes_produce_distinct_index_identity() -> None:

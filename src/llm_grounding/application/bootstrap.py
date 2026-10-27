@@ -20,18 +20,17 @@ from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
     PipelineConfig,
+    VectorBackendConfig,
 )
-from llm_grounding.infrastructure.config.settings import (
-    MinioSettings,
-    QdrantSettings,
-)
+from llm_grounding.infrastructure.config.settings import MinioSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.database.session import create_session_factory
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
-from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
+from llm_grounding.infrastructure.vector.factory import VectorStoreFactory
+from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
@@ -53,10 +52,10 @@ class PhaseOneApplication:
         projects: ProjectService,
         chats: ChatService,
         engine: AsyncEngine,
-        vectors: QdrantVectorStore,
+        vectors: VectorStore | None,
         repository: PostgresRepository,
         artifacts: ArtifactStore,
-        summaries: DocumentSummaryService,
+        summaries: DocumentSummaryService | None,
         runner: BasicRagRunner | None = None,
         architecture: ArchitectureConfig | None = None,
         ingestion_config: IngestionConfig | None = None,
@@ -107,8 +106,10 @@ class PhaseOneApplication:
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
-        await self.summaries.close()
-        await self._vectors.close()
+        if self.summaries is not None:
+            await self.summaries.close()
+        if self._vectors is not None and hasattr(self._vectors, "close"):
+            await self._vectors.close()
         await self._engine.dispose()
 
 
@@ -116,7 +117,7 @@ class EvalApplication:
     """Evaluation-only services and derived-index access isolated from projects."""
 
     def __init__(
-        self, corpus_service: EvalCorpusService, embedding_store: QdrantVectorStore
+        self, corpus_service: EvalCorpusService, embedding_store: VectorStore | None
     ) -> None:
         """Expose corpus lifecycle and optional evaluation vector access."""
         self.corpus_service = corpus_service
@@ -156,20 +157,31 @@ def create_phase_one_application(
         raise RuntimeError(
             "Phase 1 application requires a vector/basic_grounded pipeline"
         )
-    if ingestion_config.vector_backend != "qdrant":
-        raise RuntimeError("Phase 1 application currently supports only qdrant")
     if architecture.reasoner.prompt_id is None:
         raise RuntimeError("Phase 1 grounded reasoning requires a configured prompt_id")
     minio_settings = MinioSettings.from_environment()
-    qdrant_settings = QdrantSettings.from_environment()
     engine, sessions = create_session_factory()
     repository = PostgresRepository(sessions)
-    vectors = QdrantVectorStore(qdrant_settings, repository)
+    vectors: VectorStore | None = None
+    if ingestion_config.embedding is not None:
+        if ingestion_config.vector_backend is None:
+            raise RuntimeError("Dense ingestion requires a resolved vector backend")
+        vectors = VectorStoreFactory().create(
+            VectorBackendConfig(
+                type=ingestion_config.vector_backend,
+                index_version=ingestion_config.index_version,
+            ),
+            repository,
+        )
     catalog = model_catalog or load_model_catalog()
     pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, catalog)
     pipeline_runtime = PipelineRuntimeResolver(repository, vectors, catalog)
     pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
-    embedder = build_embedder(ingestion_config.embedding)
+    embedder = (
+        build_embedder(ingestion_config.embedding)
+        if ingestion_config.embedding is not None
+        else None
+    )
     registry = ComponentRegistry()
     knowledge_builder = registry.build_knowledge_builder(
         ingestion_config.knowledge_builder
@@ -189,39 +201,50 @@ def create_phase_one_application(
         embedder,
         vectors,
     )
-    top_k = architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
-    vector = VectorRetriever(
-        embedder, vectors, top_k, embedding_config=ingestion_config.embedding
-    )
-    summary = SummaryRetriever(
-        repository,
-        vector,
-        architecture.retriever.context_chars or 12000,
-        architecture.retriever.summary_per_facet or 3,
-    )
-    reasoner = BasicGroundedReasoner(
-        AqueductModelClient(architecture.reasoner.model),
-        PromptLibrary.default(),
-        architecture.reasoner.prompt_id,
-    )
-    reranker = registry.build_reranker(architecture.reranker)
-    runner = BasicRagRunner(
-        vector,
-        summary,
-        reasoner,
-        SourceReferenceAssessor(),
-        BasicGroundingPolicy(),
-        GroundedAnswerRenderer(),
-        diagnostics,
-        ingestion_config.embedding,
-        reranker=reranker,
-        reranker_config=architecture.reranker,
-        reranker_builder=registry.build_reranker,
-    )
+    runner = None
+    summaries = None
+    if (
+        ingestion_config.embedding is not None
+        and vectors is not None
+        and embedder is not None
+    ):
+        top_k = (
+            architecture.reranker.retrieval_top_k
+            or architecture.retriever.top_k
+            or 8
+        )
+        vector = VectorRetriever(
+            embedder, vectors, top_k, embedding_config=ingestion_config.embedding
+        )
+        summary = SummaryRetriever(
+            repository,
+            vector,
+            architecture.retriever.context_chars or 12000,
+            architecture.retriever.summary_per_facet or 3,
+        )
+        reasoner = BasicGroundedReasoner(
+            AqueductModelClient(architecture.reasoner.model),
+            PromptLibrary.default(),
+            architecture.reasoner.prompt_id,
+        )
+        reranker = registry.build_reranker(architecture.reranker)
+        runner = BasicRagRunner(
+            vector,
+            summary,
+            reasoner,
+            SourceReferenceAssessor(),
+            BasicGroundingPolicy(),
+            GroundedAnswerRenderer(),
+            diagnostics,
+            ingestion_config.embedding,
+            reranker=reranker,
+            reranker_config=architecture.reranker,
+            reranker_builder=registry.build_reranker,
+        )
+        summaries = DocumentSummaryService(repository, runner)
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10
     )
-    summaries = DocumentSummaryService(repository, runner)
     return PhaseOneApplication(
         ProjectService(
             repository,

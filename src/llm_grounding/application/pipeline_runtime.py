@@ -54,7 +54,7 @@ class PipelineRuntimeResolver:
     def __init__(
         self,
         repository: PostgresRepository,
-        vectors: VectorStore,
+        vectors: VectorStore | None,
         catalog: ModelCatalog,
         *,
         max_cache_size: int = 8,
@@ -184,6 +184,15 @@ class PipelineRuntimeResolver:
             )
         if architecture.reasoner.prompt_id is None:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
+        if ingestion.embedding is None or ingestion.vector_backend is None:
+            raise PipelineResolutionError(
+                "The selected dense query pipeline requires an indexed embedding "
+                "and vector backend"
+            )
+        if self._vectors is None:
+            raise PipelineResolutionError(
+                "The selected dense query pipeline has no vector backend available"
+            )
         embedder = self._embedder(ingestion)
         retrieval_top_k = (
             architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
@@ -221,6 +230,8 @@ class PipelineRuntimeResolver:
 
     def _embedder(self, ingestion: IngestionConfig) -> Embedder:
         """Reuse embedding adapters by representation identity with LRU bounds."""
+        if ingestion.embedding is None:
+            raise PipelineResolutionError("Dense query runtime requires an embedder")
         identity = ingestion.embedding.identity()
         cached = self._embedders.get(identity)
         if cached is not None:

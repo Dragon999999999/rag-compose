@@ -61,8 +61,8 @@ class DocumentIngestionService:
         parser: DocumentParser,
         knowledge_builder: KnowledgeBuilder | None,
         chunker: Chunker,
-        embedder: Embedder,
-        vectors: VectorStore,
+        embedder: Embedder | None,
+        vectors: VectorStore | None,
         *,
         embedder_factory: Callable[[EmbeddingConfig], Embedder] = build_embedder,
     ) -> None:
@@ -78,11 +78,15 @@ class DocumentIngestionService:
         self._knowledge_builder = knowledge_builder
         self._chunker = chunker
         self._embedder_factory = embedder_factory
-        self._embedders = {embedder.model_identity: embedder}
+        self._embedders = (
+            {embedder.model_identity: embedder} if embedder is not None else {}
+        )
         self._vectors = vectors
 
     def _embedder_for(self, config: IngestionConfig) -> Embedder:
         """Return the cached provider for one exact embedding configuration."""
+        if config.embedding is None:
+            raise ValueError("No embedder is available for PostgreSQL-only ingestion")
         identity = config.embedding.identity()
         embedder = self._embedders.get(identity)
         if embedder is None:
@@ -122,18 +126,22 @@ class DocumentIngestionService:
             document.id,
             config.identity(),
             config.model_dump_json(),
-            config.embedding.identity(),
-            config.embedding.dimension,
+            config.embedding.identity() if config.embedding is not None else None,
+            config.embedding.dimension if config.embedding is not None else None,
         )
         association = await self._repository.attach_document(
             project_id, document.id, ingestion.id
         )
-        if (
-            existing is not None
-            and existing.status == IngestionStatus.READY
-            and await self._vectors.associate_ingestion(project_id, existing.id)
-        ):
-            return document, association, existing
+        if existing is not None and existing.status == IngestionStatus.READY:
+            if config.embedding is None:
+                return document, association, existing
+            if self._vectors is None:
+                raise RuntimeError(
+                    "A vector backend is required for dense ingestion but is "
+                    "unavailable"
+                )
+            if await self._vectors.associate_ingestion(project_id, existing.id):
+                return document, association, existing
         await self.ingest(
             project_id,
             document,
@@ -162,14 +170,23 @@ class DocumentIngestionService:
         Failures retain canonical metadata and a sanitized error type. The caller can
         explicitly re-run this same compatible ingestion later.
         """
-        active_embedder = embedder or self._embedder_for(config)
+        active_embedder = (
+            embedder or self._embedder_for(config)
+            if config.embedding is not None
+            else None
+        )
         traces = TraceRecorder()
         total_span = traces.start("ingestion", stage_type=StageType.INGESTION)
         started = monotonic()
         evidence: tuple[EvidenceUnit, ...] = ()
         chunks: tuple[RetrievalUnit, ...] = ()
         try:
-            await self._vectors.delete_ingestion(ingestion.id)
+            if config.embedding is not None:
+                if self._vectors is None or active_embedder is None:
+                    raise RuntimeError(
+                        "Dense ingestion requires both an embedder and vector backend"
+                    )
+                await self._vectors.delete_ingestion(ingestion.id)
             await self._repository.clear_ingestion_representation(ingestion.id)
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.PARSING
@@ -195,38 +212,40 @@ class DocumentIngestionService:
                 self._chunker.chunk(evidence, ingestion.id, document.name),
             )
             await self._repository.store_chunks(chunks)
-            await self._repository.set_ingestion_status(
-                ingestion.id, IngestionStatus.EMBEDDING
-            )
-            vectors = await self._traced(
-                traces,
-                "embed",
-                active_embedder.embed_documents([chunk.text for chunk in chunks]),
-            )
-            if any(
-                vector.model_identity != ingestion.embedding_hash
-                or vector.dimension != ingestion.dimension
-                for vector in vectors
-            ):
-                raise ValueError(
-                    "Configured embedder is incompatible with ingestion "
-                    "embedding identity"
+            if config.embedding is not None:
+                assert self._vectors is not None and active_embedder is not None
+                await self._repository.set_ingestion_status(
+                    ingestion.id, IngestionStatus.EMBEDDING
                 )
-            await self._repository.set_ingestion_status(
-                ingestion.id, IngestionStatus.INDEXING
-            )
-            await self._traced(
-                traces, "index", self._vectors.upsert(project_id, chunks, vectors)
-            )
-            # Re-indexing one shared representation must restore every project's
-            # payload association without parsing or embedding its chunks again.
-            for (
-                associated_project_id
-            ) in await self._repository.project_ids_for_ingestion(ingestion.id):
-                if associated_project_id != project_id:
-                    await self._vectors.associate_ingestion(
-                        associated_project_id, ingestion.id
+                vectors = await self._traced(
+                    traces,
+                    "embed",
+                    active_embedder.embed_documents([chunk.text for chunk in chunks]),
+                )
+                if any(
+                    vector.model_identity != ingestion.embedding_hash
+                    or vector.dimension != ingestion.dimension
+                    for vector in vectors
+                ):
+                    raise ValueError(
+                        "Configured embedder is incompatible with ingestion "
+                        "embedding identity"
                     )
+                await self._repository.set_ingestion_status(
+                    ingestion.id, IngestionStatus.INDEXING
+                )
+                await self._traced(
+                    traces, "index", self._vectors.upsert(project_id, chunks, vectors)
+                )
+                # Re-indexing one shared representation must restore every project's
+                # payload association without parsing or embedding its chunks again.
+                for (
+                    associated_project_id
+                ) in await self._repository.project_ids_for_ingestion(ingestion.id):
+                    if associated_project_id != project_id:
+                        await self._vectors.associate_ingestion(
+                            associated_project_id, ingestion.id
+                        )
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.READY
             )

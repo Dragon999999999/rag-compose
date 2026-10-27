@@ -15,7 +15,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 
 from llm_grounding.api.eval import create_eval_router
-from llm_grounding.api.eval_embeddings import create_eval_embeddings_router
+from llm_grounding.api.eval_embeddings import (
+    EmbeddingFetcher,
+    create_eval_embeddings_router,
+)
 from llm_grounding.application.bootstrap import (
     PhaseOneApplication,
     create_phase_one_application,
@@ -387,9 +390,14 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             )
         )
     )
-    app.include_router(
-        create_eval_embeddings_router(application.evaluation.embedding_store)
-    )
+    if application.evaluation.embedding_store is not None and hasattr(
+        application.evaluation.embedding_store, "fetch_vectors"
+    ):
+        app.include_router(
+            create_eval_embeddings_router(
+                cast(EmbeddingFetcher, application.evaluation.embedding_store)
+            )
+        )
 
     @app.get("/api/pipelines")
     async def list_pipelines(
@@ -670,6 +678,12 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         document, ingestion = source
         assert ingestion is not None
         if ingestion.status == IngestionStatus.READY:
+            if application.summaries is None:
+                raise HTTPException(
+                    409,
+                    "Document summaries require a dense vector index for this "
+                    "ingestion.",
+                )
             await application.summaries.schedule_summary(
                 project_id, document, ingestion
             )
@@ -695,6 +709,11 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         if ingestion.status != IngestionStatus.READY:
             raise HTTPException(
                 409, "Document ingestion is not ready for summarization."
+            )
+        if application.summaries is None:
+            raise HTTPException(
+                409,
+                "Document summaries require a dense vector index for this ingestion.",
             )
         await application.summaries.regenerate_summary(project_id, document, ingestion)
         return await _document_summary_dto(application, document.id, ingestion.id)

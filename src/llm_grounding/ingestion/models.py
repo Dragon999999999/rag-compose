@@ -38,6 +38,8 @@ class EmbeddingConfig(BaseModel):
     )
     provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    representation: Literal["dense", "sparse"] = "dense"
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
     revision: str | None = None
     dimension: int = Field(default=384, ge=1, le=16000)
     normalize: bool = True
@@ -76,6 +78,10 @@ class EmbeddingConfig(BaseModel):
                 "api_key_file_env",
             },
         )
+        if self.representation == "dense":
+            data.pop("representation", None)
+        if self.similarity_metric == "cosine":
+            data.pop("similarity_metric", None)
         if self.base_url is not None:
             data["base_url"] = sha256(str(self.base_url).encode("utf-8")).hexdigest()
         content = json.dumps(data, sort_keys=True, separators=(",", ":")).encode(
@@ -93,10 +99,40 @@ class IngestionConfig(BaseModel):
     knowledge_builder: Literal["basic"] | None = "basic"
     knowledge_version: Literal["1"] = "1"
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
-    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
-    vector_backend: Literal["qdrant"] = "qdrant"
+    embedding: EmbeddingConfig | None = Field(default_factory=EmbeddingConfig)
+    vector_backend: str | None = Field(default="qdrant", min_length=1)
     index_version: Literal["1"] = "1"
+
+    @model_validator(mode="after")
+    def validate_dense_index_pair(self) -> "IngestionConfig":
+        """Require embeddings and vector indexes to be enabled together."""
+        if self.embedding is None and self.vector_backend is not None:
+            raise ValueError(
+                "vector_backend requires an embedding configuration; set both to null "
+                "for PostgreSQL-only ingestion"
+            )
+        if self.embedding is not None and self.vector_backend is None:
+            raise ValueError(
+                "An embedding configuration requires a resolved vector_backend"
+            )
+        if self.vector_backend == "qdrant" and self.embedding is not None:
+            if self.embedding.representation != "dense":
+                raise ValueError("Qdrant supports dense embeddings only")
+            if self.embedding.similarity_metric != "cosine":
+                raise ValueError("Qdrant requires cosine similarity")
+        return self
 
     def identity(self) -> str:
         """Hash the full effective configuration, including component versions."""
-        return sha256(self.model_dump_json().encode("utf-8")).hexdigest()
+        data = self.model_dump(mode="json")
+        embedding = data.get("embedding")
+        if isinstance(embedding, dict) and self.embedding is not None:
+            if self.embedding.representation == "dense":
+                embedding.pop("representation", None)
+            if self.embedding.similarity_metric == "cosine":
+                embedding.pop("similarity_metric", None)
+        return sha256(
+            json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
+        ).hexdigest()

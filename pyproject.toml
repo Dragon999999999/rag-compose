@@ -41,6 +41,7 @@ packages = ["src/llm_grounding"]
 "config/models" = "llm_grounding/infrastructure/config/standalone/models"
 "config/components" = "llm_grounding/infrastructure/config/standalone/components"
 "config/pipelines" = "llm_grounding/infrastructure/config/standalone/pipelines"
+"config/defaults.yaml" = "llm_grounding/infrastructure/config/defaults.yaml"
 "prompts/registry.yaml" = "llm_grounding/infrastructure/prompts/assets/registry.yaml"
 "prompts/reasoning/grounded_qa_v1.jinja2" = "llm_grounding/infrastructure/prompts/assets/reasoning/grounded_qa_v1.jinja2"
 

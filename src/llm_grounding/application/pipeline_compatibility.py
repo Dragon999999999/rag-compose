@@ -37,12 +37,12 @@ class IndexCapabilities:
     ) -> "IndexCapabilities":
         """Infer capabilities from effective ingestion settings and backend support."""
         capabilities = {"full_text", "metadata_filtering"}
-        if config.vector_backend == "qdrant":
+        if config.embedding is not None and config.vector_backend == "qdrant":
             capabilities.add("chunk_vectors")
         return cls(
             frozenset(capabilities),
-            config.embedding.identity(),
-            config.embedding.dimension,
+            config.embedding.identity() if config.embedding is not None else None,
+            config.embedding.dimension if config.embedding is not None else None,
             ingestion_pipeline_id,
             ingestion_pipeline_version,
             ingestion_pipeline_config_hash,
