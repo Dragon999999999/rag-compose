@@ -1,0 +1,14 @@
+schema_version: 2
+kind: ingestion
+name: ingestion_minimal_v1
+version: 1
+description: >-
+  PostgreSQL-only ingestion without knowledge building, embeddings, or vector
+  indexing.
+is_default: false
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: null
+  chunker: chunker_block_aware
+  embedding: null
+  vector_backend: null

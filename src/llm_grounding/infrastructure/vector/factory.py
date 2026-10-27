@@ -8,15 +8,25 @@ from llm_grounding.infrastructure.database.repositories import PostgresRepositor
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
 
+VectorBackendConstructor = Callable[[PostgresRepository], VectorStore]
+
 
 class VectorStoreFactory:
     """Construct registered vector stores without coupling callers to Qdrant."""
 
     def __init__(self) -> None:
         """Register available concrete backend constructors."""
-        self._factories: dict[
-            str, Callable[[PostgresRepository], VectorStore]
-        ] = {"qdrant": self._create_qdrant}
+        self._factories: dict[str, VectorBackendConstructor] = {
+            "qdrant": self._create_qdrant
+        }
+
+    def register(
+        self, implementation: str, constructor: VectorBackendConstructor
+    ) -> None:
+        """Register a backend adapter without changing pipeline orchestration."""
+        if not implementation.strip():
+            raise ValueError("Vector backend implementation name must be non-empty")
+        self._factories[implementation] = constructor
 
     def create(
         self, config: VectorBackendConfig, repository: PostgresRepository
@@ -29,6 +39,11 @@ class VectorStoreFactory:
                 f"No vector backend implementation is registered for {config.type!r}"
             ) from exc
         return factory(repository)
+
+    @property
+    def implementations(self) -> frozenset[str]:
+        """Return registered vector backend identifiers."""
+        return frozenset(self._factories)
 
     @staticmethod
     def _create_qdrant(repository: PostgresRepository) -> VectorStore:

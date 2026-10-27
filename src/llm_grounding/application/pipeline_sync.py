@@ -51,7 +51,9 @@ class PipelineSynchronizer:
         skipped: list[str] = []
         records: list[Pipeline] = []
         for path in paths:
-            config = load_pipeline_config(path, catalog=catalog)
+            config = load_pipeline_config(path, catalog=catalog).with_resolved_catalog(
+                catalog
+            )
             previous = await self._repository.get_pipeline_by_name(config.name)
             record = await self._repository.upsert_pipeline_from_yaml(
                 config,

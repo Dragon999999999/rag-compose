@@ -118,7 +118,18 @@ def _item(
     value: Project | Chat | Document | DocumentIngestion | DocumentSummary | Pipeline,
 ) -> dict[str, object]:
     """Serialize a small immutable domain record without framework leakage."""
-    return cast(dict[str, object], asdict(value))
+    item = cast(dict[str, object], asdict(value))
+    if isinstance(value, Pipeline):
+        config = item.get("config")
+        if isinstance(config, dict):
+            # Resolved provider snapshots are execution metadata, not editable
+            # pipeline source and must not be echoed as API configuration fields.
+            if config.get("resolved_catalog") is not None:
+                item["config"] = {
+                    **config,
+                    "resolved_catalog": None,
+                }
+    return item
 
 
 def _pipeline_http_error(error: PipelineSelectionError) -> HTTPException:

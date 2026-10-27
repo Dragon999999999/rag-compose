@@ -172,7 +172,7 @@ class ProjectService:
                 config,
                 index,
                 self._pipeline_service.registry,
-                self._pipeline_service.model_catalog,
+                config.effective_catalog(self._pipeline_service.model_catalog),
             )
             pipeline_summary: dict[str, object] = next(
                 iter(self._pipeline_service.summaries((record,))), {}

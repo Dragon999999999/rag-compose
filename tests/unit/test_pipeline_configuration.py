@@ -31,10 +31,11 @@ def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
     catalog = load_model_catalog()
     paths = sorted(Path("config/pipelines").glob("*.yaml"))
 
-    assert len(paths) == 2
+    assert len(paths) == 3
     configs = [load_pipeline_config(path, catalog=catalog) for path in paths]
     assert {config.name for config in configs} == {
         "ingestion_default_v1",
+        "ingestion_minimal_v1",
         "query_basic_v1",
     }
 

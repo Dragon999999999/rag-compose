@@ -385,7 +385,7 @@ class ChatService:
             config,
             index,
             self._pipeline_service.registry,
-            self._pipeline_service.model_catalog,
+            config.effective_catalog(self._pipeline_service.model_catalog),
         )
         if pipeline.kind != "query":
             raise PipelineSelectionError(

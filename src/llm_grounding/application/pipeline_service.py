@@ -251,6 +251,7 @@ class PipelineService:
     async def create(self, config: PipelineConfig) -> Pipeline:
         """Validate and persist an API-owned pipeline configuration."""
         self.validate(config)
+        config = config.with_resolved_catalog(self._catalog)
         existing = await self._repository.get_pipeline_by_name(config.name)
         if existing is not None:
             raise ValueError(f"Pipeline name already exists: {config.name}")
@@ -279,6 +280,7 @@ class PipelineService:
     ) -> Pipeline:
         """Update a pipeline safely, optionally migrating dependent conversations."""
         self.validate(config)
+        config = config.with_resolved_catalog(self._catalog)
         existing = await self.get(pipeline_id)
         if (
             expected_config_hash is not None
@@ -395,7 +397,9 @@ class PipelineService:
 
     def validate(self, config: PipelineConfig) -> PipelineConfig:
         """Validate stage identifiers, model references, and compatibility."""
-        self._registry.validate_pipeline(config, self._catalog)
+        self._registry.validate_pipeline(
+            config, config.effective_catalog(self._catalog)
+        )
         return config
 
     async def resolve(self, pipeline_id: str) -> ResolvedPipeline:
@@ -408,8 +412,9 @@ class PipelineService:
         """Resolve a persisted ingestion definition into effective settings."""
         record = await self.select_ingestion(pipeline_id)
         config = PipelineConfig.model_validate(record.config)
-        self.validate(config)
-        if record.representation_hash != config.representation_hash(self._catalog):
+        catalog = config.effective_catalog(self._catalog)
+        self._registry.validate_pipeline(config, catalog)
+        if record.representation_hash != config.representation_hash(catalog):
             raise ValueError(
                 f"Pipeline {record.id!r} has a stale ingestion representation hash"
             )

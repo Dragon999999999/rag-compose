@@ -6,16 +6,25 @@ architecture names. A supplied model client replaces external generation for tes
 """
 
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 
+from llm_grounding.assessment.source_reference import SourceReferenceAssessor
+from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
+from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
+    ComponentConfig,
     ModelCatalog,
     PipelineConfig,
+    ReasonerConfig,
     RerankerConfig,
     RetrieverConfig,
 )
+from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
 from llm_grounding.infrastructure.prompts import PromptLibrary, PromptLibraryError
-from llm_grounding.ingestion.models import ChunkerConfig
+from llm_grounding.infrastructure.vector.protocol import VectorStore
+from llm_grounding.ingestion.models import ChunkerConfig, EmbeddingConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
@@ -23,11 +32,27 @@ from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
 from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
+from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
+from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
+from llm_grounding.retrieval.full_context import FullContextRetriever
+from llm_grounding.retrieval.hybrid import HybridRetriever
 from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
 from llm_grounding.retrieval.reranking.top_k import TopKReranker
+from llm_grounding.retrieval.sparse import SparseRetriever
+from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
+
+
+@dataclass(frozen=True)
+class RetrieverDependencies:
+    """Resolved resources available to a project-scoped retriever factory."""
+
+    repository: PostgresRepository
+    vector_store: VectorStore | None = None
+    embedder: Embedder | None = None
+    embedding_config: EmbeddingConfig | None = None
 
 
 def _vector_retriever_requires_runtime_dependencies() -> Retriever:
@@ -87,7 +112,103 @@ class ComponentRegistry:
             "block_aware": BlockAwareChunker,
             "fixed_window": FixedWindowChunker,
         }
+        self._retriever_factories: dict[
+            str, Callable[[RetrieverConfig, RetrieverDependencies], Retriever]
+        ] = {
+            "vector": self._build_vector_retriever,
+            "full_context": self._build_full_context_retriever,
+            "postgres_fts": self._build_sparse_retriever,
+            "hybrid_rrf": self._build_hybrid_retriever,
+        }
         self.vector_backends: frozenset[str] = frozenset({"qdrant"})
+
+    def build_parser(self, config: ComponentConfig) -> DocumentParser:
+        """Construct the configured parser from the closed parser registry."""
+        try:
+            factory = self.parsers[config.type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown parser component {config.type!r}"
+            ) from exc
+        return factory()
+
+    def build_chunker(self, config: ChunkerConfig) -> Chunker:
+        """Construct the configured chunker from validated operational settings."""
+        try:
+            factory = self.chunkers[config.type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown chunker component {config.type!r}"
+            ) from exc
+        return factory(config)
+
+    def build_retriever(
+        self,
+        config: RetrieverConfig,
+        dependencies: RetrieverDependencies,
+    ) -> Retriever:
+        """Construct one retriever using only resources declared by its contract."""
+        try:
+            factory = self._retriever_factories[config.type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown retriever component {config.type!r}"
+            ) from exc
+        return factory(config, dependencies)
+
+    def build_summary_retriever(
+        self,
+        config: RetrieverConfig,
+        retriever: Retriever,
+        dependencies: RetrieverDependencies,
+    ) -> Retriever:
+        """Construct the dense summary adapter while preserving other strategies."""
+        if config.type != "vector":
+            return retriever
+        if not isinstance(retriever, VectorRetriever):
+            raise ConfigurationError(
+                "The vector summary adapter requires a VectorRetriever instance"
+            )
+        return SummaryRetriever(
+            dependencies.repository,
+            retriever,
+            config.context_chars or 12000,
+            config.summary_per_facet or 3,
+        )
+
+    def build_reasoner(self, config: ReasonerConfig) -> BasicGroundedReasoner:
+        """Construct the configured reasoning engine through its stage registry."""
+        if config.type != "basic_grounded":
+            raise ConfigurationError(
+                f"Unknown reasoner component {config.type!r}"
+            )
+        if config.prompt_id is None:
+            raise ConfigurationError("The basic_grounded reasoner requires prompt_id")
+        return BasicGroundedReasoner(
+            AqueductModelClient(config.model),
+            PromptLibrary.default(),
+            config.prompt_id,
+        )
+
+    def build_assessor(self, config: ComponentConfig) -> SourceReferenceAssessor:
+        """Construct one registered evidence assessor."""
+        if config.type != "source_reference":
+            raise ConfigurationError(f"Unknown assessor component {config.type!r}")
+        return SourceReferenceAssessor()
+
+    def build_decision_policy(self, config: ComponentConfig) -> BasicGroundingPolicy:
+        """Construct one registered decision policy."""
+        if config.type != "basic_grounding":
+            raise ConfigurationError(
+                f"Unknown decision_policy component {config.type!r}"
+            )
+        return BasicGroundingPolicy()
+
+    def build_renderer(self, config: ComponentConfig) -> GroundedAnswerRenderer:
+        """Construct one registered answer renderer."""
+        if config.type != "grounded_answer":
+            raise ConfigurationError(f"Unknown renderer component {config.type!r}")
+        return GroundedAnswerRenderer()
 
     def validate_pipeline(
         self, config: PipelineConfig, catalog: ModelCatalog | None = None
@@ -210,6 +331,66 @@ class ComponentRegistry:
             except PromptLibraryError as exc:
                 raise ConfigurationError(str(exc)) from exc
 
+    @staticmethod
+    def _build_vector_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build dense retrieval after its vector and embedding resources resolve."""
+        if dependencies.vector_store is None or dependencies.embedder is None:
+            raise ConfigurationError(
+                "The dense retriever requires a vector backend and embedder"
+            )
+        return VectorRetriever(
+            dependencies.embedder,
+            dependencies.vector_store,
+            config.top_k or config.dense_top_k or 8,
+            embedding_config=dependencies.embedding_config,
+        )
+
+    @staticmethod
+    def _build_full_context_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build full-context retrieval from canonical PostgreSQL chunks only."""
+        return FullContextRetriever(
+            dependencies.repository,
+            config.context_budget_tokens or 16_000,
+        )
+
+    @staticmethod
+    def _build_sparse_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build PostgreSQL FTS retrieval without dense resources."""
+        return SparseRetriever(dependencies.repository, config.top_k or 20)
+
+    def _build_hybrid_retriever(
+        self, config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Compose registered dense and sparse factories with weighted RRF settings."""
+        dense_config = RetrieverConfig(
+            type="vector",
+            top_k=config.dense_top_k or 20,
+            requirements=config.requirements,
+        )
+        sparse_config = RetrieverConfig(
+            type="postgres_fts",
+            top_k=config.sparse_top_k or 20,
+            requirements=config.requirements,
+        )
+        dense = self.build_retriever(dense_config, dependencies)
+        sparse = self.build_retriever(sparse_config, dependencies)
+        return HybridRetriever(
+            dense,
+            sparse,
+            dense_top_k=config.dense_top_k or 20,
+            sparse_top_k=config.sparse_top_k or 20,
+            top_k=config.top_k or 10,
+            rrf_k=config.rrf_k,
+            dense_weight=config.dense_weight,
+            sparse_weight=config.sparse_weight,
+        )
+
     def query_capabilities(self, retriever_type: str) -> frozenset[str]:
         """Return backward-compatible resource capabilities for a retriever type."""
         if retriever_type == "vector":
@@ -267,11 +448,14 @@ class ComponentRegistry:
         return factory(config)
 
     def build_knowledge_builder(
-        self, component_type: str | None
+        self, component: ComponentConfig | str | None
     ) -> KnowledgeBuilder | None:
         """Construct the configured knowledge builder, or no stage when omitted."""
-        if component_type is None:
+        if component is None:
             return None
+        component_type = (
+            component.type if isinstance(component, ComponentConfig) else component
+        )
         try:
             factory = self.knowledge_builders[component_type]
         except KeyError as exc:

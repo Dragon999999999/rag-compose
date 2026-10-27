@@ -6,8 +6,6 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
 
-from llm_grounding.assessment.source_reference import SourceReferenceAssessor
-from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
@@ -17,19 +15,13 @@ from llm_grounding.infrastructure.config.models import (
     PipelineConfig,
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
-from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
-from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
-from llm_grounding.orchestration.registry import ComponentRegistry
-from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
-from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
-from llm_grounding.retrieval.full_context import FullContextRetriever
-from llm_grounding.retrieval.hybrid import HybridRetriever
-from llm_grounding.retrieval.protocol import Retriever
-from llm_grounding.retrieval.sparse import SparseRetriever
-from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
+from llm_grounding.orchestration.registry import (
+    ComponentRegistry,
+    RetrieverDependencies,
+)
 
 
 class PipelineResolutionError(ValueError):
@@ -123,8 +115,9 @@ class PipelineRuntimeResolver:
         """Validate persisted JSON and its closed component/model references."""
         try:
             config = PipelineConfig.model_validate(record.config)
-            self._registry.validate_pipeline(config, self._catalog)
-            expected_representation = config.representation_hash(self._catalog)
+            catalog = config.effective_catalog(self._catalog)
+            self._registry.validate_pipeline(config, catalog)
+            expected_representation = config.representation_hash(catalog)
             if record.representation_hash != expected_representation:
                 raise PipelineResolutionError(
                     f"Pipeline {record.id!r} representation hash does not match "
@@ -150,10 +143,11 @@ class PipelineRuntimeResolver:
                 raise PipelineResolutionError(
                     "A query pipeline requires the project's index configuration"
                 )
-            architecture, effective_ingestion = config.resolve_query(
-                self._catalog, ingestion
+            catalog = config.effective_catalog(self._catalog)
+            architecture, effective_ingestion = config.resolve_query(catalog, ingestion)
+            runner = self._build_basic_rag(
+                architecture, effective_ingestion, catalog
             )
-            runner = self._build_basic_rag(architecture, effective_ingestion)
             return ResolvedPipeline(
                 record, config, architecture, effective_ingestion, runner
             )
@@ -168,6 +162,7 @@ class PipelineRuntimeResolver:
         self,
         architecture: ArchitectureConfig,
         ingestion: IngestionConfig,
+        catalog: ModelCatalog,
     ) -> BasicRagRunner:
         """Construct the selected retriever with only its required resources."""
         if architecture.reasoner.type != "basic_grounded":
@@ -188,10 +183,9 @@ class PipelineRuntimeResolver:
             )
         if architecture.reasoner.prompt_id is None:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
-        retriever_type = architecture.retriever.type
-        dense_required = retriever_type in {"vector", "hybrid_rrf"}
+        requirements = self._registry.query_requirements(architecture.retriever)
+        dense_required = "dense_vector_index" in requirements
         query_embedding = ingestion.embedding if dense_required else None
-        dense: VectorRetriever | None = None
         if dense_required:
             if ingestion.embedding is None or ingestion.vector_backend is None:
                 raise PipelineResolutionError(
@@ -205,7 +199,7 @@ class PipelineRuntimeResolver:
                 )
             if architecture.retriever.query_embedder is not None:
                 try:
-                    query_embedding = self._catalog.embedding(
+                    query_embedding = catalog.embedding(
                         architecture.retriever.query_embedder
                     )
                 except ValueError as exc:
@@ -219,75 +213,33 @@ class PipelineRuntimeResolver:
                 raise PipelineResolutionError(
                     "Dense query runtime requires an embedding provider"
                 )
-            dense = VectorRetriever(
-                self._embedder(query_embedding),
-                self._vectors,
-                architecture.retriever.dense_top_k
-                or architecture.reranker.retrieval_top_k
-                or architecture.retriever.top_k
-                or 8,
-                embedding_config=query_embedding,
-            )
-        if retriever_type == "vector":
-            if dense is None:
-                raise PipelineResolutionError("Dense retriever construction failed")
-            retriever: Retriever = dense
-            summary: Retriever = SummaryRetriever(
-                self._repository,
-                dense,
-                architecture.retriever.context_chars or 12000,
-                architecture.retriever.summary_per_facet or 3,
-            )
-        elif retriever_type == "full_context":
-            retriever = FullContextRetriever(
-                self._repository,
-                architecture.retriever.context_budget_tokens or 16_000,
-            )
-            summary = retriever
-        elif retriever_type == "postgres_fts":
-            retriever = SparseRetriever(
-                self._repository,
-                architecture.retriever.top_k or 20,
-            )
-            summary = retriever
-        elif retriever_type == "hybrid_rrf":
-            if dense is None:
-                raise PipelineResolutionError(
-                    "Hybrid retrieval requires dense retrieval"
-                )
-            sparse = SparseRetriever(
-                self._repository,
-                architecture.retriever.sparse_top_k or 20,
-            )
-            retriever = HybridRetriever(
-                dense,
-                sparse,
-                dense_top_k=architecture.retriever.dense_top_k or 20,
-                sparse_top_k=architecture.retriever.sparse_top_k or 20,
-                top_k=architecture.retriever.top_k or 10,
-                rrf_k=architecture.retriever.rrf_k,
-                dense_weight=architecture.retriever.dense_weight,
-                sparse_weight=architecture.retriever.sparse_weight,
-            )
-            summary = retriever
-        else:
-            raise PipelineResolutionError(
-                f"Unsupported retriever runtime {retriever_type!r}"
-            )
-        reasoner = BasicGroundedReasoner(
-            AqueductModelClient(architecture.reasoner.model),
-            PromptLibrary.default(),
-            architecture.reasoner.prompt_id,
+        dependencies = RetrieverDependencies(
+            self._repository,
+            self._vectors if dense_required else None,
+            self._embedder(query_embedding) if query_embedding is not None else None,
+            query_embedding,
         )
+        try:
+            retriever = self._registry.build_retriever(
+                architecture.retriever, dependencies
+            )
+            summary = self._registry.build_summary_retriever(
+                architecture.retriever, retriever, dependencies
+            )
+        except (RuntimeError, ValueError, TypeError) as exc:
+            raise PipelineResolutionError(
+                "The selected retriever could not be constructed"
+            ) from exc
+        reasoner = self._registry.build_reasoner(architecture.reasoner)
         reranker = self._registry.build_reranker(architecture.reranker)
         return BasicRagRunner(
             retriever,
             summary,
             reasoner,
-            SourceReferenceAssessor(),
-            BasicGroundingPolicy(),
-            GroundedAnswerRenderer(),
-            embedding_config=ingestion.embedding,
+            self._registry.build_assessor(architecture.assessors[0]),
+            self._registry.build_decision_policy(architecture.decision_policy),
+            self._registry.build_renderer(architecture.renderer),
+            embedding_config=query_embedding,
             reranker=reranker,
             reranker_config=architecture.reranker,
             reranker_builder=self._registry.build_reranker,
@@ -315,7 +267,7 @@ class PipelineRuntimeResolver:
         ingestion: IngestionConfig | None,
     ) -> str:
         """Include persisted and catalog-resolved settings in cache invalidation."""
-        catalog_data = self._catalog.model_dump(mode="json")
+        catalog_data = config.effective_catalog(self._catalog).model_dump(mode="json")
         canonical = json.dumps(
             {
                 "config_hash": record.config_hash,

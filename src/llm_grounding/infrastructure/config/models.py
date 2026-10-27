@@ -371,6 +371,13 @@ class PipelineConfig(BaseModel):
     is_default: bool = False
     representation: PipelineRepresentationConfig | None = None
     query: PipelineQueryConfig | None = None
+    resolved_catalog: ModelCatalog | None = Field(
+        default=None,
+        description=(
+            "Immutable provider configuration resolved when the pipeline was "
+            "persisted."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_kind_sections(self) -> "PipelineConfig":
@@ -408,10 +415,48 @@ class PipelineConfig(BaseModel):
         """Return the identity used to decide whether an index can be reused."""
         if self.representation is None:
             return sha256(b"query-pipeline-no-representation").hexdigest()
+        catalog = self.effective_catalog(catalog)
         return self.representation.identity(catalog)
+
+    def with_resolved_catalog(self, catalog: ModelCatalog) -> "PipelineConfig":
+        """Attach only the referenced model definitions to a persisted snapshot."""
+        embedding_refs: set[str] = set()
+        reasoning_refs: set[str] = set()
+        if (
+            self.representation is not None
+            and self.representation.embedding is not None
+        ):
+            embedding_refs.add(self.representation.embedding.model_ref)
+        if self.query is not None:
+            if self.query.retriever.query_embedder is not None:
+                embedding_refs.add(self.query.retriever.query_embedder)
+            reasoning_refs.add(self.query.reasoner.model_ref)
+        return self.model_copy(
+            update={
+                "resolved_catalog": ModelCatalog(
+                    embedding_models={
+                        ref: catalog.embedding(ref) for ref in sorted(embedding_refs)
+                    },
+                    reasoning_models={
+                        ref: catalog.reasoning(ref) for ref in sorted(reasoning_refs)
+                    },
+                )
+            }
+        )
+
+    def effective_catalog(self, fallback: ModelCatalog | None = None) -> ModelCatalog:
+        """Return the persisted model snapshot, or the supplied current catalog."""
+        if self.resolved_catalog is not None:
+            return self.resolved_catalog
+        if fallback is None:
+            raise ValueError(
+                "A model catalog is required for unresolved pipeline config"
+            )
+        return fallback
 
     def resolve_ingestion(self, catalog: ModelCatalog) -> IngestionConfig:
         """Resolve an ingestion pipeline into the effective index configuration."""
+        catalog = self.effective_catalog(catalog)
         if self.representation is None:
             raise ValueError("An ingestion pipeline requires representation stages")
         embedding = (
@@ -446,6 +491,7 @@ class PipelineConfig(BaseModel):
         self, catalog: ModelCatalog, ingestion: IngestionConfig
     ) -> tuple[ArchitectureConfig, IngestionConfig]:
         """Resolve query stages against a project's already indexed representation."""
+        catalog = self.effective_catalog(catalog)
         if self.query is None:
             raise ValueError("A query pipeline requires query stages")
         reasoning = catalog.reasoning(self.query.reasoner.model_ref)

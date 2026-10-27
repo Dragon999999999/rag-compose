@@ -1,10 +1,53 @@
-"""Construct embedding providers from typed ingestion or architecture settings."""
+"""Construct registered embedding providers from typed configuration."""
+
+from collections.abc import Callable
 
 from llm_grounding.embedding.fake import DeterministicFakeEmbedder
 from llm_grounding.embedding.openai_compatible import OpenAICompatibleEmbedder
 from llm_grounding.embedding.protocol import Embedder
-from llm_grounding.embedding.sentence_transformers import SentenceTransformersEmbedder
+from llm_grounding.embedding.sentence_transformers import (
+    SentenceTransformersEmbedder,
+)
 from llm_grounding.ingestion.models import EmbeddingConfig
+
+EmbeddingConstructor = Callable[[EmbeddingConfig], Embedder]
+
+
+class EmbeddingProviderFactory:
+    """Resolve embedding adapters through an explicit implementation registry."""
+
+    def __init__(self) -> None:
+        """Register the embedding providers shipped with the application."""
+        self._constructors: dict[str, EmbeddingConstructor] = {
+            "sentence_transformers": SentenceTransformersEmbedder,
+            "fake": lambda config: DeterministicFakeEmbedder(
+                config.dimension,
+                model_identity=config.vector_identity(),
+            ),
+            "openai_compatible": OpenAICompatibleEmbedder,
+        }
+
+    def register(self, implementation: str, constructor: EmbeddingConstructor) -> None:
+        """Register one provider implementation before runtime construction."""
+        if not implementation.strip():
+            raise ValueError("Embedding implementation name must be non-empty")
+        self._constructors[implementation] = constructor
+
+    def create(self, config: EmbeddingConfig) -> Embedder:
+        """Construct the provider selected by a validated embedding configuration."""
+        try:
+            constructor = self._constructors[config.type]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported embedding type: {config.type}") from exc
+        return constructor(config)
+
+    @property
+    def implementations(self) -> frozenset[str]:
+        """Return registered provider identifiers for validation and diagnostics."""
+        return frozenset(self._constructors)
+
+
+_DEFAULT_FACTORY = EmbeddingProviderFactory()
 
 
 def build_embedder(config: EmbeddingConfig) -> Embedder:
@@ -17,12 +60,4 @@ def build_embedder(config: EmbeddingConfig) -> Embedder:
     Raises:
         ValueError: If ``config`` selects an unsupported implementation.
     """
-    if config.type == "sentence_transformers":
-        return SentenceTransformersEmbedder(config)
-    if config.type == "fake":
-        return DeterministicFakeEmbedder(
-            config.dimension, model_identity=config.vector_identity()
-        )
-    if config.type == "openai_compatible":
-        return OpenAICompatibleEmbedder(config)
-    raise ValueError(f"Unsupported embedding type: {config.type}")
+    return _DEFAULT_FACTORY.create(config)

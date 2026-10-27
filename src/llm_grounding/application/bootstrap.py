@@ -11,8 +11,6 @@ from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.application.project_service import ProjectService
-from llm_grounding.assessment.source_reference import SourceReferenceAssessor
-from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.infrastructure.config.loader import load_model_catalog
@@ -25,23 +23,18 @@ from llm_grounding.infrastructure.config.models import (
 from llm_grounding.infrastructure.config.settings import MinioSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.database.session import create_session_factory
-from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
-from llm_grounding.infrastructure.prompts import PromptLibrary
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.factory import VectorStoreFactory
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
-from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
-from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.orchestration.grounding_diagnostics import GroundingDiagnostics
-from llm_grounding.orchestration.registry import ComponentRegistry
-from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
-from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
-from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
-from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
+from llm_grounding.orchestration.registry import (
+    ComponentRegistry,
+    RetrieverDependencies,
+)
 
 
 class PhaseOneApplication:
@@ -185,16 +178,13 @@ def create_phase_one_application(
     knowledge_builder = registry.build_knowledge_builder(
         ingestion_config.knowledge_builder
     )
-    chunker = (
-        BlockAwareChunker(ingestion_config.chunker)
-        if ingestion_config.chunker.type == "block_aware"
-        else FixedWindowChunker(ingestion_config.chunker)
-    )
+    parser = registry.build_parser(architecture.parser)
+    chunker = registry.build_chunker(ingestion_config.chunker)
     artifacts = MinioArtifactStore(minio_settings)
     ingestion = DocumentIngestionService(
         repository,
         artifacts,
-        PyMuPDFDocumentParser(),
+        parser,
         knowledge_builder,
         chunker,
         embedder,
@@ -208,33 +198,25 @@ def create_phase_one_application(
         and vectors is not None
         and embedder is not None
     ):
-        top_k = (
-            architecture.reranker.retrieval_top_k
-            or architecture.retriever.top_k
-            or 8
-        )
-        vector = VectorRetriever(
-            embedder, vectors, top_k, embedding_config=ingestion_config.embedding
-        )
-        summary = SummaryRetriever(
+        dependencies = RetrieverDependencies(
             repository,
-            vector,
-            architecture.retriever.context_chars or 12000,
-            architecture.retriever.summary_per_facet or 3,
+            vectors,
+            embedder,
+            ingestion_config.embedding,
         )
-        reasoner = BasicGroundedReasoner(
-            AqueductModelClient(architecture.reasoner.model),
-            PromptLibrary.default(),
-            architecture.reasoner.prompt_id,
+        retriever = registry.build_retriever(architecture.retriever, dependencies)
+        summary = registry.build_summary_retriever(
+            architecture.retriever, retriever, dependencies
         )
+        reasoner = registry.build_reasoner(architecture.reasoner)
         reranker = registry.build_reranker(architecture.reranker)
         runner = BasicRagRunner(
-            vector,
+            retriever,
             summary,
             reasoner,
-            SourceReferenceAssessor(),
-            BasicGroundingPolicy(),
-            GroundedAnswerRenderer(),
+            registry.build_assessor(architecture.assessors[0]),
+            registry.build_decision_policy(architecture.decision_policy),
+            registry.build_renderer(architecture.renderer),
             diagnostics,
             ingestion_config.embedding,
             reranker=reranker,
