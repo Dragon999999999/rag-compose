@@ -33,6 +33,31 @@ def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
     }
 
 
+def test_aqueduct_embedding_component_resolves_into_ingestion_config(
+    tmp_path: Path,
+) -> None:
+    """The Aqueduct embedding component can be selected by an ingestion pipeline."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    path = tmp_path / "aqueduct-ingestion.yaml"
+    path.write_text(
+        source.replace(
+            "embedding: embedding_local_minilm",
+            "embedding: embedding_aqueduct_qwen",
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_pipeline_config(path)
+    embedding = config.resolve_ingestion(load_model_catalog()).embedding
+
+    assert embedding.type == "openai_compatible"
+    assert embedding.provider == "aqueduct"
+    assert embedding.model == "qwen3-embedding-4b"
+    assert embedding.dimension == 2560
+
+
 def test_representation_changes_produce_distinct_index_identity() -> None:
     """Chunking changes cannot silently reuse an existing representation index."""
     catalog = load_model_catalog()
