@@ -57,12 +57,12 @@ const REPRESENTATION_STAGES: StageDefinition[] = [
   { key: "embedding", label: "Embedding", section: "representation", catalogKey: "embedding", description: "Maps chunks into the vector representation used by retrieval." },
   { key: "vector_backend", label: "Vector backend", section: "representation", catalogKey: "vector_backend", description: "Stores and searches the generated vector index." },
 ];
-const QUERY_STAGES: StageDefinition[] = [
+export const QUERY_STAGES: StageDefinition[] = [
   { key: "retriever", label: "Retriever", section: "query", catalogKey: "retriever", description: "Selects evidence relevant to a user question." },
   { key: "reranker", label: "Reranker", section: "query", catalogKey: "reranker", description: "Refines the ordering of retrieved evidence." },
-  { key: "reasoner", label: "Reasoner", section: "query", catalogKey: "reasoner", description: "Generates a grounded interpretation from evidence." },
   { key: "assessors", label: "Assessors", section: "query", catalogKey: "assessor", description: "Evaluates evidence and answer properties." },
   { key: "decision_policy", label: "Decision policy", section: "query", catalogKey: "decision_policy", description: "Decides whether the grounded answer can be returned." },
+  { key: "reasoner", label: "Reasoner", section: "query", catalogKey: "reasoner", description: "Generates a grounded interpretation from evidence." },
   { key: "renderer", label: "Renderer", section: "query", catalogKey: "renderer", description: "Renders the validated answer for the client." },
 ];
 
@@ -369,7 +369,7 @@ export function PipelineEditor() {
           definition={selectedDefinition}
           models={models.data}
           onChange={(value) => setDraft((current) => current ? updateStage(current, selectedDefinition, value) : current)}
-          onAddAssessor={() => setDraft((current) => current ? updateAssessors(current, [...readAssessors(current), defaultStageValue(QUERY_STAGES[3], catalog.data, models.data)]) : current)}
+          onAddAssessor={() => setDraft((current) => current ? updateAssessors(current, [...readAssessors(current), defaultStageValue(stageByKey(QUERY_STAGES, "assessors"), catalog.data, models.data)]) : current)}
           onRemoveAssessor={(index) => setDraft((current) => current ? updateAssessors(current, readAssessors(current).filter((_, itemIndex) => itemIndex !== index)) : current)}
           onChangeAssessor={(index, value) => setDraft((current) => current ? updateAssessors(current, readAssessors(current).map((item, itemIndex) => itemIndex === index ? value : item)) : current)}
           value={selectedValue}
@@ -602,7 +602,33 @@ function stagesForKind(kind: PipelineKind): StageDefinition[] {
 }
 
 function cloneConfig(config: PipelineConfig): PipelineConfig {
-  return JSON.parse(JSON.stringify(config)) as PipelineConfig;
+  return orderPipelineStages(JSON.parse(JSON.stringify(config)) as PipelineConfig);
+}
+
+/**
+ * Preserve the canonical query-stage order when a configuration is cloned or serialized.
+ * Unknown query settings remain available after the registered stages.
+ */
+export function orderPipelineStages(config: PipelineConfig): PipelineConfig {
+  if (!config.query) return config;
+  const orderedQuery: Record<string, unknown> = {};
+  for (const stage of QUERY_STAGES) {
+    if (Object.prototype.hasOwnProperty.call(config.query, stage.key)) {
+      orderedQuery[stage.key] = config.query[stage.key];
+    }
+  }
+  for (const [key, value] of Object.entries(config.query)) {
+    if (!Object.prototype.hasOwnProperty.call(orderedQuery, key)) {
+      orderedQuery[key] = value;
+    }
+  }
+  return { ...config, query: orderedQuery };
+}
+
+function stageByKey(stages: StageDefinition[], key: StageKey): StageDefinition {
+  const definition = stages.find((stage) => stage.key === key);
+  if (!definition) throw new Error(`Pipeline stage is not registered: ${key}`);
+  return definition;
 }
 
 function snapshot(config: PipelineConfig): DraftSnapshot {
