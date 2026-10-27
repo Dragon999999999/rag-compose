@@ -35,45 +35,76 @@ type DeleteTarget =
   | { kind: "chat"; item: Chat };
 
 export function App() {
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const showInvalidUrlToast = useCallback(() => {
+    setToast("Invalid URL. Redirected to Projects.");
+  }, []);
+
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/projects" replace />} />
-      <Route path="/projects" element={<ProjectHome />} />
-      <Route path="/pipelines" element={<PipelineLibrary />} />
-      <Route path="/pipelines/new" element={<PipelineEditor />} />
-      <Route path="/pipelines/:pipelineId/edit" element={<PipelineEditor />} />
-      <Route
-        path="/projects/:projectId/chats/:chatId"
-        element={<ProjectWorkspace />}
-      />
-      <Route
-        path="/projects/:projectId/sources"
-        element={<ProjectWorkspace sources />}
-      />
-      <Route
-        path="/projects/:projectId/documents/:documentId"
-        element={<ProjectWorkspace />}
-      />
-      <Route
-        path="/projects/:projectId/chats/:chatId/sources"
-        element={<ProjectWorkspace sources />}
-      />
-      <Route
-        path="/projects/:projectId/chats/:chatId/documents/:documentId"
-        element={<ProjectWorkspace />}
-      />
-      <Route
-        path="*"
-        element={
-          <main className="not-found">
-            <EmptyState title="Page not found">
-              The requested project workspace does not exist.
-            </EmptyState>
-          </main>
-        }
-      />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route path="/projects" element={<ProjectHome />} />
+        <Route path="/pipelines" element={<PipelineLibrary />} />
+        <Route path="/pipelines/new" element={<PipelineEditor />} />
+        <Route path="/pipelines/:pipelineId/edit" element={<PipelineEditor />} />
+        <Route
+          path="/projects/:projectId/chats/:chatId"
+          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
+        />
+        <Route
+          path="/projects/:projectId/sources"
+          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} sources />}
+        />
+        <Route
+          path="/projects/:projectId/documents/:documentId"
+          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
+        />
+        <Route
+          path="/projects/:projectId/chats/:chatId/sources"
+          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} sources />}
+        />
+        <Route
+          path="/projects/:projectId/chats/:chatId/documents/:documentId"
+          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
+        />
+        <Route
+          path="*"
+          element={<InvalidRouteRedirect onInvalidUrl={showInvalidUrlToast} />}
+        />
+      </Routes>
+      {toast && (
+        <div aria-live="polite" className="toast" role="status">
+          {toast}
+        </div>
+      )}
+    </>
   );
+}
+
+function InvalidRouteRedirect({ onInvalidUrl }: { onInvalidUrl: () => void }) {
+  const navigate = useNavigate();
+  const handled = useRef(false);
+
+  useEffect(() => {
+    if (handled.current) {
+      return;
+    }
+    handled.current = true;
+    onInvalidUrl();
+    navigate("/projects", { replace: true });
+  }, [navigate, onInvalidUrl]);
+
+  return null;
 }
 
 function ProjectHome() {
@@ -180,7 +211,13 @@ function ProjectHome() {
   );
 }
 
-function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean }) {
+function ProjectWorkspace({
+  onInvalidRoute,
+  sources: sourcesRoute = false,
+}: {
+  onInvalidRoute: () => void;
+  sources?: boolean;
+}) {
   const { projectId, chatId, documentId } = useParams();
   const navigate = useNavigate();
   const projects = useProjects();
@@ -199,6 +236,13 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const selectedSource = sources.data?.find(
     (source) => source.document.id === documentId,
   );
+  const invalidRoute =
+    (!projects.isLoading && !projects.error && !project) ||
+    (Boolean(chatId) && !chats.isLoading && !chats.error && !chat) ||
+    (Boolean(documentId) &&
+      !sources.isLoading &&
+      !sources.error &&
+      !selectedSource);
   const documentRoute = Boolean(documentId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(true);
@@ -215,6 +259,14 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
   const [directPdf, setDirectPdf] = useState<Evidence | null>(null);
   const [mode, setMode] = useState<"evidence" | "pdf">("evidence");
   const createChatInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!invalidRoute) {
+      return;
+    }
+    onInvalidRoute();
+    navigate("/projects", { replace: true });
+  }, [invalidRoute, navigate, onInvalidRoute]);
   const [lastVisitedChats, setLastVisitedChats] = useState<Record<string, string>>(
     () => {
       if (typeof window === "undefined") {
@@ -458,14 +510,8 @@ function ProjectWorkspace({ sources: sourcesRoute = false }: { sources?: boolean
     />
   );
 
-  if (!projectId || (!projects.isLoading && !project)) {
-    return (
-      <main className="home-state">
-        <EmptyState title="Project not found">
-          Choose a project from the navigation.
-        </EmptyState>
-      </main>
-    );
+  if (!projectId || invalidRoute) {
+    return null;
   }
 
   const deletePending =

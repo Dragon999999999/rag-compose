@@ -175,6 +175,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .empty-state p { max-width: 420px; }
 .error-state { background: rgb(240 125 139 / 8%); border: 1px solid rgb(240 125 139 / 20%); border-radius: var(--radius-md); color: var(--color-danger); margin: 24px; }
 .source-skeleton { color: var(--color-text-muted); padding: 24px; }
+.toast { background: var(--color-surface-raised); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); bottom: 24px; box-shadow: var(--shadow-md); color: var(--color-text); left: 50%; padding: 10px 14px; position: fixed; transform: translateX(-50%); z-index: 30; }
 
 .document-overview { height: 100%; overflow: auto; padding: 40px clamp(24px, 8vw, 96px); }
 .document-overview > header { border-bottom: 1px solid var(--color-border); margin-bottom: 24px; padding-bottom: 16px; }
