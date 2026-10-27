@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
+import { ApiRequestError } from "../../api/client";
 import type {
   CatalogStage,
   ExecutionStrategy,
@@ -68,7 +69,7 @@ export const QUERY_STAGES: StageDefinition[] = [
 ];
 
 /** Edit complete RAG pipelines through a fixed lifecycle graph and catalog-backed inspector. */
-export function PipelineEditor() {
+export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) => void }) {
   const { pipelineId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -152,6 +153,18 @@ export function PipelineEditor() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+
+  useEffect(() => {
+    if (
+      isNew ||
+      !(source.error instanceof ApiRequestError) ||
+      source.error.status !== 404
+    ) {
+      return;
+    }
+    onNotFound?.(source.error.message);
+    navigate("/pipelines", { replace: true });
+  }, [isNew, navigate, onNotFound, source.error]);
 
   const issues = useMemo(
     () => validateDraft(draft, name, version, visibleStages, catalog.data, models.data),

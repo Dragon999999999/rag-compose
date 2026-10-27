@@ -1,5 +1,15 @@
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, init);
   if (!response.ok) {
@@ -17,7 +27,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Preserve the raw response when the server did not return JSON.
     }
-    throw new Error(message);
+    throw new ApiRequestError(message, response.status);
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }

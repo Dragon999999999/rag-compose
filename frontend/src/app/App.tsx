@@ -49,14 +49,18 @@ export function App() {
     setToast("Invalid URL. Redirected to Projects.");
   }, []);
 
+  const showPipelineNotFoundToast = useCallback((message: string) => {
+    setToast(`Pipeline not found: ${message}. Redirected to Pipelines.`);
+  }, []);
+
   return (
     <>
       <Routes>
         <Route path="/" element={<Navigate to="/projects" replace />} />
         <Route path="/projects" element={<ProjectHome />} />
         <Route path="/pipelines" element={<PipelineLibrary />} />
-        <Route path="/pipelines/new" element={<PipelineEditor />} />
-        <Route path="/pipelines/:pipelineId/edit" element={<PipelineEditor />} />
+        <Route path="/pipelines/new" element={<PipelineEditor onNotFound={showPipelineNotFoundToast} />} />
+        <Route path="/pipelines/:pipelineId/edit" element={<PipelineEditor onNotFound={showPipelineNotFoundToast} />} />
         <Route
           path="/projects/:projectId/chats/:chatId"
           element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
