@@ -7,10 +7,11 @@ architecture names. A supplied model client replaces external generation for tes
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import cast
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
-from llm_grounding.embedding.protocol import Embedder
+from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
     ComponentConfig,
@@ -34,8 +35,15 @@ from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
+from llm_grounding.retrieval.bm25 import BM25Retriever
+from llm_grounding.retrieval.colbert import ColBERTRetriever, MultiVectorIndex
 from llm_grounding.retrieval.full_context import FullContextRetriever
 from llm_grounding.retrieval.hybrid import HybridRetriever
+from llm_grounding.retrieval.hybrid_weighted import WeightedHybridRetriever
+from llm_grounding.retrieval.learned_sparse import (
+    BgeM3SparseRetriever,
+    SpladeV3Retriever,
+)
 from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
@@ -53,12 +61,16 @@ class RetrieverDependencies:
     vector_store: VectorStore | None = None
     embedder: Embedder | None = None
     embedding_config: EmbeddingConfig | None = None
+    sparse_embedder: SparseEmbedder | None = None
+    sparse_store: object | None = None
+    token_embedder: TokenEmbedder | None = None
+    multivector_store: object | None = None
 
 
 def _vector_retriever_requires_runtime_dependencies() -> Retriever:
     """Reserve the registered vector stage for the Qdrant composition root."""
     raise ConfigurationError(
-        "The vector retriever requires the Qdrant repository and embedder; "
+        "The vector retriever requires a configured vector backend and embedder; "
         "construct it through the application bootstrap."
     )
 
@@ -90,8 +102,19 @@ class ComponentRegistry:
             "postgres_fts": lambda: _retriever_requires_runtime_dependencies(
                 "postgres_fts"
             ),
+            "bm25": lambda: _retriever_requires_runtime_dependencies("bm25"),
+            "splade_v3": lambda: _retriever_requires_runtime_dependencies("splade_v3"),
+            "bge_m3_sparse": lambda: _retriever_requires_runtime_dependencies(
+                "bge_m3_sparse"
+            ),
+            "colbert_v2": lambda: _retriever_requires_runtime_dependencies(
+                "colbert_v2"
+            ),
             "hybrid_rrf": lambda: _retriever_requires_runtime_dependencies(
                 "hybrid_rrf"
+            ),
+            "hybrid_weighted": lambda: _retriever_requires_runtime_dependencies(
+                "hybrid_weighted"
             ),
         }
         self.rerankers: dict[str, Callable[[RerankerConfig], Reranker]] = {
@@ -118,7 +141,12 @@ class ComponentRegistry:
             "vector_similarity": self._build_vector_retriever,
             "postgres_all_chunks": self._build_full_context_retriever,
             "postgres_fts": self._build_sparse_retriever,
+            "bm25": self._build_bm25_retriever,
+            "splade_v3": self._build_splade_retriever,
+            "bge_m3_sparse": self._build_bge_sparse_retriever,
+            "colbert_v2": self._build_colbert_retriever,
             "hybrid_rrf": self._build_hybrid_retriever,
+            "hybrid_weighted": self._build_weighted_hybrid_retriever,
         }
         self.vector_backends: frozenset[str] = frozenset(
             {"qdrant", "pgvector", "faiss"}
@@ -183,9 +211,7 @@ class ComponentRegistry:
     def build_reasoner(self, config: ReasonerConfig) -> BasicGroundedReasoner:
         """Construct the configured reasoning engine through its stage registry."""
         if config.implementation != "basic_grounded":
-            raise ConfigurationError(
-                f"Unknown reasoner component {config.type!r}"
-            )
+            raise ConfigurationError(f"Unknown reasoner component {config.type!r}")
         if config.prompt_id is None:
             raise ConfigurationError("The basic_grounded reasoner requires prompt_id")
         return BasicGroundedReasoner(
@@ -346,18 +372,6 @@ class ComponentRegistry:
             except ValueError as exc:
                 kind = "embedding" if "embedding" in str(exc) else "reasoning"
                 raise ConfigurationError(f"Unknown {kind} model reference") from exc
-        if (
-            config.query is not None
-            and config.query.retriever.type in {"dense", "hybrid"}
-            and (
-                config.representation is not None
-                and config.representation.vector_backend is not None
-                and config.representation.vector_backend.implementation != "qdrant"
-            )
-        ):
-            raise ConfigurationError(
-                "The vector retriever requires the qdrant vector backend"
-            )
         if config.query is not None and (
             config.query.reasoner.implementation == "basic_grounded"
             and not config.query.reasoner.prompt_id
@@ -404,6 +418,70 @@ class ComponentRegistry:
         """Build PostgreSQL FTS retrieval without dense resources."""
         return SparseRetriever(dependencies.repository, config.top_k or 20)
 
+    @staticmethod
+    def _build_bm25_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build genuine BM25 retrieval over canonical chunk text."""
+        return BM25Retriever(
+            dependencies.repository,
+            config.top_k or 20,
+            k1=config.bm25_k1,
+            b=config.bm25_b,
+        )
+
+    @staticmethod
+    def _build_splade_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build SPLADE-v3 retrieval from a lazily provisioned sparse index."""
+        if dependencies.sparse_embedder is None or dependencies.sparse_store is None:
+            raise ConfigurationError(
+                "SPLADE-v3 retrieval requires a sparse model and index"
+            )
+        return SpladeV3Retriever(
+            dependencies.repository,
+            dependencies.sparse_embedder,
+            dependencies.sparse_store,
+            top_k=config.top_k or 20,
+        )
+
+    @staticmethod
+    def _build_bge_sparse_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build BGE-M3 sparse retrieval using the shared BGE model lease."""
+        if dependencies.sparse_embedder is None or dependencies.sparse_store is None:
+            raise ConfigurationError(
+                "BGE-M3 sparse retrieval requires a sparse model and index"
+            )
+        return BgeM3SparseRetriever(
+            dependencies.repository,
+            dependencies.sparse_embedder,
+            dependencies.sparse_store,
+            top_k=config.top_k or 20,
+        )
+
+    @staticmethod
+    def _build_colbert_retriever(
+        config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Build ColBERT-v2 retrieval backed by a Qdrant MaxSim index."""
+        if (
+            dependencies.token_embedder is None
+            or dependencies.multivector_store is None
+        ):
+            raise ConfigurationError(
+                "ColBERT-v2 retrieval requires a token model and index"
+            )
+        return ColBERTRetriever(
+            dependencies.repository,
+            dependencies.token_embedder,
+            cast(MultiVectorIndex, dependencies.multivector_store),
+            candidate_top_k=config.candidate_top_k or config.sparse_top_k or 50,
+            top_k=config.top_k or 10,
+        )
+
     def _build_hybrid_retriever(
         self, config: RetrieverConfig, dependencies: RetrieverDependencies
     ) -> Retriever:
@@ -431,6 +509,30 @@ class ComponentRegistry:
             sparse_weight=config.sparse_weight,
         )
 
+    def _build_weighted_hybrid_retriever(
+        self, config: RetrieverConfig, dependencies: RetrieverDependencies
+    ) -> Retriever:
+        """Compose dense retrieval with BM25 using normalized score fusion."""
+        dense = self._build_vector_retriever(
+            RetrieverConfig(
+                type="vector",
+                top_k=config.dense_top_k or 20,
+                requirements=config.requirements,
+            ),
+            dependencies,
+        )
+        sparse = self._build_bm25_retriever(config, dependencies)
+        return WeightedHybridRetriever(
+            dense,
+            sparse,
+            dense_top_k=config.dense_top_k or 20,
+            sparse_top_k=config.sparse_top_k or 20,
+            top_k=config.top_k or 10,
+            dense_weight=config.dense_weight,
+            sparse_weight=config.sparse_weight,
+            score_normalization=config.score_normalization,
+        )
+
     def query_capabilities(self, retriever_type: str) -> frozenset[str]:
         """Return resource capabilities for a registered retriever implementation."""
         if retriever_type == "vector_similarity":
@@ -439,6 +541,16 @@ class ComponentRegistry:
             return frozenset({"persisted_chunks"})
         if retriever_type == "postgres_fts":
             return frozenset({"persisted_chunks", "postgres_fts"})
+        if retriever_type == "bm25":
+            return frozenset({"persisted_chunks"})
+        if retriever_type in {"splade_v3", "bge_m3_sparse"}:
+            return frozenset(
+                {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
+            )
+        if retriever_type == "colbert_v2":
+            return frozenset(
+                {"persisted_chunks", "multivector_index", "late_interaction_model"}
+            )
         if retriever_type == "hybrid_rrf":
             return frozenset(
                 {
@@ -448,9 +560,16 @@ class ComponentRegistry:
                     "dense_vector_index",
                 }
             )
-        raise ConfigurationError(
-            f"Unknown retriever implementation {retriever_type!r}"
-        )
+        if retriever_type == "hybrid_weighted":
+            return frozenset(
+                {
+                    "persisted_chunks",
+                    "chunk_vectors",
+                    "dense_vector_index",
+                    "compatible_query_embedder",
+                }
+            )
+        raise ConfigurationError(f"Unknown retriever implementation {retriever_type!r}")
 
     def query_requirements(self, config: RetrieverConfig) -> frozenset[str]:
         """Return declarative requirements for a registered retriever definition."""
@@ -461,16 +580,31 @@ class ComponentRegistry:
                 f"{', '.join(sorted(self.retrievers))}"
             )
         declared = frozenset(config.requirements.required)
-        if declared == frozenset(
-            {"dense_vector_index", "compatible_query_embedder"}
-        ):
+        if declared == frozenset({"dense_vector_index", "compatible_query_embedder"}):
             defaults = {
                 "postgres_all_chunks": frozenset({"persisted_chunks"}),
                 "postgres_fts": frozenset({"persisted_chunks", "postgres_fts"}),
+                "bm25": frozenset({"persisted_chunks"}),
+                "splade_v3": frozenset(
+                    {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
+                ),
+                "bge_m3_sparse": frozenset(
+                    {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
+                ),
+                "colbert_v2": frozenset(
+                    {"persisted_chunks", "multivector_index", "late_interaction_model"}
+                ),
                 "hybrid_rrf": frozenset(
                     {
                         "persisted_chunks",
                         "postgres_fts",
+                        "dense_vector_index",
+                        "compatible_query_embedder",
+                    }
+                ),
+                "hybrid_weighted": frozenset(
+                    {
+                        "persisted_chunks",
                         "dense_vector_index",
                         "compatible_query_embedder",
                     }

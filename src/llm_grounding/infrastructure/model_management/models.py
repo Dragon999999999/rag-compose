@@ -1,7 +1,10 @@
 """Value objects exchanged by local model lifecycle services."""
 
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 
+from llm_grounding.embedding.models import SparseEmbedding, TokenEmbedding
 from llm_grounding.infrastructure.config.declarative import ModelDefinition
 
 
@@ -64,16 +67,83 @@ class LocalModelHandle:
             (int(item["index"]), float(item["relevance_score"])) for item in results
         )
 
+    async def sparse_embed(self, texts: list[str]) -> tuple[SparseEmbedding, ...]:
+        """Create learned sparse vectors through the configured model endpoint.
+
+        The endpoint is deliberately configurable because TEI-compatible model
+        servers expose sparse outputs under different paths.  Responses may use
+        either ``indices``/``values`` or an ``embedding`` mapping.
+        """
+        path = str(
+            self.definition.parameter("sparse_endpoint", "/v1/sparse_embeddings")
+        )
+        response = await self.client.request(
+            path,
+            {"model": self.definition.name, "input": texts},
+        )
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Local sparse model returned no data list")
+        ordered = sorted(data, key=lambda item: item.get("index", 0))
+        vectors: list[SparseEmbedding] = []
+        for item in ordered:
+            payload = item.get("embedding", item)
+            if not isinstance(payload, dict):
+                raise RuntimeError("Local sparse model returned an invalid vector")
+            indices = payload.get("indices")
+            weights = payload.get("values", payload.get("weights"))
+            if not isinstance(indices, list) or not isinstance(weights, list):
+                raise RuntimeError("Local sparse model returned no indices and weights")
+            vectors.append(
+                SparseEmbedding(
+                    tuple(int(index) for index in indices),
+                    tuple(float(weight) for weight in weights),
+                    self.definition.id,
+                )
+            )
+        return tuple(vectors)
+
+    async def token_embed(self, texts: list[str]) -> tuple[TokenEmbedding, ...]:
+        """Create token-level vectors through a configured late-interaction endpoint."""
+        path = str(self.definition.parameter("token_endpoint", "/v1/token_embeddings"))
+        response = await self.client.request(
+            path,
+            {"model": self.definition.name, "input": texts},
+        )
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Local token model returned no data list")
+        ordered = sorted(data, key=lambda item: item.get("index", 0))
+        vectors: list[TokenEmbedding] = []
+        for item in ordered:
+            values = item.get("embedding", item.get("token_embeddings"))
+            if not isinstance(values, list):
+                raise RuntimeError("Local token model returned no token embeddings")
+            vectors.append(
+                TokenEmbedding(
+                    tuple(tuple(float(value) for value in token) for token in values),
+                    self.definition.id,
+                )
+            )
+        return tuple(vectors)
+
 
 class LocalInferenceClient:
     """Small async JSON client shared by lease-scoped local model handles."""
 
-    def __init__(self, base_url: str) -> None:
-        """Store the endpoint and defer all I/O until a model method is called."""
+    def __init__(
+        self,
+        base_url: str,
+        handler: Callable[[str, dict[str, object]], dict[str, object]] | None = None,
+    ) -> None:
+        """Store an HTTP endpoint or an in-process request handler."""
         self._base_url = base_url.rstrip("/")
+        self._handler = handler
 
     async def request(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         """POST one JSON request without adding a provider-specific dependency."""
+        if self._handler is not None:
+            return await asyncio.to_thread(self._handler, path, payload)
         import json
         from urllib.request import Request, urlopen
 

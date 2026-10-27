@@ -1,6 +1,7 @@
 """Construct Phase 1 application services from environment-backed infrastructure."""
 
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -14,6 +15,7 @@ from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
+from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.loader import (
     load_model_catalog,
     load_model_registry,
@@ -112,6 +114,8 @@ class PhaseOneApplication:
 
     async def close(self) -> None:
         """Dispose database and Qdrant client resources after application shutdown."""
+        if self.pipeline_runtime is not None:
+            await self.pipeline_runtime.close()
         if self.summaries is not None:
             await self.summaries.close()
         if self._vectors is not None and hasattr(self._vectors, "close"):
@@ -190,7 +194,7 @@ def create_phase_one_application(
     )
     pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
     embedder = (
-        build_embedder(ingestion_config.embedding, local_model_manager)
+        cast(Embedder, build_embedder(ingestion_config.embedding, local_model_manager))
         if ingestion_config.embedding is not None
         else None
     )

@@ -79,17 +79,23 @@ properties:
   parameters:
     type: object
     properties:
-      dimension: {type: integer, minimum: 1, maximum: 16000}
-      dimensions: {type: integer, minimum: 1, maximum: 16000}
+      dimension: {type: integer, minimum: 1, maximum: 1000000}
+      dimensions: {type: integer, minimum: 1, maximum: 1000000}
       normalize: {type: boolean}
       normalization: {type: boolean}
       batch_size: {type: integer, minimum: 1, maximum: 512}
       embedding_space_id: {type: string, minLength: 1}
-      representation: {enum: [dense, sparse]}
+      representation: {enum: [dense, sparse, multivector]}
       similarity_metric: {enum: [cosine, dot, euclidean]}
       query_prefix: {type: string}
       document_prefix: {type: string}
       trust_remote_code: {type: boolean}
+      sparse_endpoint: {type: string, minLength: 1}
+      token_endpoint: {type: string, minLength: 1}
+      supported_representations:
+        type: array
+        uniqueItems: true
+        items: {enum: [dense, sparse, multivector]}
     additionalProperties: true
 allOf:
   - if: {properties: {location: {const: remote}}}

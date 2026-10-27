@@ -6,7 +6,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from time import monotonic
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from llm_grounding.domain.corpus import (
     Document,
@@ -65,7 +65,7 @@ class DocumentIngestionService:
         embedder: Embedder | None,
         vectors: VectorStore | None,
         *,
-        embedder_factory: Callable[[EmbeddingConfig], Embedder] = build_embedder,
+        embedder_factory: Callable[[EmbeddingConfig], Embedder] | None = None,
         local_model_manager: LocalModelManager | None = None,
     ) -> None:
         """Inject persistence, extraction, and indexing dependencies.
@@ -80,9 +80,10 @@ class DocumentIngestionService:
         self._knowledge_builder = knowledge_builder
         self._chunker = chunker
         self._embedder_factory = (
-            (lambda config: build_embedder(config, local_model_manager))
+            (lambda config: cast(Embedder, build_embedder(config, local_model_manager)))
             if local_model_manager is not None
             else embedder_factory
+            or cast(Callable[[EmbeddingConfig], Embedder], build_embedder)
         )
         self._embedders = (
             {embedder.model_identity: embedder} if embedder is not None else {}

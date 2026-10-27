@@ -9,12 +9,7 @@ source:
 storage:
   relative_path: embedding/bge-m3
 runtime:
-  type: docker
-  image: ghcr.io/huggingface/text-embeddings-inference:1.8
-  command: ["--model-id", "/models/model"]
-  container_path: /models/model
-  port: 8000
-  readiness_path: /health
+  type: in_process
   device: cpu
   idle_timeout_seconds: 600
   memory_limit: 6g
@@ -22,3 +17,6 @@ parameters:
   dimension: 1024
   normalize: true
   batch_size: 2
+  trust_remote_code: true
+  supported_representations: [dense, sparse]
+  sparse_endpoint: /v1/sparse_embeddings

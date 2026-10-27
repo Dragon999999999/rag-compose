@@ -1,0 +1,11 @@
+id: retriever_sparse_bm25
+type: sparse
+implementation: bm25
+description: Genuine Okapi BM25 lexical retrieval over persisted project chunks.
+config:
+  top_k: 20
+  bm25_k1: 1.2
+  bm25_b: 0.75
+requirements:
+  required:
+    - persisted_chunks

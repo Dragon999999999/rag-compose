@@ -5,11 +5,14 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import urlopen
 
 from llm_grounding.infrastructure.config.declarative import ModelDefinition
-from llm_grounding.infrastructure.model_management.models import ModelEndpoint
+from llm_grounding.infrastructure.model_management.models import (
+    LocalInferenceClient,
+    ModelEndpoint,
+)
 
 ReadinessProbe = Callable[[str], Awaitable[bool]]
 
@@ -247,3 +250,252 @@ class DockerModelRuntime:
                 return True
         except OSError:
             return False
+
+
+class InProcessModelRuntime:
+    """Lazy Transformers runtime for sparse and token-level local models.
+
+    Model weights are still prepared by ``ModelStorageManager``.  This runtime
+    only owns the in-memory tokenizer/model object and releases it on idle stop;
+    no model files are deleted.  The optional Transformers and PyTorch packages
+    are imported only when a configured in-process model is first used.
+    """
+
+    def __init__(self) -> None:
+        """Start with no loaded weights and no background worker."""
+        self._models: dict[str, _TransformersModel] = {}
+
+    async def ensure_started(
+        self, definition: ModelDefinition, weights: Path
+    ) -> ModelEndpoint:
+        """Load one model once and return a lease endpoint marker."""
+        if definition.runtime is None or definition.runtime.type != "in_process":
+            raise RuntimeError(
+                f"Model {definition.id} does not select in-process runtime"
+            )
+        if definition.id not in self._models:
+            self._models[definition.id] = await asyncio.to_thread(
+                _TransformersModel.load, definition, weights
+            )
+        return ModelEndpoint(definition.id, f"inprocess://{definition.id}", "")
+
+    async def start_and_wait(
+        self, definition: ModelDefinition, weights: Path
+    ) -> ModelEndpoint:
+        """Load the local model; loading itself is the readiness check."""
+        return await self.ensure_started(definition, weights)
+
+    def client_for(self, definition: ModelDefinition) -> LocalInferenceClient:
+        """Return a request client backed by the loaded model."""
+        try:
+            model = self._models[definition.id]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"In-process model is not loaded: {definition.id}"
+            ) from exc
+        return LocalInferenceClient("inprocess://" + definition.id, model.request)
+
+    async def status(
+        self, definition: ModelDefinition
+    ) -> tuple[bool, ModelEndpoint | None, str | None]:
+        """Report whether the model object is resident without loading it."""
+        running = definition.id in self._models
+        endpoint = (
+            ModelEndpoint(definition.id, f"inprocess://{definition.id}", "")
+            if running
+            else None
+        )
+        return running, endpoint, None if running else "not loaded"
+
+    async def stop(self, definition: ModelDefinition) -> None:
+        """Release model memory while retaining persistent weights."""
+        model = self._models.pop(definition.id, None)
+        if model is not None:
+            model.close()
+
+    async def restart(self, definition: ModelDefinition) -> None:
+        """Release the loaded object; the next lease reloads it."""
+        await self.stop(definition)
+
+    async def remove(self, definition: ModelDefinition) -> None:
+        """Remove only the in-memory model object."""
+        await self.stop(definition)
+
+
+class _TransformersModel:
+    """Synchronous inference adapter used behind the async in-process runtime."""
+
+    def __init__(self, definition: ModelDefinition, tokenizer: Any, model: Any) -> None:
+        """Store loaded provider objects and model-specific configuration."""
+        self._definition = definition
+        self._tokenizer = tokenizer
+        self._model = model
+
+    @classmethod
+    def load(cls, definition: ModelDefinition, weights: Path) -> "_TransformersModel":
+        """Load Transformers weights from the persistent model directory."""
+        try:
+            from transformers import (  # type: ignore[import-not-found]
+                AutoModel,
+                AutoModelForMaskedLM,
+                AutoTokenizer,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install llm-grounding[embeddings] with Transformers and PyTorch "
+                "to use in-process sparse or token models"
+            ) from exc
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(weights),
+            local_files_only=True,
+            trust_remote_code=bool(getattr(definition, "trust_remote_code", False)),
+        )
+        model_loader = (
+            AutoModelForMaskedLM
+            if "splade" in definition.name.casefold()
+            else AutoModel
+        )
+        model = model_loader.from_pretrained(
+            str(weights),
+            local_files_only=True,
+            trust_remote_code=bool(getattr(definition, "trust_remote_code", False)),
+        )
+        model.eval()
+        return cls(definition, tokenizer, model)
+
+    def request(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+        """Execute the supported dense, sparse, or token representation request."""
+        inputs = payload.get("input")
+        if not isinstance(inputs, list) or not all(
+            isinstance(item, str) for item in inputs
+        ):
+            raise ValueError("In-process model input must be a list of strings")
+        if path.endswith("/sparse_embeddings"):
+            return self._sparse(inputs)
+        if path.endswith("/token_embeddings"):
+            return self._tokens(inputs)
+        if path.endswith("/embeddings"):
+            return self._dense(inputs)
+        raise RuntimeError(f"Unsupported in-process model endpoint: {path}")
+
+    def _forward(self, texts: list[str]) -> tuple[Any, Any]:
+        """Tokenize and run a bounded forward pass without retaining activations."""
+        import torch  # type: ignore[import-not-found]
+
+        tokenizer = self._tokenizer
+        encoded = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=int(cast(int, self._definition.parameter("max_length", 256))),
+            return_tensors="pt",
+        )
+        with torch.inference_mode():
+            output = self._model(**encoded)
+        return output, encoded["attention_mask"]
+
+    def _dense(self, texts: list[str]) -> dict[str, object]:
+        """Mean-pool token states into the compatibility dense endpoint shape."""
+        import torch
+
+        output, mask = self._forward(texts)
+        values = output.last_hidden_state
+        weights = mask.unsqueeze(-1).to(values.dtype)
+        pooled = (values * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1)
+        if bool(self._definition.parameter("normalize", True)):
+            pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return {
+            "data": [
+                {"index": i, "embedding": row.tolist()} for i, row in enumerate(pooled)
+            ]
+        }
+
+    def _tokens(self, texts: list[str]) -> dict[str, object]:
+        """Return masked token embeddings for MaxSim retrieval."""
+        import torch
+
+        output, mask = self._forward(texts)
+        values = output.last_hidden_state
+        if bool(self._definition.parameter("normalize", True)):
+            values = torch.nn.functional.normalize(values, p=2, dim=-1)
+        return {
+            "data": [
+                {
+                    "index": i,
+                    "token_embeddings": [
+                        row.tolist()
+                        for row, keep in zip(values[i], mask[i], strict=True)
+                        if bool(keep)
+                    ],
+                }
+                for i in range(len(texts))
+            ]
+        }
+
+    def _sparse(self, texts: list[str]) -> dict[str, object]:
+        """Return SPLADE logits when available, with a safe token-weight fallback."""
+        import torch
+
+        output, mask = self._forward(texts)
+        logits = getattr(output, "logits", None)
+        lexical_weights = getattr(output, "lexical_weights", None)
+        vectors: list[dict[str, object]] = []
+        if lexical_weights is not None:
+            for item in lexical_weights:
+                if not isinstance(item, dict):
+                    raise RuntimeError("Model returned invalid lexical weights")
+                vectors.append(
+                    {
+                        "indices": [int(index) for index in item],
+                        "values": [float(value) for value in item.values()],
+                    }
+                )
+        elif logits is not None and len(logits.shape) == 3:
+            values = torch.log1p(torch.relu(logits)).max(dim=1).values
+            limit = int(cast(int, self._definition.parameter("sparse_top_k", 256)))
+            for row in values:
+                selected = torch.topk(row, min(limit, row.shape[0]))
+                nonzero = selected.values > 0
+                vectors.append(
+                    {
+                        "indices": selected.indices[nonzero].tolist(),
+                        "values": selected.values[nonzero].tolist(),
+                    }
+                )
+        else:
+            # Models without a vocabulary projection (notably BGE-M3 through
+            # plain Transformers) still receive deterministic lexical weights.
+            # Provider-specific servers can replace this path with true lexical
+            # weights through the same endpoint without changing retrieval code.
+            token_ids = self._tokenizer(
+                texts, padding=True, truncation=True, return_tensors="pt"
+            )["input_ids"]
+            for row, row_mask in zip(token_ids, mask, strict=True):
+                selected = [
+                    (int(token), 1.0)
+                    for token, keep in zip(row, row_mask, strict=True)
+                    if bool(keep)
+                ]
+                vectors.append(
+                    {
+                        "indices": [item[0] for item in selected],
+                        "values": [item[1] for item in selected],
+                    }
+                )
+        return {
+            "data": [
+                {"index": i, "embedding": vector} for i, vector in enumerate(vectors)
+            ]
+        }
+
+    def close(self) -> None:
+        """Release provider references and opportunistically clear CUDA memory."""
+        self._tokenizer = None
+        self._model = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass

@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
@@ -435,7 +435,7 @@ class BasicRagRunner:
         identity = config.identity()
         embedder = self._embedders.get(identity)
         if embedder is None:
-            embedder = build_embedder(config)
+            embedder = cast(Embedder, build_embedder(config))
             self._embedders[identity] = embedder
         return embedder
 

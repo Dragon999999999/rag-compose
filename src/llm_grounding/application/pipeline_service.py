@@ -526,7 +526,9 @@ class PipelineService:
                 ),
             },
             "compatibility": {
-                "vector_retriever_requires": {"vector_backend": ["qdrant"]},
+                "vector_retriever_requires": {
+                    "vector_backend": ["qdrant", "pgvector", "faiss"]
+                },
                 "retriever_capabilities": {
                     name: sorted(self._registry.query_capabilities(name))
                     for name in self._registry.retrievers
@@ -539,7 +541,12 @@ class PipelineService:
                                     "vector_similarity": "dense",
                                     "postgres_all_chunks": "full_context",
                                     "postgres_fts": "sparse",
+                                    "bm25": "sparse",
+                                    "splade_v3": "sparse",
+                                    "bge_m3_sparse": "sparse",
+                                    "colbert_v2": "multivector",
                                     "hybrid_rrf": "hybrid",
+                                    "hybrid_weighted": "hybrid",
                                 }[name],
                                 implementation=name,
                             )

@@ -3,7 +3,11 @@
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
-from llm_grounding.embedding.models import EmbeddingVector
+from llm_grounding.embedding.models import (
+    EmbeddingVector,
+    SparseEmbedding,
+    TokenEmbedding,
+)
 from llm_grounding.ingestion.models import EmbeddingConfig
 
 
@@ -12,6 +16,14 @@ class _LocalModelLease(Protocol):
 
     async def embed(self, texts: list[str]) -> tuple[tuple[float, ...], ...]:
         """Embed texts through a ready local runtime."""
+        ...
+
+    async def sparse_embed(self, texts: list[str]) -> tuple[SparseEmbedding, ...]:
+        """Encode sparse vectors through a ready local runtime."""
+        ...
+
+    async def token_embed(self, texts: list[str]) -> tuple[TokenEmbedding, ...]:
+        """Encode token vectors through a ready local runtime."""
         ...
 
 
@@ -68,3 +80,90 @@ class ManagedLocalEmbedder:
                 "Local embedding server dimension differs from configuration"
             )
         return vectors
+
+
+class ManagedLocalSparseEmbedder:
+    """Implement learned sparse encoding through the shared model lease manager."""
+
+    def __init__(self, config: EmbeddingConfig, manager: _LocalModelManager) -> None:
+        """Retain model identity while deferring download and runtime startup."""
+        if config.location != "local" or config.model_id is None:
+            raise ValueError("ManagedLocalSparseEmbedder requires a local model_id")
+        self._config = config
+        self._manager = manager
+
+    @property
+    def model_identity(self) -> str:
+        """Return the sparse embedding-space identity."""
+        return self._config.vector_identity()
+
+    async def embed_sparse_documents(
+        self, texts: list[str]
+    ) -> tuple[SparseEmbedding, ...]:
+        """Encode document text with the configured document prefix."""
+        return await self._embed(texts, query=False)
+
+    async def embed_sparse_query(self, text: str) -> SparseEmbedding:
+        """Encode one query with the configured query prefix."""
+        return (await self._embed([text], query=True))[0]
+
+    async def _embed(
+        self, texts: list[str], *, query: bool
+    ) -> tuple[SparseEmbedding, ...]:
+        """Acquire one lease and validate response cardinality and identity."""
+        if not texts:
+            return ()
+        assert self._config.model_id is not None
+        prefix = self._config.query_prefix if query else self._config.document_prefix
+        async with self._manager.acquire(self._config.model_id) as model:
+            values = await model.sparse_embed([f"{prefix}{text}" for text in texts])
+        if len(values) != len(texts):
+            raise RuntimeError("Local sparse model returned an unexpected vector count")
+        return tuple(
+            SparseEmbedding(
+                value.indices, value.weights, self.model_identity, value.dimension
+            )
+            for value in values
+        )
+
+
+class ManagedLocalTokenEmbedder:
+    """Implement token-level encoding through the shared model lease manager."""
+
+    def __init__(self, config: EmbeddingConfig, manager: _LocalModelManager) -> None:
+        """Retain model identity while deferring model startup until first use."""
+        if config.location != "local" or config.model_id is None:
+            raise ValueError("ManagedLocalTokenEmbedder requires a local model_id")
+        self._config = config
+        self._manager = manager
+
+    @property
+    def model_identity(self) -> str:
+        """Return the token embedding-space identity."""
+        return self._config.vector_identity()
+
+    async def embed_token_documents(
+        self, texts: list[str]
+    ) -> tuple[TokenEmbedding, ...]:
+        """Encode document token embeddings."""
+        return await self._embed(texts, query=False)
+
+    async def embed_token_query(self, text: str) -> TokenEmbedding:
+        """Encode one query into token embeddings."""
+        return (await self._embed([text], query=True))[0]
+
+    async def _embed(
+        self, texts: list[str], *, query: bool
+    ) -> tuple[TokenEmbedding, ...]:
+        """Acquire one lease and preserve the configured model identity."""
+        if not texts:
+            return ()
+        assert self._config.model_id is not None
+        prefix = self._config.query_prefix if query else self._config.document_prefix
+        async with self._manager.acquire(self._config.model_id) as model:
+            values = await model.token_embed([f"{prefix}{text}" for text in texts])
+        if len(values) != len(texts):
+            raise RuntimeError("Local token model returned an unexpected vector count")
+        return tuple(
+            TokenEmbedding(value.values, self.model_identity) for value in values
+        )

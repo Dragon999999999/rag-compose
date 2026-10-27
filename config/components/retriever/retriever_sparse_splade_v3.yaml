@@ -1,0 +1,12 @@
+id: retriever_sparse_splade_v3
+type: sparse
+implementation: splade_v3
+description: SPLADE-v3 learned sparse retrieval in Qdrant.
+config:
+  top_k: 20
+  query_embedder: embedding_splade_v3
+requirements:
+  required:
+    - persisted_chunks
+    - sparse_vector_index
+    - sparse_query_embedder

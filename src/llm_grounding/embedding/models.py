@@ -33,3 +33,52 @@ class EmbeddingVector:
         content = f"{self.model_identity}:{self.dimension}:".encode()
         values = ",".join(f"{value:.17g}" for value in self.values).encode()
         return sha256(content + values).hexdigest()
+
+
+@dataclass(frozen=True)
+class SparseEmbedding:
+    """Represent a learned sparse vector by non-zero token weights.
+
+    Indices and weights are kept in matching order.  Sparse providers may use a
+    model vocabulary rather than a fixed dense dimension, so ``dimension`` is
+    optional metadata and is never inferred from the number of non-zero values.
+    """
+
+    indices: tuple[int, ...]
+    weights: tuple[float, ...]
+    model_identity: str
+    dimension: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject malformed sparse vectors before they reach an index."""
+        if len(self.indices) != len(self.weights):
+            raise ValueError("Sparse vector indices and weights must have equal length")
+        if any(index < 0 for index in self.indices):
+            raise ValueError("Sparse vector indices must be non-negative")
+        if self.dimension is not None and any(
+            index >= self.dimension for index in self.indices
+        ):
+            raise ValueError("Sparse vector index exceeds the declared dimension")
+
+    @property
+    def nnz(self) -> int:
+        """Return the number of non-zero entries represented by this vector."""
+        return len(self.indices)
+
+
+@dataclass(frozen=True)
+class TokenEmbedding:
+    """Represent token-level embeddings used by late-interaction retrievers."""
+
+    values: tuple[tuple[float, ...], ...]
+    model_identity: str
+
+    @property
+    def token_count(self) -> int:
+        """Return the number of encoded tokens."""
+        return len(self.values)
+
+    @property
+    def dimension(self) -> int:
+        """Return token embedding dimensionality."""
+        return len(self.values[0]) if self.values else 0

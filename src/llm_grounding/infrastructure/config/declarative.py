@@ -244,10 +244,10 @@ class OpenAICompatibleModelDefinition(ModelDefinitionBase):
         return value if isinstance(value, str) else None
 
     @property
-    def representation(self) -> Literal["dense", "sparse"]:
+    def representation(self) -> Literal["dense", "sparse", "multivector"]:
         """Return the configured vector representation."""
         value = self.parameter("representation", "dense")
-        return value if value in {"dense", "sparse"} else "dense"
+        return value if value in {"dense", "sparse", "multivector"} else "dense"
 
     @property
     def similarity_metric(self) -> Literal["cosine", "dot", "euclidean"]:
@@ -317,10 +317,10 @@ class SentenceTransformersModelDefinition(ModelDefinitionBase):
         return value if isinstance(value, str) else None
 
     @property
-    def representation(self) -> Literal["dense", "sparse"]:
+    def representation(self) -> Literal["dense", "sparse", "multivector"]:
         """Return the configured vector representation."""
         value = self.parameter("representation", "dense")
-        return value if value in {"dense", "sparse"} else "dense"
+        return value if value in {"dense", "sparse", "multivector"} else "dense"
 
     @property
     def similarity_metric(self) -> Literal["cosine", "dot", "euclidean"]:

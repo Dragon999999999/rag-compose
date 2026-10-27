@@ -58,7 +58,7 @@ class EmbeddingSpecification(BaseModel):
     model: str = Field(min_length=1)
     revision: str | None = Field(default=None, min_length=1)
     embedding_space_id: str | None = Field(default=None, min_length=1)
-    vector_kind: Literal["dense", "sparse"] = "dense"
+    vector_kind: Literal["dense", "sparse", "multivector"] = "dense"
     dimensions: int = Field(ge=1, le=16000)
     normalization: bool = True
     similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
@@ -77,7 +77,9 @@ class EmbeddingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     model_id: str | None = Field(default=None, min_length=1)
     location: Literal["local", "remote"] = "local"
-    type: Literal["embedding", "sentence_transformers", "fake", "openai_compatible"] = (
+    type: Literal[
+        "embedding", "sentence_transformers", "fake", "openai_compatible"
+    ] = (
         "sentence_transformers"
     )
     implementation: Literal["sentence_transformers", "fake", "openai_compatible"] = (
@@ -86,7 +88,7 @@ class EmbeddingConfig(BaseModel):
     provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_space_id: str | None = Field(default=None, min_length=1)
-    representation: Literal["dense", "sparse"] = Field(
+    representation: Literal["dense", "sparse", "multivector"] = Field(
         default="dense",
         validation_alias=AliasChoices("representation", "vector_kind"),
     )
@@ -95,7 +97,7 @@ class EmbeddingConfig(BaseModel):
     dimension: int = Field(
         default=384,
         ge=1,
-        le=16000,
+        le=1_000_000,
         validation_alias=AliasChoices("dimension", "dimensions"),
     )
     normalize: bool = Field(

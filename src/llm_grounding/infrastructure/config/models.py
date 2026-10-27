@@ -49,7 +49,14 @@ class ComponentConfig(BaseModel):
             "basic": ("knowledge_builder", "basic"),
             "vector": ("dense", "vector_similarity"),
             "postgres_fts": ("sparse", "postgres_fts"),
+            "bm25": ("sparse", "bm25"),
+            "splade": ("sparse", "splade"),
+            "splade_v3": ("sparse", "splade_v3"),
+            "bge_m3_sparse": ("sparse", "bge_m3_sparse"),
+            "colbert": ("multivector", "colbert_v2"),
+            "colbert_v2": ("multivector", "colbert_v2"),
             "hybrid_rrf": ("hybrid", "hybrid_rrf"),
+            "hybrid_weighted": ("hybrid", "hybrid_weighted"),
             "full_context": ("full_context", "postgres_all_chunks"),
             "identity": ("reranker", "identity"),
             "top_k": ("reranker", "top_k"),
@@ -115,6 +122,10 @@ RetrieverRequirement = Literal[
     "postgres_fts",
     "dense_vector_index",
     "compatible_query_embedder",
+    "sparse_vector_index",
+    "multivector_index",
+    "sparse_query_embedder",
+    "late_interaction_model",
 ]
 
 
@@ -150,6 +161,10 @@ class RetrieverConfig(ComponentConfig):
     rrf_k: int = Field(default=60, ge=1, le=10_000)
     dense_weight: float = Field(default=1.0, gt=0, le=100, allow_inf_nan=False)
     sparse_weight: float = Field(default=1.0, gt=0, le=100, allow_inf_nan=False)
+    bm25_k1: float = Field(default=1.2, gt=0, le=10, allow_inf_nan=False)
+    bm25_b: float = Field(default=0.75, ge=0, le=1, allow_inf_nan=False)
+    candidate_top_k: int | None = Field(default=None, ge=1, le=200)
+    score_normalization: Literal["min_max", "none"] = "min_max"
     query_embedder: str | None = Field(
         default=None,
         min_length=1,

@@ -5,10 +5,11 @@ import json
 from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import cast
 
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
-from llm_grounding.embedding.protocol import Embedder
+from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
@@ -19,8 +20,13 @@ from llm_grounding.infrastructure.config.overrides import (
     apply_query_overrides,
     catalog_for_query_overrides,
 )
+from llm_grounding.infrastructure.config.settings import QdrantSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.model_management.manager import LocalModelManager
+from llm_grounding.infrastructure.vector.learned import (
+    QdrantMultiVectorStore,
+    QdrantSparseVectorStore,
+)
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
@@ -74,8 +80,11 @@ class PipelineRuntimeResolver:
         self._local_model_manager = local_model_manager
         self._max_cache_size = max_cache_size
         self._runtimes: OrderedDict[str, tuple[str, ResolvedPipeline]] = OrderedDict()
-        self._embedders: OrderedDict[str, Embedder] = OrderedDict()
+        self._embedders: OrderedDict[str, Embedder | SparseEmbedder | TokenEmbedder] = (
+            OrderedDict()
+        )
         self._lock = asyncio.Lock()
+        self._learned_stores: dict[int, object] = {}
 
     async def resolve(
         self,
@@ -146,6 +155,15 @@ class PipelineRuntimeResolver:
     def cache_size(self) -> int:
         """Return the number of cached pipeline runtime instances."""
         return len(self._runtimes)
+
+    async def close(self) -> None:
+        """Close lazily created learned-index clients and clear runtime caches."""
+        for store in tuple(self._learned_stores.values()):
+            close = getattr(store, "close", None)
+            if close is not None:
+                await close()
+        self._learned_stores.clear()
+        self._runtimes.clear()
 
     def _parse_config(self, record: Pipeline) -> PipelineConfig:
         """Validate persisted JSON and its closed component/model references."""
@@ -244,6 +262,8 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
         requirements = self._registry.query_requirements(architecture.retriever)
         dense_required = "dense_vector_index" in requirements
+        sparse_required = "sparse_vector_index" in requirements
+        multivector_required = "multivector_index" in requirements
         vector_store = self._vector_store_for(ingestion) if dense_required else None
         query_embedding = ingestion.embedding if dense_required else None
         if dense_required:
@@ -272,11 +292,68 @@ class PipelineRuntimeResolver:
                 raise PipelineResolutionError(
                     "Dense query runtime requires an embedding provider"
                 )
+        if sparse_required or multivector_required:
+            if ingestion.vector_backend != "qdrant":
+                raise PipelineResolutionError(
+                    "Learned sparse and multivector retrieval require the qdrant "
+                    "backend because pgvector and FAISS are dense-only"
+                )
+            if architecture.retriever.query_embedder is None:
+                raise PipelineResolutionError(
+                    "The selected learned retriever requires query_embedder"
+                )
+        sparse_embedding = None
+        sparse_embedder = None
+        sparse_store = None
+        token_embedder = None
+        multivector_store = None
+        if sparse_required:
+            sparse_embedding = self._query_representation(
+                architecture.retriever.query_embedder,
+                catalog,
+                "sparse",
+            )
+            sparse_embedder = self._embedder(sparse_embedding)
+            if not hasattr(sparse_embedder, "embed_sparse_query"):
+                raise PipelineResolutionError(
+                    "Selected model does not provide sparse embeddings"
+                )
+            sparse_embedder = cast(SparseEmbedder, sparse_embedder)
+            sparse_store = QdrantSparseVectorStore(
+                QdrantSettings.from_environment(),
+                self._repository,
+                sparse_embedder.model_identity,
+            )
+            self._learned_stores[id(sparse_store)] = sparse_store
+        if multivector_required:
+            token_embedding = self._query_representation(
+                architecture.retriever.query_embedder,
+                catalog,
+                "multivector",
+            )
+            token_embedder = self._embedder(token_embedding)
+            if not hasattr(token_embedder, "embed_token_query"):
+                raise PipelineResolutionError(
+                    "Selected model does not provide token embeddings"
+                )
+            token_embedder = cast(TokenEmbedder, token_embedder)
+            multivector_store = QdrantMultiVectorStore(
+                QdrantSettings.from_environment(),
+                self._repository,
+                token_embedder.model_identity,
+            )
+            self._learned_stores[id(multivector_store)] = multivector_store
         dependencies = RetrieverDependencies(
             self._repository,
             vector_store,
-            self._embedder(query_embedding) if query_embedding is not None else None,
+            cast(Embedder, self._embedder(query_embedding))
+            if query_embedding is not None
+            else None,
             query_embedding,
+            cast(SparseEmbedder, sparse_embedder),
+            sparse_store,
+            cast(TokenEmbedder, token_embedder),
+            multivector_store,
         )
         try:
             retriever = self._registry.build_retriever(
@@ -312,7 +389,9 @@ class PipelineRuntimeResolver:
         resolver = getattr(self._vectors, "for_ingestion_config", None)
         return resolver(ingestion) if resolver is not None else self._vectors
 
-    def _embedder(self, config: EmbeddingConfig) -> Embedder:
+    def _embedder(
+        self, config: EmbeddingConfig
+    ) -> Embedder | SparseEmbedder | TokenEmbedder:
         """Reuse embedding adapters by representation identity with LRU bounds."""
         identity = config.identity()
         cached = self._embedders.get(identity)
@@ -325,6 +404,29 @@ class PipelineRuntimeResolver:
         while len(self._embedders) > self._max_cache_size:
             self._embedders.popitem(last=False)
         return embedder
+
+    @staticmethod
+    def _query_representation(
+        model_ref: str | None,
+        catalog: ModelCatalog,
+        representation: str,
+    ) -> EmbeddingConfig:
+        """Resolve a query model and adapt shared BGE weights to its representation."""
+        if model_ref is None:
+            raise PipelineResolutionError("A query model reference is required")
+        try:
+            config = catalog.embedding(model_ref)
+        except ValueError as exc:
+            raise PipelineResolutionError(str(exc)) from exc
+        if config.representation == representation:
+            return config
+        if config.model_id == "embedding_bge_m3" and representation == "sparse":
+            return config.model_copy(update={"representation": "sparse"})
+        if representation == "multivector":
+            return config.model_copy(update={"representation": "multivector"})
+        raise PipelineResolutionError(
+            f"Model {model_ref!r} does not declare {representation} support"
+        )
 
     def _signature(
         self,
