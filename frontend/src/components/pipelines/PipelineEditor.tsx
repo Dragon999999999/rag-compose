@@ -51,6 +51,37 @@ type DraftSnapshot = {
   version: string;
   isDefault: boolean;
 };
+type BranchStart = "retriever" | "reranker" | "assessor";
+type QueryBranch = {
+  id: string;
+  start_at: BranchStart;
+  retriever?: string;
+  reranker?: string;
+  assessors?: string[];
+};
+type GraphNodeLayout = {
+  key: string;
+  definition: StageDefinition;
+  x: number;
+  y: number;
+  shared: boolean;
+  branchId?: string;
+};
+type GraphEdgeLayout = { from: string; to: string };
+type BranchGraphLayout = {
+  nodes: GraphNodeLayout[];
+  edges: GraphEdgeLayout[];
+  branches: Array<{ id: string; label: string; center: number; removable: boolean }>;
+  width: number;
+  height: number;
+};
+
+const GRAPH_NODE_WIDTH = 142;
+const GRAPH_NODE_HEIGHT = 72;
+const GRAPH_COLUMN_GAP = 36;
+const GRAPH_ROW_GAP = 116;
+const GRAPH_TOP_PADDING = 64;
+const GRAPH_BOTTOM_PADDING = 76;
 
 const REPRESENTATION_STAGES: StageDefinition[] = [
   { key: "parser", label: "Parser", section: "representation", catalogKey: "parser", description: "Extracts source content into structured document blocks." },
@@ -376,7 +407,13 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
       <div className="pipeline-editor-layout">
         <section className="pipeline-graph" aria-label="Pipeline graph">
           {pipelineKind !== "query" && <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
-          {pipelineKind !== "ingestion" && <GraphSection label="Query processing" stages={QUERY_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
+          {pipelineKind !== "ingestion" && <BranchingGraph
+            config={draft}
+            onAddBranch={(stage, branchId) => setDraft((current) => current ? addQueryBranch(current, stage, branchId) : current)}
+            onRemoveBranch={(branchId) => setDraft((current) => current ? removeQueryBranch(current, branchId) : current)}
+            onSelect={setSelectedStage}
+            selected={selectedStage}
+          />}
           {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
         </section>
         <StageInspector
@@ -475,8 +512,226 @@ function GraphSection({ label, stages, selected, config, onSelect }: { label: st
   );
 }
 
-function StageNode({ definition, selected, configured, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; onSelect: () => void }) {
-  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"}`} onClick={onSelect} type="button"><span>{definition.label}</span>{!configured && <small>Configure</small>}</button>;
+function BranchingGraph({
+  config,
+  selected,
+  onSelect,
+  onAddBranch,
+  onRemoveBranch,
+}: {
+  config: PipelineConfig;
+  selected: StageKey;
+  onSelect: (stage: StageKey) => void;
+  onAddBranch: (stage: BranchStart, branchId?: string) => void;
+  onRemoveBranch: (branchId: string) => void;
+}) {
+  const layout = useMemo(() => buildBranchGraphLayout(config), [config]);
+  return (
+    <section className="graph-section branching-graph-section">
+      <div className="graph-section-heading">
+        <div>
+          <h2>Query processing</h2>
+          <p>Branch retrieval, reranking, or assessment while keeping shared stages centered.</p>
+        </div>
+        {readExecutionStrategy(config) === "branching" && <span className="graph-status">{layout.branches.length} branches</span>}
+      </div>
+      <div className="graph-canvas-scroll">
+        <div className="graph-canvas" style={{ height: layout.height, minWidth: layout.width }}>
+          <svg aria-hidden="true" className="graph-connectors" height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width}>
+            {layout.edges.map((edge) => {
+              const from = layout.nodes.find((node) => node.key === edge.from);
+              const to = layout.nodes.find((node) => node.key === edge.to);
+              if (!from || !to) return null;
+              const startX = from.x + GRAPH_NODE_WIDTH;
+              const startY = from.y + GRAPH_NODE_HEIGHT / 2;
+              const endX = to.x;
+              const endY = to.y + GRAPH_NODE_HEIGHT / 2;
+              const midpoint = startX + (endX - startX) / 2;
+              return <path className="graph-connector" d={`M ${startX} ${startY} H ${midpoint} V ${endY} H ${endX}`} key={`${edge.from}-${edge.to}`} />;
+            })}
+          </svg>
+          {layout.branches.map((branch) => (
+            <div className="graph-branch-controls" key={branch.id} style={{ top: branch.center - 24 }}>
+              <span className="graph-branch-label">{branch.label}</span>
+              {branch.removable && <button aria-label={`Delete ${branch.label}`} className="graph-delete-branch" onClick={() => onRemoveBranch(branch.id)} title={`Delete ${branch.label}`} type="button">×</button>}
+            </div>
+          ))}
+          {layout.nodes.map((node) => {
+            const configured = Boolean(readStage(config, node.definition));
+            const branch = node.branchId ? layout.branches.find((item) => item.id === node.branchId) : undefined;
+            const caption = node.shared ? "Shared" : branch?.label;
+            const branchStart = stageToBranchStart(node.definition.key);
+            return (
+              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"}`} key={node.key} style={{ left: node.x, top: node.y }}>
+                <StageNode
+                  caption={caption}
+                  configured={configured}
+                  definition={node.definition}
+                  selected={selected === node.definition.key}
+                  onSelect={() => onSelect(node.definition.key)}
+                />
+                {branchStart && <button aria-label={`Add branch after ${node.definition.label}`} className="graph-add-branch" onClick={() => onAddBranch(branchStart, node.branchId)} title={`Add branch at ${node.definition.label}`} type="button">+</button>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <p className="graph-help">Use <strong>+</strong> below Retriever, Reranker, or Assessors to split the flow. Shared stages are reused automatically.</p>
+    </section>
+  );
+}
+
+function StageNode({ definition, selected, configured, caption, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; onSelect: () => void }) {
+  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
+}
+
+/** Build a centered, column-based DAG layout for query branches. */
+export function buildBranchGraphLayout(config: PipelineConfig): BranchGraphLayout {
+  const branching = readExecutionStrategy(config) === "branching";
+  const branches = queryBranches(config, branching);
+  const rowCenters = branches.map((_, index) => GRAPH_TOP_PADDING + GRAPH_NODE_HEIGHT / 2 + index * GRAPH_ROW_GAP);
+  const stageColumns = QUERY_STAGES.map((stage, index) => ({ stage, index }));
+  const nodeMap = new Map<string, GraphNodeLayout>();
+  const edgeMap = new Map<string, GraphEdgeLayout>();
+  const columnStep = GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP;
+  const xFor = (index: number): number => 22 + index * columnStep;
+  const stageIndex = (stage: StageKey): number => QUERY_STAGES.findIndex((item) => item.key === stage);
+  const sharedY = (index: number): number => {
+    const descendants = branches.flatMap((branch, branchIndex) => {
+      const startIndex = branching ? stageIndex(branchStartToStage(branch.start_at)) : 0;
+      return index < startIndex ? [rowCenters[branchIndex]] : [];
+    });
+    return average(descendants.length > 0 ? descendants : rowCenters);
+  };
+  const nodeKeyFor = (stage: StageDefinition, branch: QueryBranch): { key: string; shared: boolean } => {
+    if (!branching || stage.section !== "query" || stage.key === "decision_policy" || stage.key === "reasoner" || stage.key === "renderer") {
+      return { key: `shared-${stage.key}`, shared: true };
+    }
+    const startIndex = stageIndex(branchStartToStage(branch.start_at));
+    const currentIndex = stageIndex(stage.key);
+    return currentIndex < startIndex
+      ? { key: `shared-${stage.key}`, shared: true }
+      : { key: `${branch.id}-${stage.key}`, shared: false };
+  };
+  const ensureNode = (stage: StageDefinition, branch: QueryBranch): GraphNodeLayout => {
+    const identity = nodeKeyFor(stage, branch);
+    const existing = nodeMap.get(identity.key);
+    if (existing) return existing;
+    const node: GraphNodeLayout = {
+      key: identity.key,
+      definition: stage,
+      x: xFor(stageColumns.find((item) => item.stage.key === stage.key)?.index ?? 0),
+      y: (identity.shared ? sharedY(stageIndex(stage.key)) : rowCenters[branches.findIndex((item) => item.id === branch.id)]) - GRAPH_NODE_HEIGHT / 2,
+      shared: identity.shared,
+      branchId: identity.shared ? undefined : branch.id,
+    };
+    nodeMap.set(node.key, node);
+    return node;
+  };
+  const connect = (from: GraphNodeLayout, to: GraphNodeLayout): void => {
+    if (from.key === to.key) return;
+    const key = `${from.key}-${to.key}`;
+    if (!edgeMap.has(key)) edgeMap.set(key, { from: from.key, to: to.key });
+  };
+
+  for (const branch of branches) {
+    let previous: GraphNodeLayout | undefined;
+    for (const { stage } of stageColumns) {
+      const current = ensureNode(stage, branch);
+      if (previous) connect(previous, current);
+      previous = current;
+    }
+  }
+
+  const width = xFor(QUERY_STAGES.length - 1) + GRAPH_NODE_WIDTH + 22;
+  const height = GRAPH_TOP_PADDING + Math.max(1, branches.length - 1) * GRAPH_ROW_GAP + GRAPH_NODE_HEIGHT + GRAPH_BOTTOM_PADDING;
+  return {
+    nodes: [...nodeMap.values()],
+    edges: [...edgeMap.values()],
+    branches: branches.map((branch, index) => ({
+      id: branch.id,
+      label: branch.id === "pipeline" ? "Pipeline" : branch.id,
+      center: rowCenters[index],
+      removable: branching,
+    })),
+    width,
+    height,
+  };
+}
+
+function queryBranches(config: PipelineConfig, branching: boolean): QueryBranch[] {
+  if (!branching) return [{ id: "pipeline", start_at: "retriever" }];
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  const branches = Array.isArray(execution.branches)
+    ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index))
+    : [];
+  return branches.length > 0 ? branches : [{ id: "branch-1", start_at: "retriever" }, { id: "branch-2", start_at: "retriever" }];
+}
+
+function normalizeBranch(branch: Record<string, unknown>, index: number): QueryBranch {
+  const startAt = branch.start_at === "reranker" || branch.start_at === "assessor" ? branch.start_at : "retriever";
+  return {
+    id: typeof branch.id === "string" && branch.id.trim() ? branch.id : `branch-${index + 1}`,
+    start_at: startAt,
+    ...(typeof branch.retriever === "string" ? { retriever: branch.retriever } : {}),
+    ...(typeof branch.reranker === "string" ? { reranker: branch.reranker } : {}),
+    ...(Array.isArray(branch.assessors) ? { assessors: branch.assessors.filter((item): item is string => typeof item === "string") } : {}),
+  };
+}
+
+function branchStartToStage(start: BranchStart): StageKey {
+  return start === "assessor" ? "assessors" : start;
+}
+
+function stageToBranchStart(stage: StageKey): BranchStart | undefined {
+  if (stage === "assessors") return "assessor";
+  return stage === "retriever" || stage === "reranker" ? stage : undefined;
+}
+
+function average(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+/** Add a branch at a supported stage while retaining the existing config shape. */
+export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, afterBranchId?: string): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const existing = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)) : [];
+  const branchId = nextBranchId(existing.length < 2 ? [...existing, { id: "branch-1", start_at: startAt }] : existing);
+  const newBranch: QueryBranch = { id: branchId, start_at: startAt };
+  const insertionIndex = afterBranchId
+    ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1)
+    : existing.length;
+  const branches = existing.length < 2
+    ? [{ ...(existing[0] ?? { id: "branch-1" }), start_at: startAt }, newBranch]
+    : [...existing.slice(0, insertionIndex), newBranch, ...existing.slice(insertionIndex)];
+  return {
+    ...config,
+    query: {
+      ...(config.query ?? {}),
+      execution: { ...execution, strategy: "branching", branches },
+    },
+  };
+}
+
+/** Remove a branch; a single remaining branch falls back to linear execution. */
+export function removeQueryBranch(config: PipelineConfig, branchId: string): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)).filter((branch) => branch.id !== branchId) : [];
+  if (branches.length === 0) return config;
+  return {
+    ...config,
+    query: {
+      ...(config.query ?? {}),
+      execution: { ...execution, strategy: branches.length > 1 ? "branching" : "linear", branches },
+    },
+  };
+}
+
+function nextBranchId(branches: QueryBranch[]): string {
+  const used = new Set(branches.map((branch) => branch.id));
+  let index = branches.length + 1;
+  while (used.has(`branch-${index}`)) index += 1;
+  return `branch-${index}`;
 }
 
 function StageInspector({ catalog, definition, models, value, onChange, onAddAssessor, onRemoveAssessor, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onAddAssessor: () => void; onRemoveAssessor: (index: number) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
@@ -574,6 +829,13 @@ function validateDraft(config: PipelineConfig | null, name: string, version: str
   const issues: string[] = [];
   if (!name.trim()) issues.push("Pipeline name is required.");
   if (!/^\d+$/.test(version) || Number(version) < 1) issues.push("Version must be a positive integer.");
+  if (config.kind === "query" && readExecutionStrategy(config) === "branching") {
+    const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+    const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
+    const ids = branches.map((branch) => branch.id).filter((id): id is string => typeof id === "string");
+    if (branches.length < 2) issues.push("Branching execution requires at least two branches.");
+    if (new Set(ids).size !== ids.length) issues.push("Execution branch IDs must be unique.");
+  }
   for (const definition of stages) {
     const value = readStage(config, definition);
     if (!value) issues.push(`${definition.label} must be configured.`);
@@ -701,8 +963,12 @@ export function readExecutionStrategy(config: PipelineConfig): ExecutionStrategy
 
 export function updateExecutionStrategy(config: PipelineConfig, strategy: ExecutionStrategy): PipelineConfig {
   const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  if (strategy === "branching" && !Array.isArray(execution.branches)) {
-    execution.branches = [{ id: "branch-1" }, { id: "branch-2" }];
+  if (strategy === "branching" && (!Array.isArray(execution.branches) || execution.branches.length < 2)) {
+    const existing = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
+    execution.branches = [
+      { ...(existing[0] ?? {}), id: typeof existing[0]?.id === "string" ? existing[0].id : "branch-1" },
+      { ...(existing[1] ?? {}), id: typeof existing[1]?.id === "string" ? existing[1].id : "branch-2" },
+    ];
   }
   if (strategy === "recursive" && typeof execution.max_rounds !== "number") {
     execution.max_rounds = 2;
