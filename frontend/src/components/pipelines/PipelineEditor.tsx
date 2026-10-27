@@ -436,6 +436,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
             }}
             onSelectRestart={(alternativeId, stage, pathId) => setDraft((current) => current ? updateAlternativeSource(current, alternativeId, stage, pathId) : current)}
             selected={selectedStage}
+            selectedAlternativeId={selectedAlternativeId}
           />}
           {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
         </section>
@@ -547,6 +548,7 @@ function AlternativesGraph({
   onMoveAlternative,
   onRemoveAlternative,
   onChangeAcceptance,
+  selectedAlternativeId,
 }: {
   config: PipelineConfig;
   selected: StageKey;
@@ -559,6 +561,7 @@ function AlternativesGraph({
   onMoveAlternative: (alternativeId: string, direction: -1 | 1) => void;
   onRemoveAlternative: (alternativeId: string) => void;
   onChangeAcceptance: (alternativeId: string, acceptance: Partial<AlternativeAcceptance>) => void;
+  selectedAlternativeId: string;
 }) {
   const alternatives = readQueryAlternatives(config);
   const latestAlternative = alternatives[alternatives.length - 1];
@@ -619,6 +622,7 @@ function AlternativesGraph({
               onSelect(stage === "assessor" ? "assessors" : stage, alternative.id);
             } : undefined}
             selected={selected}
+            selectedAlternative={selectedAlternativeId === alternative.id}
           />
           {latestAlternative?.id === alternative.id && <button className="add-alternative-button" onClick={() => {
             setPendingRestartAlternativeId(nextAlternativeId(alternatives));
@@ -639,6 +643,7 @@ function BranchingGraph({
   onAddBranch,
   onRemoveBranch,
   onSelectRestart,
+  selectedAlternative,
 }: {
   config: PipelineConfig;
   alternative?: PipelineAlternative;
@@ -648,6 +653,7 @@ function BranchingGraph({
   onSelectRestart?: (stage: BranchStart) => void;
   onAddBranch: (stage: BranchStart, branchId?: string) => void;
   onRemoveBranch: (branchId: string) => void;
+  selectedAlternative: boolean;
 }) {
   const layout = useMemo(() => buildBranchGraphLayout(config, alternative), [alternative, config]);
   return (
@@ -684,7 +690,8 @@ function BranchingGraph({
             const configured = Boolean(readStage(config, node.definition, alternativeId));
             const branch = node.branchId ? layout.branches.find((item) => item.id === node.branchId) : undefined;
             const alternativeStage = Boolean(alternative?.source && !node.reused);
-            const caption = node.reused ? "Reused output" : alternativeStage && node.shared ? "Alternative stage" : node.shared ? "Shared" : branch?.label;
+            const showSharedCaption = node.shared && (layout.branches.length > 1 || Boolean(alternative?.source));
+            const caption = node.reused ? "Reused output" : alternativeStage && node.shared ? "Alternative stage" : showSharedCaption ? "Shared" : node.shared ? undefined : branch?.label;
             const branchStart = stageToBranchStart(node.definition.key);
             const selectRestart = Boolean(alternative?.source && branchStart && onSelectRestart);
             return (
@@ -695,7 +702,7 @@ function BranchingGraph({
                   definition={node.definition}
                   alternativeStage={alternativeStage}
                   reused={node.reused}
-                  selected={selected === node.definition.key}
+                  selected={selectedAlternative && selected === node.definition.key}
                   onSelect={() => selectRestart && branchStart ? onSelectRestart?.(branchStart) : onSelect(node.definition.key)}
                 />
                 {branchStart && <button aria-label={`Add branch after ${node.definition.label}`} className="graph-add-branch" onClick={() => onAddBranch(branchStart, node.branchId)} title={`Add branch at ${node.definition.label}`} type="button">+</button>}
