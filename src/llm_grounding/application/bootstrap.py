@@ -22,6 +22,7 @@ from llm_grounding.infrastructure.config.loader import (
 )
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
+    KnowledgeBuilderConfig,
     ModelCatalog,
     PipelineConfig,
 )
@@ -199,8 +200,20 @@ def create_phase_one_application(
         else None
     )
     registry = ComponentRegistry()
+    knowledge_config = (
+        KnowledgeBuilderConfig.model_validate(
+            {
+                "type": "knowledge_builder",
+                "implementation": ingestion_config.knowledge_builder,
+                **ingestion_config.knowledge_builder_config,
+            }
+        )
+        if ingestion_config.knowledge_builder is not None
+        else None
+    )
     knowledge_builder = registry.build_knowledge_builder(
-        ingestion_config.knowledge_builder
+        knowledge_config,
+        local_model_manager=local_model_manager,
     )
     parser = registry.build_parser(architecture.parser)
     chunker = registry.build_chunker(

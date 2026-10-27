@@ -62,6 +62,9 @@ class ComponentConfig(BaseModel):
             "hybrid_rrf": ("hybrid", "hybrid_rrf"),
             "hybrid_weighted": ("hybrid", "hybrid_weighted"),
             "full_context": ("full_context", "postgres_all_chunks"),
+            "metadata_rules": ("knowledge_builder", "metadata_rules"),
+            "metadata_spacy": ("knowledge_builder", "metadata_spacy"),
+            "metadata_gliner": ("knowledge_builder", "metadata_gliner"),
             "identity": ("reranker", "identity"),
             "top_k": ("reranker", "top_k"),
             "cross_encoder": ("reranker", "cross_encoder"),
@@ -120,6 +123,36 @@ class ReasonerConfig(ComponentConfig):
         min_length=1,
         description="Registered prompt ID selected for a prompt-driven reasoner.",
     )
+
+
+class KnowledgeBuilderConfig(ComponentConfig):
+    """Configure canonical structural or metadata knowledge construction."""
+
+    type: str = Field(default="knowledge_builder", min_length=1)
+    implementation: Literal[
+        "basic", "structural", "metadata_rules", "metadata_spacy", "metadata_gliner"
+    ] = "basic"
+    model_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Registered local model used by a model-backed builder.",
+    )
+    rule_patterns: dict[str, str] = Field(default_factory=dict)
+    max_keywords: int = Field(default=12, ge=0, le=100)
+    keyword_min_length: int = Field(default=4, ge=1, le=100)
+    stopwords: tuple[str, ...] = ()
+    spacy_model: str = Field(default="en_core_web_sm", min_length=1)
+    spacy_entity_labels: tuple[str, ...] = ()
+    include_linguistic_metadata: bool = False
+    entity_labels: tuple[str, ...] = (
+        "person",
+        "organization",
+        "location",
+        "date",
+        "product",
+    )
+    confidence_threshold: float = Field(default=0.35, ge=0, le=1)
+    batch_size: int = Field(default=4, ge=1, le=128)
 
 
 RetrieverRequirement = Literal[
@@ -373,7 +406,7 @@ class PipelineRepresentationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     parser: ComponentConfig
-    knowledge_builder: ComponentConfig | None = None
+    knowledge_builder: KnowledgeBuilderConfig | None = None
     chunker: ChunkerConfig
     embedding: PipelineEmbeddingConfig | None = None
     vector_backend: VectorBackendConfig | None = None
@@ -383,6 +416,10 @@ class PipelineRepresentationConfig(BaseModel):
         import json
 
         data = self.model_dump(mode="json")
+        if self.knowledge_builder is not None:
+            data["knowledge_builder"] = self.knowledge_builder.model_dump(
+                mode="json", exclude_unset=True
+            )
         backend = data.get("vector_backend")
         if isinstance(backend, dict):
             backend.pop("representation", None)
@@ -495,6 +532,15 @@ class PipelineConfig(BaseModel):
         data = self.model_dump(mode="json")
         representation = data.get("representation")
         if isinstance(representation, dict):
+            if (
+                self.representation is not None
+                and self.representation.knowledge_builder
+            ):
+                representation["knowledge_builder"] = (
+                    self.representation.knowledge_builder.model_dump(
+                        mode="json", exclude_unset=True
+                    )
+                )
             backend = representation.get("vector_backend")
             if isinstance(backend, dict):
                 backend.pop("representation", None)
@@ -571,6 +617,15 @@ class PipelineConfig(BaseModel):
                     self.representation.knowledge_builder.implementation
                     if self.representation.knowledge_builder is not None
                     else None
+                ),
+                "knowledge_builder_config": (
+                    self.representation.knowledge_builder.model_dump(
+                        mode="json",
+                        exclude={"id", "type", "implementation"},
+                        exclude_unset=True,
+                    )
+                    if self.representation.knowledge_builder is not None
+                    else {}
                 ),
                 "chunker": self.representation.chunker.model_dump(mode="json"),
                 "embedding": embedding.model_dump(mode="json") if embedding else None,

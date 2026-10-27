@@ -13,7 +13,7 @@ properties:
   location:
     enum: [local, remote]
   backend:
-    enum: [openai_compatible, sentence_transformers, fake]
+    enum: [openai_compatible, sentence_transformers, gliner, fake]
   provider:
     type: string
     minLength: 1
@@ -92,6 +92,7 @@ properties:
       trust_remote_code: {type: boolean}
       sparse_endpoint: {type: string, minLength: 1}
       token_endpoint: {type: string, minLength: 1}
+      entity_endpoint: {type: string, minLength: 1}
       supported_representations:
         type: array
         uniqueItems: true

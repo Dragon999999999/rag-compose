@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 from llm_grounding.embedding.models import SparseEmbedding, TokenEmbedding
 from llm_grounding.infrastructure.config.declarative import ModelDefinition
@@ -84,7 +85,7 @@ class LocalModelHandle:
         message = choices[0].get("message")
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
             raise RuntimeError("Local generation server returned no text content")
-        return message["content"]
+        return cast(str, message["content"])
 
     async def sparse_embed(self, texts: list[str]) -> tuple[SparseEmbedding, ...]:
         """Create learned sparse vectors through the configured model endpoint.
@@ -152,6 +153,34 @@ class LocalModelHandle:
                 )
             )
         return tuple(vectors)
+
+    async def extract_entities(
+        self, texts: list[str], labels: list[str], threshold: float
+    ) -> tuple[tuple[dict[str, object], ...], ...]:
+        """Extract GLiNER entities through the configured local endpoint."""
+        path = str(self.definition.parameter("entity_endpoint", "/v1/entities"))
+        response = await self.client.request(
+            path,
+            {
+                "model": self.definition.name,
+                "input": texts,
+                "labels": labels,
+                "threshold": threshold,
+            },
+        )
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Local entity model returned no data list")
+        ordered = sorted(data, key=lambda item: item.get("index", 0))
+        batches: list[tuple[dict[str, object], ...]] = []
+        for item in ordered:
+            entities = item.get("entities", [])
+            if not isinstance(entities, list) or not all(
+                isinstance(entity, dict) for entity in entities
+            ):
+                raise RuntimeError("Local entity model returned invalid entities")
+            batches.append(tuple(dict(entity) for entity in entities))
+        return tuple(batches)
 
 
 class LocalInferenceClient:

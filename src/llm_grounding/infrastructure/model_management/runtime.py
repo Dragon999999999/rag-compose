@@ -339,6 +339,34 @@ class _TransformersModel:
         """Load Transformers weights from the persistent model directory."""
         try:
             import torch  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install llm-grounding[embeddings] with PyTorch to use local models"
+            ) from exc
+        if getattr(definition, "backend", "") == "gliner":
+            try:
+                from gliner import GLiNER  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise RuntimeError(
+                    "GLiNER metadata enrichment requires the optional gliner package"
+                ) from exc
+            model = GLiNER.from_pretrained(str(weights))
+            model.eval()
+            configured_device = (
+                definition.runtime.device if definition.runtime else "cpu"
+            )
+            device = configured_device
+            if configured_device.startswith("cuda") and not torch.cuda.is_available():
+                device = "cpu"
+            try:
+                model.to(device)
+            except (RuntimeError, ValueError):
+                if device == "cpu":
+                    raise
+                device = "cpu"
+                model.to(device)
+            return cls(definition, None, model, device)
+        try:
             from transformers import (  # type: ignore[import-not-found]
                 AutoModel,
                 AutoModelForCausalLM,
@@ -401,6 +429,21 @@ class _TransformersModel:
             ):
                 raise ValueError("In-process rerank input must contain query and texts")
             return self._rerank(query, texts)
+        if path.endswith("/entities"):
+            inputs = payload.get("input")
+            labels = payload.get("labels")
+            threshold = payload.get("threshold", 0.35)
+            if not isinstance(inputs, list) or not all(
+                isinstance(item, str) for item in inputs
+            ):
+                raise ValueError("Entity input must be a list of strings")
+            if not isinstance(labels, list) or not all(
+                isinstance(item, str) for item in labels
+            ):
+                raise ValueError("Entity labels must be a list of strings")
+            if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+                raise ValueError("Entity threshold must be numeric")
+            return self._entities(inputs, labels, float(threshold))
         inputs = payload.get("input")
         if not isinstance(inputs, list) or not all(
             isinstance(item, str) for item in inputs
@@ -413,6 +456,30 @@ class _TransformersModel:
         if path.endswith("/embeddings"):
             return self._dense(inputs)
         raise RuntimeError(f"Unsupported in-process model endpoint: {path}")
+
+    def _entities(
+        self, texts: list[str], labels: list[str], threshold: float
+    ) -> dict[str, object]:
+        """Run GLiNER span extraction and normalize its response shape."""
+        if getattr(self._definition, "backend", "") != "gliner":
+            raise RuntimeError("The configured local model is not a GLiNER model")
+        rows: list[dict[str, object]] = []
+        for index, text in enumerate(texts):
+            raw_entities = self._model.predict_entities(
+                text, labels, threshold=threshold
+            )
+            entities = [
+                {
+                    "text": str(entity["text"]),
+                    "label": str(entity["label"]),
+                    "start": int(entity["start"]),
+                    "end": int(entity["end"]),
+                    "score": float(entity["score"]),
+                }
+                for entity in raw_entities
+            ]
+            rows.append({"index": index, "entities": entities})
+        return {"data": rows}
 
     def _generate(self, payload: dict[str, object]) -> dict[str, object]:
         """Generate one deterministic response for a local chat-completions request."""
@@ -442,7 +509,10 @@ class _TransformersModel:
             encoded = {"input_ids": encoded}
         encoded = self._move_to_device(encoded)
         input_length = encoded["input_ids"].shape[-1]
-        max_new_tokens = int(payload.get("max_tokens", 256))
+        raw_max_tokens = payload.get("max_tokens", 256)
+        if not isinstance(raw_max_tokens, int) or isinstance(raw_max_tokens, bool):
+            raise ValueError("max_tokens must be an integer")
+        max_new_tokens = raw_max_tokens
         with torch.inference_mode():
             generated = self._model.generate(
                 **encoded,

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from llm_grounding.domain.corpus import RetrievalUnit
 from llm_grounding.domain.evidence import EvidenceUnit
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.ingestion.models import ChunkerConfig
 from llm_grounding.knowledge.chunking.common import EvidenceStream, token_spans
 from llm_grounding.knowledge.chunking.recursive_token import RecursiveTokenChunker
@@ -31,7 +32,7 @@ class BoundaryOutput(BaseModel):
 class LocalBoundaryGenerator:
     """Generate boundary proposals through one LocalModelManager lease."""
 
-    def __init__(self, model_id: str, manager: object) -> None:
+    def __init__(self, model_id: str, manager: LocalModelManager) -> None:
         """Retain the registered model reference without starting its runtime."""
         self._model_id = model_id
         self._manager = manager

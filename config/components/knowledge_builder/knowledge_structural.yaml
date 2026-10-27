@@ -1,0 +1,5 @@
+id: knowledge_structural
+type: knowledge_builder
+implementation: structural
+description: Reconstruct parser-provided hierarchy and structural relationships.
+config: {}

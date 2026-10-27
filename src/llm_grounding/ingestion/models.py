@@ -286,7 +286,10 @@ class IngestionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     parser: Literal["pymupdf"] = "pymupdf"
     parser_version: Literal["1"] = "1"
-    knowledge_builder: Literal["basic"] | None = "basic"
+    knowledge_builder: Literal[
+        "basic", "structural", "metadata_rules", "metadata_spacy", "metadata_gliner"
+    ] | None = "basic"
+    knowledge_builder_config: dict[str, object] = Field(default_factory=dict)
     knowledge_version: Literal["1"] = "1"
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embedding: EmbeddingConfig | None = Field(default_factory=EmbeddingConfig)
@@ -322,6 +325,8 @@ class IngestionConfig(BaseModel):
     def identity(self) -> str:
         """Hash the full effective configuration, including component versions."""
         data = self.model_dump(mode="json")
+        if not self.knowledge_builder_config:
+            data.pop("knowledge_builder_config", None)
         embedding = data.get("embedding")
         if isinstance(embedding, dict) and self.embedding is not None:
             if self.embedding.embedding_space_id is not None:

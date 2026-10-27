@@ -257,9 +257,9 @@ class OpenAICompatibleModelDefinition(ModelDefinitionBase):
 
 
 class SentenceTransformersModelDefinition(ModelDefinitionBase):
-    """Configure a locally loaded Sentence Transformers model."""
+    """Configure a locally loaded Transformer or GLiNER model."""
 
-    backend: Literal["sentence_transformers"]
+    backend: Literal["sentence_transformers", "gliner"]
     location: Literal["local"] = "local"
 
     @property

@@ -25,6 +25,7 @@ from llm_grounding.infrastructure.config.models import (
     ApplicationDefaults,
     ChatHistoryConfig,
     ComponentConfig,
+    KnowledgeBuilderConfig,
     ModelCatalog,
     ModelConfig,
     PipelineConfig,
@@ -146,6 +147,11 @@ class ConfigurationRegistry:
                 )
                 self._validate_backend_compatibility(embedding_config, vector_backend)
             chunker = self._chunker(source.representation.chunker)
+            knowledge_builder = (
+                self._knowledge_builder(source.representation.knowledge_builder)
+                if source.representation.knowledge_builder is not None
+                else None
+            )
             embedding_ref = (
                 self._model_id_for_component("embedding", embedding)
                 if embedding is not None
@@ -160,19 +166,11 @@ class ConfigurationRegistry:
                 parser=self._component(
                     "parser", source.representation.parser, ComponentConfig
                 ),
-                knowledge_builder=(
-                    self._component(
-                        "knowledge_builder",
-                        source.representation.knowledge_builder,
-                        ComponentConfig,
-                    )
-                    if source.representation.knowledge_builder is not None
-                    else None
-                ),
+                knowledge_builder=knowledge_builder,
                 chunker=chunker,
                 embedding=(
                     PipelineEmbeddingConfig(
-                        model_ref=embedding_ref,
+                        model_ref=self._model_id_for_component("embedding", embedding),
                         component_id=embedding,
                     )
                     if embedding is not None
@@ -249,7 +247,13 @@ class ConfigurationRegistry:
     ) -> _ModelT:
         """Validate one component's operational settings with its runtime schema."""
         definition = self.component(category, component_id)
-        if category not in {"embedding", "reasoner", "reranker", "chunker"}:
+        if category not in {
+            "embedding",
+            "reasoner",
+            "reranker",
+            "chunker",
+            "knowledge_builder",
+        }:
             if definition.model_id is not None:
                 raise ValueError(
                     f"{category} component {component_id} must not reference a model"
@@ -290,6 +294,30 @@ class ConfigurationRegistry:
                     f"Model {definition.model_id} is not a generation model"
                 )
         return self._component("chunker", component_id, ChunkerConfig)
+
+    def _knowledge_builder(
+        self, component_id: str
+    ) -> KnowledgeBuilderConfig:
+        """Resolve builder settings and validate model-backed references."""
+        definition = self.component("knowledge_builder", component_id)
+        implementation = definition.implementation
+        if implementation == "metadata_gliner":
+            if definition.model_id is None:
+                raise ValueError(
+                    f"Knowledge builder {component_id} requires model_id"
+                )
+            model = self.model(definition.model_id)
+            if model.stage != "validation" or model.location != "local":
+                raise ValueError(
+                    f"Model {definition.model_id} must be a local validation model"
+                )
+        elif definition.model_id is not None:
+            raise ValueError(
+                f"Knowledge builder {component_id} does not accept model_id"
+            )
+        return self._component(
+            "knowledge_builder", component_id, KnowledgeBuilderConfig
+        )
 
     def _model_config(self, model_id: str) -> ModelConfig:
         """Resolve a standalone remote model to the existing LLM runtime schema."""

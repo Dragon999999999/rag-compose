@@ -16,6 +16,7 @@ from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbe
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
     ComponentConfig,
+    KnowledgeBuilderConfig,
     ModelCatalog,
     PipelineConfig,
     ReasonerConfig,
@@ -44,7 +45,11 @@ from llm_grounding.knowledge.chunking.recursive_token import RecursiveTokenChunk
 from llm_grounding.knowledge.chunking.semantic import SemanticChunker
 from llm_grounding.knowledge.chunking.sentence_window import SentenceWindowChunker
 from llm_grounding.knowledge.chunking.structural import StructuralChunker
+from llm_grounding.knowledge.metadata_gliner import GlinerMetadataKnowledgeBuilder
+from llm_grounding.knowledge.metadata_rules import RuleMetadataKnowledgeBuilder
+from llm_grounding.knowledge.metadata_spacy import SpacyMetadataKnowledgeBuilder
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
+from llm_grounding.knowledge.structural import StructuralKnowledgeBuilder
 from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
@@ -127,8 +132,13 @@ class ComponentRegistry:
         self.parsers: dict[str, Callable[[], DocumentParser]] = {
             "pymupdf": PyMuPDFDocumentParser
         }
-        self.knowledge_builders: dict[str, Callable[[], KnowledgeBuilder]] = {
-            "basic": BasicKnowledgeBuilder
+        self.knowledge_builders: dict[
+            str, Callable[[KnowledgeBuilderConfig], KnowledgeBuilder]
+        ] = {
+            "basic": lambda config: BasicKnowledgeBuilder(),
+            "structural": lambda config: StructuralKnowledgeBuilder(),
+            "metadata_rules": RuleMetadataKnowledgeBuilder,
+            "metadata_spacy": SpacyMetadataKnowledgeBuilder,
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
             "vector_similarity": _vector_retriever_requires_runtime_dependencies,
@@ -746,16 +756,29 @@ class ComponentRegistry:
         return factory(config)
 
     def build_knowledge_builder(
-        self, component: ComponentConfig | str | None
+        self,
+        component: KnowledgeBuilderConfig | ComponentConfig | str | None,
+        *,
+        local_model_manager: "LocalModelManager | None" = None,
     ) -> KnowledgeBuilder | None:
-        """Construct the configured knowledge builder, or no stage when omitted."""
+        """Construct a builder while keeping model lifecycle in LocalModelManager."""
         if component is None:
             return None
-        component_type = (
-            component.implementation or component.type
-            if isinstance(component, ComponentConfig)
-            else component
-        )
+        if isinstance(component, str):
+            config = KnowledgeBuilderConfig.model_validate(
+                {"implementation": component}
+            )
+        elif isinstance(component, KnowledgeBuilderConfig):
+            config = component
+        else:
+            config = KnowledgeBuilderConfig.model_validate(component.model_dump())
+        component_type = config.implementation
+        if component_type == "metadata_gliner":
+            if local_model_manager is None:
+                raise ConfigurationError(
+                    "GLiNER metadata enrichment requires LocalModelManager"
+                )
+            return GlinerMetadataKnowledgeBuilder(config, local_model_manager)
         try:
             factory = self.knowledge_builders[component_type]
         except KeyError as exc:
@@ -763,4 +786,4 @@ class ComponentRegistry:
                 f"Unknown knowledge_builder component {component_type!r}; "
                 f"available: {', '.join(self.knowledge_builders)}"
             ) from exc
-        return factory()
+        return factory(config)
