@@ -117,10 +117,14 @@ class ConfigurationRegistry:
                 parser=self._component(
                     "parser", source.representation.parser, ComponentConfig
                 ),
-                knowledge_builder=self._component(
-                    "knowledge_builder",
-                    source.representation.knowledge_builder,
-                    ComponentConfig,
+                knowledge_builder=(
+                    self._component(
+                        "knowledge_builder",
+                        source.representation.knowledge_builder,
+                        ComponentConfig,
+                    )
+                    if source.representation.knowledge_builder is not None
+                    else None
                 ),
                 chunker=self._component(
                     "chunker", source.representation.chunker, ChunkerConfig

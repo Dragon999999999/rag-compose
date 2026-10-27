@@ -115,7 +115,7 @@ class DeclarativeRepresentation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     parser: str = Field(min_length=1)
-    knowledge_builder: str = Field(min_length=1)
+    knowledge_builder: str | None = Field(default=None, min_length=1)
     chunker: str = Field(min_length=1)
     embedding: str = Field(min_length=1)
     vector_backend: str = Field(min_length=1)

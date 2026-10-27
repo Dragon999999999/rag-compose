@@ -252,7 +252,7 @@ class EvidenceRow(Base):
     block_index: Mapped[int | None] = mapped_column(Integer)
     bounding_box: Mapped[list[float] | None] = mapped_column(JSON)
     text: Mapped[str | None] = mapped_column(Text)
-    metadata_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
 class RetrievalUnitRow(Base):
@@ -271,7 +271,7 @@ class RetrievalUnitRow(Base):
     ordering: Mapped[int] = mapped_column(Integer, nullable=False)
     page_start: Mapped[int | None] = mapped_column(Integer)
     page_end: Mapped[int | None] = mapped_column(Integer)
-    metadata_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
 class RetrievalUnitMemberRow(Base):

@@ -155,10 +155,15 @@ async def test_reuse_repairs_legacy_temporary_document_name(tmp_path: Path) -> N
     "status",
     [IngestionStatus.READY, IngestionStatus.FAILED, IngestionStatus.INDEXING],
 )
+@pytest.mark.parametrize(
+    "knowledge_builder",
+    [BasicKnowledgeBuilder(), None],
+    ids=["basic-knowledge-builder", "without-knowledge-builder"],
+)
 async def test_existing_ingestion_without_vectors_is_rebuilt(
-    tmp_path: Path, status: IngestionStatus
+    tmp_path: Path, status: IngestionStatus, knowledge_builder: object
 ) -> None:
-    """Retry PostgreSQL records that have no matching derived vectors."""
+    """Retry representations through either canonical ingestion path."""
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"%PDF-1.7 test")
     config = IngestionConfig(
@@ -224,7 +229,7 @@ async def test_existing_ingestion_without_vectors_is_rebuilt(
         repository,  # type: ignore[arg-type]
         artifacts,  # type: ignore[arg-type]
         parser,  # type: ignore[arg-type]
-        BasicKnowledgeBuilder(),
+        knowledge_builder,  # type: ignore[arg-type]
         FixedWindowChunker(config.chunker),
         embedder,
         vectors,

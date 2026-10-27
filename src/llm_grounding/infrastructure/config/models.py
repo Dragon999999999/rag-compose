@@ -163,7 +163,7 @@ class ArchitectureConfig(BaseModel):
     name: str = Field(min_length=1)
     version: int = Field(ge=0)
     parser: ComponentConfig
-    knowledge_builder: ComponentConfig
+    knowledge_builder: ComponentConfig | None = None
     retriever: RetrieverConfig
     reranker: RerankerConfig = Field(
         validation_alias=AliasChoices("reranker", "reranking")
@@ -227,7 +227,7 @@ class PipelineRepresentationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     parser: ComponentConfig
-    knowledge_builder: ComponentConfig
+    knowledge_builder: ComponentConfig | None = None
     chunker: ChunkerConfig
     embedding: PipelineEmbeddingConfig
     vector_backend: VectorBackendConfig
@@ -345,7 +345,11 @@ class PipelineConfig(BaseModel):
         return IngestionConfig.model_validate(
             {
                 "parser": self.representation.parser.type,
-                "knowledge_builder": self.representation.knowledge_builder.type,
+                "knowledge_builder": (
+                    self.representation.knowledge_builder.type
+                    if self.representation.knowledge_builder is not None
+                    else None
+                ),
                 "chunker": self.representation.chunker.model_dump(mode="json"),
                 "embedding": embedding.model_dump(mode="json"),
                 "vector_backend": self.representation.vector_backend.type,
@@ -364,7 +368,11 @@ class PipelineConfig(BaseModel):
             name=self.name,
             version=self.version,
             parser=ComponentConfig(type=ingestion.parser),
-            knowledge_builder=ComponentConfig(type=ingestion.knowledge_builder),
+            knowledge_builder=(
+                ComponentConfig(type=ingestion.knowledge_builder)
+                if ingestion.knowledge_builder is not None
+                else None
+            ),
             retriever=self.query.retriever,
             reranker=self.query.reranker,
             reasoner=ReasonerConfig(

@@ -1,8 +1,8 @@
 """Build in-memory text evidence without embeddings, indexing services, or analysis."""
 
 from llm_grounding.domain.documents import ParsedDocument
-from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, source_order
 from llm_grounding.knowledge.models import KnowledgeBase
+from llm_grounding.knowledge.normalization import normalize_parsed_document
 
 
 class BasicKnowledgeBuilder:
@@ -10,23 +10,4 @@ class BasicKnowledgeBuilder:
 
     async def build(self, document: ParsedDocument) -> KnowledgeBase:
         """Copy eligible blocks into evidence; preserve source text and coordinates."""
-        evidence = [
-            EvidenceUnit(
-                evidence_id=(
-                    f"{element.document_id}:p{element.page_number}"
-                    f":b{element.block_index}:text"
-                ),
-                document_id=element.document_id,
-                evidence_type=EvidenceType.TEXT,
-                source_uri=document.source.path.resolve().as_uri(),
-                order=element.order,
-                page_number=element.page_number,
-                block_index=element.block_index,
-                bounding_box=element.bounding_box,
-                text=element.text,
-                metadata=element.metadata,
-            )
-            for element in document.elements
-            if element.kind == "text" and element.text.strip()
-        ]
-        return KnowledgeBase(tuple(sorted(evidence, key=source_order)))
+        return normalize_parsed_document(document)

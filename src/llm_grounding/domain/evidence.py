@@ -38,11 +38,18 @@ class EvidenceUnit:
     block_index: int | None = None
     bounding_box: tuple[float, float, float, float] | None = None
     text: str | None = None
-    metadata: Mapping[str, str] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Detach metadata from callers so canonical evidence cannot be mutated."""
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        import json
+
+        metadata = dict(self.metadata)
+        try:
+            json.dumps(metadata)
+        except TypeError as exc:
+            raise ValueError("Evidence metadata must be JSON serializable") from exc
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
 
 
 @dataclass(frozen=True)

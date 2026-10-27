@@ -89,16 +89,17 @@ class ComponentRegistry:
         """
         selections: list[tuple[str, str, Collection[str]]] = []
         if config.representation is not None:
-            selections.extend(
-                (
-                    ("parser", config.representation.parser.type, self.parsers),
+            selections.append(
+                ("parser", config.representation.parser.type, self.parsers)
+            )
+            if config.representation.knowledge_builder is not None:
+                selections.append(
                     (
                         "knowledge_builder",
                         config.representation.knowledge_builder.type,
                         self.knowledge_builders,
-                    ),
+                    )
                 )
-            )
         if config.query is not None:
             selections.extend(
                 (
@@ -189,3 +190,18 @@ class ComponentRegistry:
                 f"available: {', '.join(self.rerankers)}"
             ) from exc
         return factory(config)
+
+    def build_knowledge_builder(
+        self, component_type: str | None
+    ) -> KnowledgeBuilder | None:
+        """Construct the configured knowledge builder, or no stage when omitted."""
+        if component_type is None:
+            return None
+        try:
+            factory = self.knowledge_builders[component_type]
+        except KeyError as exc:
+            raise ConfigurationError(
+                f"Unknown knowledge_builder component {component_type!r}; "
+                f"available: {', '.join(self.knowledge_builders)}"
+            ) from exc
+        return factory()

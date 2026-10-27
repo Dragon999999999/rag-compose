@@ -90,7 +90,7 @@ class IngestionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     parser: Literal["pymupdf"] = "pymupdf"
     parser_version: Literal["1"] = "1"
-    knowledge_builder: Literal["basic"] = "basic"
+    knowledge_builder: Literal["basic"] | None = "basic"
     knowledge_version: Literal["1"] = "1"
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)

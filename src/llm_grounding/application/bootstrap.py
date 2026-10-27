@@ -34,7 +34,6 @@ from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
-from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
@@ -171,6 +170,10 @@ def create_phase_one_application(
     pipeline_runtime = PipelineRuntimeResolver(repository, vectors, catalog)
     pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
     embedder = build_embedder(ingestion_config.embedding)
+    registry = ComponentRegistry()
+    knowledge_builder = registry.build_knowledge_builder(
+        ingestion_config.knowledge_builder
+    )
     chunker = (
         BlockAwareChunker(ingestion_config.chunker)
         if ingestion_config.chunker.type == "block_aware"
@@ -181,7 +184,7 @@ def create_phase_one_application(
         repository,
         artifacts,
         PyMuPDFDocumentParser(),
-        BasicKnowledgeBuilder(),
+        knowledge_builder,
         chunker,
         embedder,
         vectors,
@@ -201,7 +204,6 @@ def create_phase_one_application(
         PromptLibrary.default(),
         architecture.reasoner.prompt_id,
     )
-    registry = ComponentRegistry()
     reranker = registry.build_reranker(architecture.reranker)
     runner = BasicRagRunner(
         vector,

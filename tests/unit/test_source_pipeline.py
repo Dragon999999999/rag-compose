@@ -11,6 +11,7 @@ import pytest
 from llm_grounding.domain.documents import DocumentSource
 from llm_grounding.domain.evidence import EvidenceType
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
+from llm_grounding.knowledge.normalization import normalize_parsed_document
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
 
 
@@ -111,3 +112,23 @@ async def test_knowledge_skips_nontext_and_empty_elements(pdf_path: Path) -> Non
     )
     knowledge = await BasicKnowledgeBuilder().build(parsed)
     assert len(knowledge.evidence) == 1
+
+
+async def test_parser_normalization_matches_basic_builder_and_preserves_metadata(
+    pdf_path: Path,
+) -> None:
+    """The no-builder adapter emits the same evidence and keeps nested metadata."""
+    parsed = await PyMuPDFDocumentParser().parse(DocumentSource("paper", pdf_path))
+    element = replace(
+        parsed.elements[0],
+        metadata={"table": {"columns": ["name", "value"]}},
+    )
+    parsed = replace(parsed, elements=(element, *parsed.elements[1:]))
+
+    direct = normalize_parsed_document(parsed)
+    built = await BasicKnowledgeBuilder().build(parsed)
+
+    assert direct == built
+    assert direct.evidence[0].metadata["table"] == {
+        "columns": ["name", "value"]
+    }

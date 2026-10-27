@@ -8,6 +8,11 @@ records preserve structure, without assuming that source elements are evidence.
 from dataclasses import dataclass, field
 from pathlib import Path
 
+type JsonValue = (
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+)
+type JsonObject = dict[str, JsonValue]
+
 
 @dataclass(frozen=True)
 class DocumentSource:
@@ -28,7 +33,7 @@ class DocumentElement:
     text: str
     bounding_box: tuple[float, float, float, float] | None = None
     kind: str = "text"
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: JsonObject = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -38,4 +43,4 @@ class ParsedDocument:
     source: DocumentSource
     elements: tuple[DocumentElement, ...]
     page_count: int
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: JsonObject = field(default_factory=dict)

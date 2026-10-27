@@ -58,6 +58,34 @@ def test_aqueduct_embedding_component_resolves_into_ingestion_config(
     assert embedding.dimension == 2560
 
 
+@pytest.mark.parametrize(
+    "knowledge_builder_yaml",
+    ["", "  knowledge_builder: null\n"],
+    ids=["omitted", "explicit-null"],
+)
+def test_ingestion_pipeline_can_omit_knowledge_builder(
+    tmp_path: Path, knowledge_builder_yaml: str
+) -> None:
+    """Omitted and explicit null builders resolve to the parser normalization path."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    path = tmp_path / "without-knowledge-builder.yaml"
+    path.write_text(
+        source.replace(
+            "  knowledge_builder: knowledge_basic\n", knowledge_builder_yaml
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_pipeline_config(path)
+    resolved = config.resolve_ingestion(load_model_catalog())
+
+    assert config.representation is not None
+    assert config.representation.knowledge_builder is None
+    assert resolved.knowledge_builder is None
+
+
 def test_representation_changes_produce_distinct_index_identity() -> None:
     """Chunking changes cannot silently reuse an existing representation index."""
     catalog = load_model_catalog()

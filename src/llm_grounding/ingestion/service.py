@@ -15,7 +15,7 @@ from llm_grounding.domain.corpus import (
     ProjectDocument,
     RetrievalUnit,
 )
-from llm_grounding.domain.documents import DocumentSource
+from llm_grounding.domain.documents import DocumentSource, ParsedDocument
 from llm_grounding.domain.evidence import EvidenceUnit
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
@@ -23,8 +23,10 @@ from llm_grounding.infrastructure.database.repositories import PostgresRepositor
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
-from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.protocol import Chunker
+from llm_grounding.knowledge.models import KnowledgeBase
+from llm_grounding.knowledge.normalization import normalize_parsed_document
+from llm_grounding.knowledge.protocol import KnowledgeBuilder
 from llm_grounding.observability.ingestion import build_ingestion_observation
 from llm_grounding.observability.models import StageType
 from llm_grounding.observability.trace import TraceRecorder
@@ -57,7 +59,7 @@ class DocumentIngestionService:
         repository: PostgresRepository,
         artifacts: ArtifactStore,
         parser: DocumentParser,
-        knowledge_builder: BasicKnowledgeBuilder,
+        knowledge_builder: KnowledgeBuilder | None,
         chunker: Chunker,
         embedder: Embedder,
         vectors: VectorStore,
@@ -178,9 +180,7 @@ class DocumentIngestionService:
                 "parse",
                 self._parser.parse(DocumentSource(document.id, path)),
             )
-            knowledge = await self._traced(
-                traces, "extract", self._knowledge_builder.build(parsed)
-            )
+            knowledge = await self._knowledge(parsed, traces)
             evidence = tuple(
                 replace(item, evidence_id=f"{ingestion.id}:{item.evidence_id}")
                 for item in knowledge.evidence
@@ -262,6 +262,16 @@ class DocumentIngestionService:
                 )
             )
             raise
+
+    async def _knowledge(
+        self, parsed: ParsedDocument, traces: TraceRecorder
+    ) -> KnowledgeBase:
+        """Run the optional builder or normalize parser output directly."""
+        if self._knowledge_builder is None:
+            return normalize_parsed_document(parsed)
+        return await self._traced(
+            traces, "extract", self._knowledge_builder.build(parsed)
+        )
 
     async def _traced(
         self,
