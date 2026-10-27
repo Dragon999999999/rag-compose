@@ -1,0 +1,9 @@
+id: chunker_hierarchical
+type: chunker
+implementation: hierarchical
+description: Build linked parent and child retrieval chunks at multiple token levels.
+config:
+  version: '1'
+  hierarchical_levels: [2048, 512, 128]
+  overlap_tokens: 16
+  tokenizer: unicode_words

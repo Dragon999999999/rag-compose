@@ -30,7 +30,11 @@ from llm_grounding.ingestion.models import ChunkerConfig, EmbeddingConfig
 from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
+from llm_grounding.knowledge.chunking.hierarchical import HierarchicalChunker
 from llm_grounding.knowledge.chunking.protocol import Chunker
+from llm_grounding.knowledge.chunking.recursive_token import RecursiveTokenChunker
+from llm_grounding.knowledge.chunking.sentence_window import SentenceWindowChunker
+from llm_grounding.knowledge.chunking.structural import StructuralChunker
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
 from llm_grounding.parsing.protocol import DocumentParser
 from llm_grounding.parsing.pymupdf import PyMuPDFDocumentParser
@@ -136,6 +140,10 @@ class ComponentRegistry:
         self.chunkers: dict[str, Callable[[ChunkerConfig], Chunker]] = {
             "block_aware": BlockAwareChunker,
             "fixed_window": FixedWindowChunker,
+            "recursive_token": RecursiveTokenChunker,
+            "hierarchical": HierarchicalChunker,
+            "structural": StructuralChunker,
+            "sentence_window": SentenceWindowChunker,
         }
         self._retriever_factories: dict[
             str, Callable[[RetrieverConfig, RetrieverDependencies], Retriever]

@@ -1,0 +1,8 @@
+id: chunker_structural
+type: chunker
+implementation: structural
+description: Preserve parser-provided headings and structural source blocks.
+config:
+  version: '1'
+  target_chars: 800
+  overlap_chars: 0

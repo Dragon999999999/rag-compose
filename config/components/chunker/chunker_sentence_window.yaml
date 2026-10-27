@@ -1,0 +1,9 @@
+id: chunker_sentence_window
+type: chunker
+implementation: sentence_window
+description: Index sentence groups with surrounding context windows.
+config:
+  version: '1'
+  sentences_per_chunk: 1
+  sentence_window: 2
+  overlap_chars: 0

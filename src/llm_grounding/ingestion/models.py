@@ -15,15 +15,29 @@ from pydantic import (
 
 
 class ChunkerConfig(BaseModel):
-    """Size chunks by Unicode characters, with overlap strictly below target size."""
+    """Configure character, token, structural, or sentence-based chunking."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str | None = None
     type: Literal["chunker"] = "chunker"
-    implementation: Literal["fixed_window", "block_aware"] = "block_aware"
+    implementation: Literal[
+        "fixed_window",
+        "block_aware",
+        "recursive_token",
+        "hierarchical",
+        "structural",
+        "sentence_window",
+    ] = "block_aware"
     version: Literal["1"] = "1"
     target_chars: int = Field(default=800, ge=32, le=100000)
     overlap_chars: int = Field(default=120, ge=0)
+    target_tokens: int = Field(default=256, ge=1, le=100000)
+    max_tokens: int | None = Field(default=None, ge=1, le=100000)
+    overlap_tokens: int = Field(default=32, ge=0, le=100000)
+    tokenizer: Literal["whitespace", "unicode_words"] = "unicode_words"
+    hierarchical_levels: tuple[int, ...] = (2048, 512, 128)
+    sentences_per_chunk: int = Field(default=1, ge=1, le=100)
+    sentence_window: int = Field(default=2, ge=0, le=100)
 
     @model_validator(mode="before")
     @classmethod
@@ -33,7 +47,15 @@ class ChunkerConfig(BaseModel):
             return value
         selected = value.get("type")
         if (
-            selected in {"fixed_window", "block_aware"}
+            selected
+            in {
+                "fixed_window",
+                "block_aware",
+                "recursive_token",
+                "hierarchical",
+                "structural",
+                "sentence_window",
+            }
             and "implementation" not in value
         ):
             normalized = dict(value)
@@ -47,6 +69,24 @@ class ChunkerConfig(BaseModel):
         """Require progress between adjacent overlapping chunks."""
         if self.overlap_chars >= self.target_chars:
             raise ValueError("overlap_chars must be less than target_chars")
+        maximum = self.max_tokens or self.target_tokens
+        if self.max_tokens is not None and self.max_tokens < self.target_tokens:
+            raise ValueError("max_tokens must be at least target_tokens")
+        if self.overlap_tokens >= self.target_tokens:
+            raise ValueError("overlap_tokens must be less than target_tokens")
+        if not self.hierarchical_levels:
+            raise ValueError("hierarchical_levels must not be empty")
+        if any(level < 1 for level in self.hierarchical_levels):
+            raise ValueError("hierarchical_levels must contain positive values")
+        if any(
+            parent <= child
+            for parent, child in zip(
+                self.hierarchical_levels, self.hierarchical_levels[1:], strict=False
+            )
+        ):
+            raise ValueError("hierarchical_levels must be strictly descending")
+        if self.overlap_tokens >= maximum:
+            raise ValueError("overlap_tokens must be less than the token limit")
         return self
 
 

@@ -1,0 +1,10 @@
+id: chunker_recursive_tokens
+type: chunker
+implementation: recursive_token
+description: Recursively split text at natural boundaries under a token limit.
+config:
+  version: '1'
+  target_tokens: 256
+  max_tokens: 384
+  overlap_tokens: 32
+  tokenizer: unicode_words
