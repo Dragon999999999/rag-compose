@@ -59,6 +59,8 @@ class ComponentConfig(BaseModel):
             "basic_grounding": ("decision_policy", "basic_grounding"),
             "grounded_answer": ("renderer", "grounded_answer"),
             "qdrant": ("vector_backend", "qdrant"),
+            "pgvector": ("vector_backend", "pgvector"),
+            "faiss": ("vector_backend", "faiss"),
         }
         selected_type = value.get("type")
         if not isinstance(selected_type, str):
@@ -277,7 +279,15 @@ class VectorBackendConfig(ComponentConfig):
     implementation: str = Field(default="qdrant", min_length=1)
     index_version: str = Field(default="1", min_length=1, max_length=32)
     representation: Literal["dense"] = "dense"
-    similarity_metric: Literal["cosine"] = "cosine"
+    similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
+    index_type: Literal["flat", "hnsw", "ivf"] = "flat"
+    hnsw_m: int = Field(default=16, ge=4, le=256)
+    hnsw_ef_construction: int = Field(default=100, ge=4, le=10000)
+    hnsw_ef_search: int = Field(default=64, ge=1, le=10000)
+    nlist: int = Field(default=100, ge=1, le=100000)
+    nprobe: int = Field(default=8, ge=1, le=100000)
+    idle_timeout_seconds: float = Field(default=600, ge=0, le=86400)
+    storage_path: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -541,6 +551,11 @@ class PipelineConfig(BaseModel):
                     self.representation.vector_backend.implementation
                     if self.representation.vector_backend is not None
                     else None
+                ),
+                "vector_backend_config": (
+                    self.representation.vector_backend.model_dump(mode="json")
+                    if self.representation.vector_backend is not None
+                    else {}
                 ),
                 "index_version": (
                     self.representation.vector_backend.index_version

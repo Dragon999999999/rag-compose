@@ -244,6 +244,7 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
         requirements = self._registry.query_requirements(architecture.retriever)
         dense_required = "dense_vector_index" in requirements
+        vector_store = self._vector_store_for(ingestion) if dense_required else None
         query_embedding = ingestion.embedding if dense_required else None
         if dense_required:
             if ingestion.embedding is None or ingestion.vector_backend is None:
@@ -251,7 +252,7 @@ class PipelineRuntimeResolver:
                     "The selected dense query pipeline requires an indexed "
                     "embedding and vector backend"
                 )
-            if self._vectors is None:
+            if vector_store is None:
                 raise PipelineResolutionError(
                     "The selected dense query pipeline has no vector backend available"
                 )
@@ -273,7 +274,7 @@ class PipelineRuntimeResolver:
                 )
         dependencies = RetrieverDependencies(
             self._repository,
-            self._vectors if dense_required else None,
+            vector_store,
             self._embedder(query_embedding) if query_embedding is not None else None,
             query_embedding,
         )
@@ -303,6 +304,13 @@ class PipelineRuntimeResolver:
             reranker_builder=self._registry.build_reranker,
             repository=self._repository,
         )
+
+    def _vector_store_for(self, ingestion: IngestionConfig) -> VectorStore | None:
+        """Resolve a project pipeline's backend through the application router."""
+        if self._vectors is None:
+            return None
+        resolver = getattr(self._vectors, "for_ingestion_config", None)
+        return resolver(ingestion) if resolver is not None else self._vectors
 
     def _embedder(self, config: EmbeddingConfig) -> Embedder:
         """Reuse embedding adapters by representation identity with LRU bounds."""

@@ -6,7 +6,7 @@ allOf:
   - type: object
     properties:
       type: {const: vector_backend}
-      implementation: {enum: [qdrant]}
+      implementation: {enum: [qdrant, pgvector, faiss]}
       config:
         type: object
         additionalProperties: false
@@ -16,4 +16,54 @@ allOf:
             minLength: 1
             maxLength: 32
             default: '1'
+            x-override-scopes: []
+          similarity_metric:
+            type: string
+            enum: [cosine, dot, euclidean]
+            default: cosine
+            x-override-scopes: []
+          index_type:
+            type: string
+            enum: [flat, hnsw, ivf]
+            default: flat
+            x-override-scopes: []
+          hnsw_m:
+            type: integer
+            minimum: 4
+            maximum: 256
+            default: 16
+            x-override-scopes: []
+          hnsw_ef_construction:
+            type: integer
+            minimum: 4
+            maximum: 10000
+            default: 100
+            x-override-scopes: []
+          hnsw_ef_search:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 64
+            x-override-scopes: []
+          nlist:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 100
+            x-override-scopes: []
+          nprobe:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 8
+            x-override-scopes: []
+          idle_timeout_seconds:
+            type: number
+            minimum: 0
+            maximum: 86400
+            default: 600
+            x-override-scopes: []
+          storage_path:
+            type: string
+            minLength: 1
             x-override-scopes: []

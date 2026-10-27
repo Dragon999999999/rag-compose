@@ -22,7 +22,6 @@ from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
     PipelineConfig,
-    VectorBackendConfig,
 )
 from llm_grounding.infrastructure.config.settings import MinioSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
@@ -30,7 +29,10 @@ from llm_grounding.infrastructure.database.session import create_session_factory
 from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
-from llm_grounding.infrastructure.vector.factory import VectorStoreFactory
+from llm_grounding.infrastructure.vector.factory import (
+    VectorStoreFactory,
+    VectorStoreRouter,
+)
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.ingestion.service import DocumentIngestionService
@@ -172,12 +174,10 @@ def create_phase_one_application(
     if ingestion_config.embedding is not None:
         if ingestion_config.vector_backend is None:
             raise RuntimeError("Dense ingestion requires a resolved vector backend")
-        vectors = VectorStoreFactory().create(
-            VectorBackendConfig(
-                implementation=ingestion_config.vector_backend,
-                index_version=ingestion_config.index_version,
-            ),
+        vectors = VectorStoreRouter(
+            VectorStoreFactory(),
             repository,
+            ingestion_config,
         )
     catalog = model_catalog or load_model_catalog()
     local_model_manager = local_model_manager or LocalModelManager(

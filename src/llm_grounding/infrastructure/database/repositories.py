@@ -87,6 +87,11 @@ class PostgresRepository:
         """Inject a factory so each operation owns an isolated async session."""
         self._sessions = sessions
 
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Expose the session boundary to PostgreSQL-backed derived stores."""
+        return self._sessions
+
     async def upsert_component_definition(
         self,
         category: str,

@@ -230,6 +230,7 @@ class IngestionConfig(BaseModel):
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embedding: EmbeddingConfig | None = Field(default_factory=EmbeddingConfig)
     vector_backend: str | None = Field(default="qdrant", min_length=1)
+    vector_backend_config: dict[str, object] = Field(default_factory=dict)
     index_version: Literal["1"] = "1"
 
     @model_validator(mode="after")
@@ -249,6 +250,12 @@ class IngestionConfig(BaseModel):
                 raise ValueError("Qdrant supports dense embeddings only")
             if self.embedding.similarity_metric != "cosine":
                 raise ValueError("Qdrant requires cosine similarity")
+            if self.vector_backend_config.get("index_type", "flat") != "flat":
+                raise ValueError("Qdrant does not support configurable index types")
+        if self.embedding is not None and self.embedding.representation != "dense":
+            raise ValueError(
+                "Configured vector backends currently support dense embeddings only"
+            )
         return self
 
     def identity(self) -> str:

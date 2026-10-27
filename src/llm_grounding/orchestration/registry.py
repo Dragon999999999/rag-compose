@@ -120,7 +120,9 @@ class ComponentRegistry:
             "postgres_fts": self._build_sparse_retriever,
             "hybrid_rrf": self._build_hybrid_retriever,
         }
-        self.vector_backends: frozenset[str] = frozenset({"qdrant"})
+        self.vector_backends: frozenset[str] = frozenset(
+            {"qdrant", "pgvector", "faiss"}
+        )
 
     def build_parser(self, config: ComponentConfig) -> DocumentParser:
         """Construct the configured parser from the closed parser registry."""

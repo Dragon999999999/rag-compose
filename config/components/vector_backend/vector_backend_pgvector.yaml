@@ -1,0 +1,11 @@
+id: vector_backend_pgvector
+type: vector_backend
+implementation: pgvector
+description: PostgreSQL pgvector index backend using the existing database.
+config:
+  index_version: '1'
+  index_type: hnsw
+  similarity_metric: cosine
+  hnsw_m: 16
+  hnsw_ef_construction: 100
+  hnsw_ef_search: 64

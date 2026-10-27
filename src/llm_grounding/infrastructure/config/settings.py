@@ -96,6 +96,18 @@ class QdrantSettings:
 
 
 @dataclass(frozen=True)
+class FaissSettings:
+    """Persistent root for FAISS index files, outside the repository checkout."""
+
+    root: str
+
+    @classmethod
+    def from_environment(cls) -> "FaissSettings":
+        """Read the optional FAISS storage root from the environment."""
+        return cls(_value("FAISS_STORAGE_ROOT", "~/.cache/llm-grounding/faiss"))
+
+
+@dataclass(frozen=True)
 class ModelStorageSettings:
     """Persistent root for downloaded local model weights."""
 

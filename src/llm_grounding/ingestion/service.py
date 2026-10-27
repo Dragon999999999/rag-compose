@@ -89,6 +89,13 @@ class DocumentIngestionService:
         )
         self._vectors = vectors
 
+    def _vectors_for(self, config: IngestionConfig) -> VectorStore | None:
+        """Resolve the backend selected by the effective project pipeline."""
+        if config.embedding is None or self._vectors is None:
+            return None
+        resolver = getattr(self._vectors, "for_ingestion_config", None)
+        return resolver(config) if resolver is not None else self._vectors
+
     def _embedder_for(self, config: IngestionConfig) -> Embedder:
         """Return the cached provider for one exact embedding configuration."""
         if config.embedding is None:
@@ -140,22 +147,25 @@ class DocumentIngestionService:
         association = await self._repository.attach_document(
             project_id, document.id, ingestion.id
         )
+        vector_store = self._vectors_for(config)
         if existing is not None and existing.status == IngestionStatus.READY:
             if config.embedding is None:
                 return document, association, existing
-            if self._vectors is None:
+            if vector_store is None:
                 raise RuntimeError(
                     "A vector backend is required for dense ingestion but is "
                     "unavailable"
                 )
-            if await self._vectors.associate_ingestion(project_id, existing.id):
+            if await vector_store.associate_ingestion(project_id, existing.id):
                 return document, association, existing
         await self.ingest(
             project_id,
             document,
             ingestion,
             config,
-            embedder=self._embedder_for(config),
+            embedder=(
+                self._embedder_for(config) if config.embedding is not None else None
+            ),
         )
         refreshed = await self._repository.find_ingestion(
             document.id, config.identity()
@@ -183,6 +193,7 @@ class DocumentIngestionService:
             if config.embedding is not None
             else None
         )
+        vector_store = self._vectors_for(config)
         traces = TraceRecorder()
         total_span = traces.start("ingestion", stage_type=StageType.INGESTION)
         started = monotonic()
@@ -190,11 +201,11 @@ class DocumentIngestionService:
         chunks: tuple[RetrievalUnit, ...] = ()
         try:
             if config.embedding is not None:
-                if self._vectors is None or active_embedder is None:
+                if vector_store is None or active_embedder is None:
                     raise RuntimeError(
                         "Dense ingestion requires both an embedder and vector backend"
                     )
-                await self._vectors.delete_ingestion(ingestion.id)
+                await vector_store.delete_ingestion(ingestion.id)
             await self._repository.clear_ingestion_representation(ingestion.id)
             await self._repository.set_ingestion_status(
                 ingestion.id, IngestionStatus.PARSING
@@ -221,7 +232,7 @@ class DocumentIngestionService:
             )
             await self._repository.store_chunks(chunks)
             if config.embedding is not None:
-                assert self._vectors is not None and active_embedder is not None
+                assert vector_store is not None and active_embedder is not None
                 await self._repository.set_ingestion_status(
                     ingestion.id, IngestionStatus.EMBEDDING
                 )
@@ -243,7 +254,7 @@ class DocumentIngestionService:
                     ingestion.id, IngestionStatus.INDEXING
                 )
                 await self._traced(
-                    traces, "index", self._vectors.upsert(project_id, chunks, vectors)
+                    traces, "index", vector_store.upsert(project_id, chunks, vectors)
                 )
                 # Re-indexing one shared representation must restore every project's
                 # payload association without parsing or embedding its chunks again.
@@ -251,7 +262,7 @@ class DocumentIngestionService:
                     associated_project_id
                 ) in await self._repository.project_ids_for_ingestion(ingestion.id):
                     if associated_project_id != project_id:
-                        await self._vectors.associate_ingestion(
+                        await vector_store.associate_ingestion(
                             associated_project_id, ingestion.id
                         )
             await self._repository.set_ingestion_status(
