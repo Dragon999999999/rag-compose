@@ -59,9 +59,9 @@
 .editor-checkbox { align-items: center; display: flex !important; gap: 7px !important; min-height: 36px; min-width: 0; padding-top: 0; white-space: nowrap; }
 .editor-checkbox input { accent-color: var(--color-primary); flex: 0 0 18px; }
 
-.pipeline-editor-layout { align-items: start; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); margin: 0 auto; max-width: 1280px; }
+.pipeline-editor-layout { align-items: start; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); margin: 0 auto; max-width: 1280px; min-width: 0; }
 .pipeline-graph, .pipeline-inspector { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
-.pipeline-graph { min-width: 0; padding: 22px; }
+.pipeline-graph { min-width: 0; overflow: hidden; padding: 22px; }
 .graph-section h2 { color: var(--color-text-muted); font-size: 10px; letter-spacing: .1em; margin: 0 0 12px; text-transform: uppercase; }
 .graph-section-heading { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 14px; }
 .graph-section-heading h2 { margin-bottom: 5px; }
@@ -81,7 +81,7 @@
 .reused-node { z-index: 2; }
 .reused-node .graph-add-branch { opacity: .82; }
 .graph-arrow { color: var(--color-primary); font-size: 20px; line-height: 1; }
-.graph-canvas-scroll { overflow: auto; padding: 8px 8px 18px 86px; scrollbar-gutter: stable; }
+.graph-canvas-scroll { max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; padding: 8px 8px 18px 86px; scrollbar-gutter: stable; }
 .graph-canvas { position: relative; transition: height var(--transition-fast), min-width var(--transition-fast); }
 .graph-connectors { inset: 0; overflow: visible; pointer-events: none; position: absolute; z-index: 0; }
 .graph-connector { fill: none; stroke: rgb(146 147 246 / 55%); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
@@ -99,8 +99,8 @@
 .compatibility-warning, .inspector-warning { background: rgb(229 184 110 / 10%); border: 1px solid rgb(229 184 110 / 28%); border-radius: var(--radius-sm); color: var(--color-warning); font-size: 12px; line-height: 1.45; margin: 12px 0 0; padding: 10px 12px; }
 
 .pipeline-inspector { min-height: 420px; padding: 18px; position: sticky; top: 24px; }
-.alternatives-graph { display: grid; gap: 22px; }
-.alternative-section { border-bottom: 1px solid var(--color-border); padding-bottom: 20px; }
+.alternatives-graph { display: grid; gap: 22px; min-width: 0; }
+.alternative-section { border-bottom: 1px solid var(--color-border); min-width: 0; padding-bottom: 20px; }
 .alternative-section:last-child { border-bottom: 0; padding-bottom: 0; }
 .alternative-header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
 .alternative-kicker { color: var(--color-accent); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
