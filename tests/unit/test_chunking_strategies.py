@@ -126,7 +126,7 @@ async def test_sentence_window_keeps_index_text_separate_from_context() -> None:
 
 
 def test_chunker_yaml_definitions_are_registered_and_buildable() -> None:
-    """All four shipped YAML definitions resolve through the normal factory."""
+    """All shipped deterministic and model-backed definitions resolve."""
     configuration = load_configuration_registry()
     registry = ComponentRegistry()
     expected = {
@@ -134,10 +134,16 @@ def test_chunker_yaml_definitions_are_registered_and_buildable() -> None:
         "chunker_hierarchical": "hierarchical",
         "chunker_structural": "structural",
         "chunker_sentence_window": "sentence_window",
+        "chunker_semantic": "semantic",
+        "chunker_llm_guided": "llm_guided",
+        "chunker_late": "late_chunking",
     }
 
     for component_id, implementation in expected.items():
         definition = configuration.component("chunker", component_id)
         assert definition.implementation == implementation
-        config = configuration._component("chunker", component_id, ChunkerConfig)
-        assert registry.build_chunker(config).__class__.__name__
+        config = configuration._chunker(component_id)
+        if implementation in {"semantic", "llm_guided", "late_chunking"}:
+            assert config.model_id
+        else:
+            assert registry.build_chunker(config).__class__.__name__

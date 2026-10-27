@@ -68,10 +68,18 @@ class SparseEmbedding:
 
 @dataclass(frozen=True)
 class TokenEmbedding:
-    """Represent token-level embeddings used by late-interaction retrievers."""
+    """Represent token-level embeddings and optional source-token offsets."""
 
     values: tuple[tuple[float, ...], ...]
     model_identity: str
+    offsets: tuple[tuple[int, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate optional offsets without breaking legacy token providers."""
+        if self.offsets and len(self.offsets) != len(self.values):
+            raise ValueError("Token embedding offsets must match token values")
+        if any(start < 0 or end < start for start, end in self.offsets):
+            raise ValueError("Token embedding offsets must be non-negative spans")
 
     @property
     def token_count(self) -> int:

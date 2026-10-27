@@ -237,11 +237,16 @@ class DocumentIngestionService:
                 await self._repository.set_ingestion_status(
                     ingestion.id, IngestionStatus.EMBEDDING
                 )
-                vectors = await self._traced(
-                    traces,
-                    "embed",
-                    active_embedder.embed_documents([chunk.text for chunk in chunks]),
-                )
+                # Late chunkers expose pooled vectors from their preceding chunk pass;
+                # all other chunkers retain the ordinary document-embedding path.
+                late_embeddings = getattr(self._chunker, "embed_chunks", None)
+                if callable(late_embeddings):
+                    embedding_operation = late_embeddings(chunks)
+                else:
+                    embedding_operation = active_embedder.embed_documents(
+                        [chunk.text for chunk in chunks]
+                    )
+                vectors = await self._traced(traces, "embed", embedding_operation)
                 if any(
                     vector.model_identity != ingestion.embedding_hash
                     or vector.dimension != ingestion.dimension

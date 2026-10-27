@@ -1,0 +1,23 @@
+id: embedding_jina_v2_base_en
+stage: embedding
+location: local
+backend: sentence_transformers
+name: jinaai/jina-embeddings-v2-base-en
+source:
+  type: huggingface
+  repository: jinaai/jina-embeddings-v2-base-en
+storage:
+  relative_path: embedding/jina-embeddings-v2-base-en
+runtime:
+  type: in_process
+  device: cuda
+  idle_timeout_seconds: 600
+  memory_limit: 4g
+parameters:
+  dimension: 768
+  normalize: true
+  batch_size: 1
+  max_length: 2048
+  trust_remote_code: true
+  late_chunking: true
+  token_endpoint: /v1/token_embeddings

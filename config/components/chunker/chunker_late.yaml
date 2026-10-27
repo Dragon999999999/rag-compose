@@ -1,0 +1,10 @@
+id: chunker_late
+type: chunker
+implementation: late_chunking
+description: Pool aligned contextual token vectors for reusable chunk embeddings.
+config:
+  version: '1'
+  model_id: embedding_jina_v2_base_en
+  target_tokens: 512
+  max_tokens: 512
+  tokenizer: unicode_words

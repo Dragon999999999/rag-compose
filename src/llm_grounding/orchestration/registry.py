@@ -11,6 +11,7 @@ from typing import cast
 
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
+from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
@@ -31,8 +32,16 @@ from llm_grounding.knowledge.basic import BasicKnowledgeBuilder
 from llm_grounding.knowledge.chunking.block_aware import BlockAwareChunker
 from llm_grounding.knowledge.chunking.fixed_window import FixedWindowChunker
 from llm_grounding.knowledge.chunking.hierarchical import HierarchicalChunker
+from llm_grounding.knowledge.chunking.late_chunking import LateChunker
+from llm_grounding.knowledge.chunking.llm_guided import (
+    BoundaryGenerator,
+    BoundaryOutput,
+    LLMGuidedChunker,
+    LocalBoundaryGenerator,
+)
 from llm_grounding.knowledge.chunking.protocol import Chunker
 from llm_grounding.knowledge.chunking.recursive_token import RecursiveTokenChunker
+from llm_grounding.knowledge.chunking.semantic import SemanticChunker
 from llm_grounding.knowledge.chunking.sentence_window import SentenceWindowChunker
 from llm_grounding.knowledge.chunking.structural import StructuralChunker
 from llm_grounding.knowledge.protocol import KnowledgeBuilder
@@ -73,6 +82,19 @@ class RetrieverDependencies:
     multivector_store: object | None = None
 
 
+class _RemoteBoundaryGenerator:
+    """Adapt the existing structured remote model client to chunking boundaries."""
+
+    def __init__(self, client: AqueductModelClient) -> None:
+        """Retain a credential-free remote client until chunking is requested."""
+        self._client = client
+
+    async def generate(self, prompt: str, max_new_tokens: int) -> str:
+        """Request validated boundary JSON from the configured remote model."""
+        result = await self._client.generate(prompt, BoundaryOutput)
+        return result.output.model_dump_json()
+
+
 def _vector_retriever_requires_runtime_dependencies() -> Retriever:
     """Reserve the registered vector stage for the Qdrant composition root."""
     raise ConfigurationError(
@@ -85,6 +107,14 @@ def _retriever_requires_runtime_dependencies(name: str) -> Retriever:
     """Reserve a retriever name for construction by the application composition root."""
     raise ConfigurationError(
         f"The {name} retriever requires project-scoped runtime dependencies; "
+        "construct it through the application bootstrap."
+    )
+
+
+def _chunker_requires_runtime_dependencies(name: str) -> Chunker:
+    """Reserve a model-backed chunker for the dependency-aware factory path."""
+    raise ConfigurationError(
+        f"The {name} chunker requires model-scoped runtime dependencies; "
         "construct it through the application bootstrap."
     )
 
@@ -144,6 +174,15 @@ class ComponentRegistry:
             "hierarchical": HierarchicalChunker,
             "structural": StructuralChunker,
             "sentence_window": SentenceWindowChunker,
+            "semantic": lambda config: _chunker_requires_runtime_dependencies(
+                "semantic"
+            ),
+            "llm_guided": lambda config: _chunker_requires_runtime_dependencies(
+                "llm_guided"
+            ),
+            "late_chunking": lambda config: _chunker_requires_runtime_dependencies(
+                "late_chunking"
+            ),
         }
         self._retriever_factories: dict[
             str, Callable[[RetrieverConfig, RetrieverDependencies], Retriever]
@@ -172,10 +211,68 @@ class ComponentRegistry:
             ) from exc
         return factory()
 
-    def build_chunker(self, config: ChunkerConfig) -> Chunker:
-        """Construct the configured chunker from validated operational settings."""
+    def build_chunker(
+        self,
+        config: ChunkerConfig,
+        *,
+        model_catalog: ModelCatalog | None = None,
+        local_model_manager: LocalModelManager | None = None,
+    ) -> Chunker:
+        """Construct a chunker and resolve any model through shared providers."""
+        implementation = config.implementation or config.type
+        if implementation in {"semantic", "late_chunking"}:
+            if model_catalog is None or local_model_manager is None:
+                raise ConfigurationError(
+                    f"{implementation} chunking requires model catalog and manager"
+                )
+            if config.model_id is None:
+                raise ConfigurationError(f"{implementation} chunking requires model_id")
+            embedding_config = model_catalog.embedding(config.model_id)
+            if implementation == "semantic":
+                embedder = build_embedder(embedding_config, local_model_manager)
+                if not hasattr(embedder, "embed_documents"):
+                    raise ConfigurationError(
+                        "Semantic chunking requires a dense embedding provider"
+                    )
+                return SemanticChunker(config, cast(Embedder, embedder))
+            token_config = embedding_config.model_copy(
+                update={"representation": "multivector"}
+            )
+            if not embedding_config.late_chunking:
+                raise ConfigurationError(
+                    f"Embedding model {config.model_id} does not declare "
+                    "late_chunking support"
+                )
+            token_embedder = build_embedder(token_config, local_model_manager)
+            if not hasattr(token_embedder, "embed_token_documents"):
+                raise ConfigurationError(
+                    "Late chunking requires a token-capable embedding provider"
+                )
+            return LateChunker(
+                config,
+                cast(TokenEmbedder, token_embedder),
+                embedding_config.vector_identity(),
+            )
+        if implementation == "llm_guided":
+            if config.model_id is None:
+                raise ConfigurationError("llm_guided chunking requires model_id")
+            generator: BoundaryGenerator
+            if (
+                model_catalog is not None
+                and config.model_id in model_catalog.reasoning_models
+            ):
+                generator = _RemoteBoundaryGenerator(
+                    AqueductModelClient(model_catalog.reasoning(config.model_id))
+                )
+            elif local_model_manager is not None:
+                generator = LocalBoundaryGenerator(config.model_id, local_model_manager)
+            else:
+                raise ConfigurationError(
+                    "llm_guided chunking requires a remote model or LocalModelManager"
+                )
+            return LLMGuidedChunker(config, generator)
         try:
-            factory = self.chunkers[config.implementation or config.type]
+            factory = self.chunkers[implementation]
         except KeyError as exc:
             raise ConfigurationError(
                 f"Unknown chunker implementation {config.implementation!r}"

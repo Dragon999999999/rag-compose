@@ -67,6 +67,25 @@ class LocalModelHandle:
             (int(item["index"]), float(item["relevance_score"])) for item in results
         )
 
+    async def generate(self, prompt: str, *, max_new_tokens: int = 256) -> str:
+        """Generate text through the local chat-completions-compatible endpoint."""
+        response = await self.client.request(
+            "/v1/chat/completions",
+            {
+                "model": self.definition.name,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_new_tokens,
+                "temperature": 0,
+            },
+        )
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise RuntimeError("Local generation server returned no choices")
+        message = choices[0].get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise RuntimeError("Local generation server returned no text content")
+        return message["content"]
+
     async def sparse_embed(self, texts: list[str]) -> tuple[SparseEmbedding, ...]:
         """Create learned sparse vectors through the configured model endpoint.
 
@@ -119,10 +138,17 @@ class LocalModelHandle:
             values = item.get("embedding", item.get("token_embeddings"))
             if not isinstance(values, list):
                 raise RuntimeError("Local token model returned no token embeddings")
+            offsets_value = item.get("token_offsets", [])
+            offsets = (
+                tuple((int(pair[0]), int(pair[1])) for pair in offsets_value)
+                if isinstance(offsets_value, list)
+                else ()
+            )
             vectors.append(
                 TokenEmbedding(
                     tuple(tuple(float(value) for value in token) for token in values),
                     self.definition.id,
+                    offsets,
                 )
             )
         return tuple(vectors)

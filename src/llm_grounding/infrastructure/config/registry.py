@@ -145,6 +145,17 @@ class ConfigurationRegistry:
                     "vector_backend", vector_backend_id, VectorBackendConfig
                 )
                 self._validate_backend_compatibility(embedding_config, vector_backend)
+            chunker = self._chunker(source.representation.chunker)
+            embedding_ref = (
+                self._model_id_for_component("embedding", embedding)
+                if embedding is not None
+                else None
+            )
+            if chunker.implementation == "late_chunking":
+                if embedding_ref != chunker.model_id:
+                    raise ValueError(
+                        "late_chunking model_id must match the ingestion embedding"
+                    )
             representation = PipelineRepresentationConfig(
                 parser=self._component(
                     "parser", source.representation.parser, ComponentConfig
@@ -158,12 +169,10 @@ class ConfigurationRegistry:
                     if source.representation.knowledge_builder is not None
                     else None
                 ),
-                chunker=self._component(
-                    "chunker", source.representation.chunker, ChunkerConfig
-                ),
+                chunker=chunker,
                 embedding=(
                     PipelineEmbeddingConfig(
-                        model_ref=self._model_id_for_component("embedding", embedding),
+                        model_ref=embedding_ref,
                         component_id=embedding,
                     )
                     if embedding is not None
@@ -240,7 +249,7 @@ class ConfigurationRegistry:
     ) -> _ModelT:
         """Validate one component's operational settings with its runtime schema."""
         definition = self.component(category, component_id)
-        if category not in {"embedding", "reasoner", "reranker"}:
+        if category not in {"embedding", "reasoner", "reranker", "chunker"}:
             if definition.model_id is not None:
                 raise ValueError(
                     f"{category} component {component_id} must not reference a model"
@@ -264,6 +273,23 @@ class ConfigurationRegistry:
             raise ValueError(
                 f"Invalid {category} component configuration ID: {component_id}"
             ) from exc
+
+    def _chunker(self, component_id: str) -> ChunkerConfig:
+        """Resolve a chunker and validate its optional model-stage reference."""
+        definition = self.component("chunker", component_id)
+        implementation = definition.implementation
+        if implementation in {"semantic", "late_chunking", "llm_guided"}:
+            if definition.model_id is None:
+                raise ValueError(f"Chunker component {component_id} requires model_id")
+            model = self.model(definition.model_id)
+            expected = "embedding" if implementation != "llm_guided" else None
+            if expected is not None:
+                self._validate_model_stage(definition.model_id, model, expected)
+            elif model.stage not in {"reasoner", "validation"}:
+                raise ValueError(
+                    f"Model {definition.model_id} is not a generation model"
+                )
+        return self._component("chunker", component_id, ChunkerConfig)
 
     def _model_config(self, model_id: str) -> ModelConfig:
         """Resolve a standalone remote model to the existing LLM runtime schema."""
@@ -324,6 +350,7 @@ class ConfigurationRegistry:
                 query_prefix=definition.query_prefix,
                 document_prefix=definition.document_prefix,
                 trust_remote_code=definition.trust_remote_code,
+                late_chunking=bool(definition.parameter("late_chunking", False)),
             )
         if isinstance(definition, FakeModelDefinition):
             return EmbeddingConfig(

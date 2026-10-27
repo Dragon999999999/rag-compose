@@ -7,7 +7,7 @@ allOf:
     properties:
       type: {const: chunker}
       implementation:
-        {enum: [block_aware, fixed_window, recursive_token, hierarchical, structural, sentence_window]}
+        {enum: [block_aware, fixed_window, recursive_token, hierarchical, structural, sentence_window, semantic, llm_guided, late_chunking]}
       config:
         type: object
         additionalProperties: false
@@ -65,4 +65,31 @@ allOf:
             minimum: 0
             maximum: 100
             default: 2
+            x-override-scopes: [pipeline]
+          model_id:
+            type: string
+            minLength: 1
+            x-override-scopes: []
+          semantic_threshold:
+            type: number
+            minimum: 0
+            maximum: 2
+            default: 0.25
+            x-override-scopes: [pipeline]
+          semantic_percentile:
+            type: [number, 'null']
+            minimum: 0
+            maximum: 100
+            x-override-scopes: [pipeline]
+          minimum_chunk_tokens:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 1
+            x-override-scopes: [pipeline]
+          llm_max_new_tokens:
+            type: integer
+            minimum: 1
+            maximum: 4096
+            default: 256
             x-override-scopes: [pipeline]

@@ -2,7 +2,9 @@
 
 Chunkers must preserve every nonempty TEXT character, deterministic ordering, and
 evidence offsets. They may duplicate overlap but must not cross document boundaries.
-Implementations are pure transformations and perform no embedding or persistence.
+Implementations may use injected embedding or generation providers, but they do not
+own persistence or model lifecycle. Late-chunking implementations may additionally
+expose the optional ``embed_chunks`` operation used to reuse pooled vectors.
 Invalid configuration or mixed-document input must raise ValueError.
 """
 
@@ -13,7 +15,7 @@ from llm_grounding.domain.evidence import EvidenceUnit
 
 
 class Chunker(Protocol):
-    """Derive chunks independently of parsers and embedding providers."""
+    """Derive chunks while keeping model lifecycle outside the chunking boundary."""
 
     async def chunk(
         self, evidence: tuple[EvidenceUnit, ...], ingestion_id: str, document_name: str

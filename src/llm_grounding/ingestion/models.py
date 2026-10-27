@@ -27,6 +27,9 @@ class ChunkerConfig(BaseModel):
         "hierarchical",
         "structural",
         "sentence_window",
+        "semantic",
+        "llm_guided",
+        "late_chunking",
     ] = "block_aware"
     version: Literal["1"] = "1"
     target_chars: int = Field(default=800, ge=32, le=100000)
@@ -38,6 +41,11 @@ class ChunkerConfig(BaseModel):
     hierarchical_levels: tuple[int, ...] = (2048, 512, 128)
     sentences_per_chunk: int = Field(default=1, ge=1, le=100)
     sentence_window: int = Field(default=2, ge=0, le=100)
+    model_id: str | None = Field(default=None, min_length=1)
+    semantic_threshold: float = Field(default=0.25, ge=0, le=2)
+    semantic_percentile: float | None = Field(default=None, ge=0, le=100)
+    minimum_chunk_tokens: int = Field(default=1, ge=1, le=100000)
+    llm_max_new_tokens: int = Field(default=256, ge=1, le=4096)
 
     @model_validator(mode="before")
     @classmethod
@@ -55,6 +63,9 @@ class ChunkerConfig(BaseModel):
                 "hierarchical",
                 "structural",
                 "sentence_window",
+                "semantic",
+                "llm_guided",
+                "late_chunking",
             }
             and "implementation" not in value
         ):
@@ -87,6 +98,13 @@ class ChunkerConfig(BaseModel):
             raise ValueError("hierarchical_levels must be strictly descending")
         if self.overlap_tokens >= maximum:
             raise ValueError("overlap_tokens must be less than the token limit")
+        if self.minimum_chunk_tokens > maximum:
+            raise ValueError("minimum_chunk_tokens must not exceed the token limit")
+        if self.implementation in {"semantic", "llm_guided", "late_chunking"}:
+            if self.model_id is None:
+                raise ValueError(
+                    f"{self.implementation} chunking requires a registered model_id"
+                )
         return self
 
 
@@ -149,6 +167,7 @@ class EmbeddingConfig(BaseModel):
     query_prefix: str = ""
     document_prefix: str = ""
     trust_remote_code: bool = False
+    late_chunking: bool = False
     base_url: HttpUrl | None = None
     api_key_env: str = "AQUEDUCT_API_KEY"
     api_key_file_env: str = "AQUEDUCT_API_KEY_FILE"

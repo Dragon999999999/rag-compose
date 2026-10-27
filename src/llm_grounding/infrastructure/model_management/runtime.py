@@ -358,7 +358,11 @@ class _TransformersModel:
         )
         model_name = definition.name.casefold()
         reranker_kind = str(definition.parameter("reranker_type", ""))
-        if reranker_kind == "generative" or "qwen3-reranker" in model_name:
+        if (
+            reranker_kind == "generative"
+            or bool(definition.parameter("generation_model", False))
+            or "qwen3-reranker" in model_name
+        ):
             model_loader = AutoModelForCausalLM
         elif definition.stage == "reranker":
             model_loader = AutoModelForSequenceClassification
@@ -387,6 +391,8 @@ class _TransformersModel:
 
     def request(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         """Execute the supported dense, sparse, or token representation request."""
+        if path.endswith("/chat/completions"):
+            return self._generate(payload)
         if path.endswith("/rerank") or path == "/rerank":
             query = payload.get("query")
             texts = payload.get("texts")
@@ -407,6 +413,48 @@ class _TransformersModel:
         if path.endswith("/embeddings"):
             return self._dense(inputs)
         raise RuntimeError(f"Unsupported in-process model endpoint: {path}")
+
+    def _generate(self, payload: dict[str, object]) -> dict[str, object]:
+        """Generate one deterministic response for a local chat-completions request."""
+        import torch
+
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("Local generation input must contain messages")
+        prompt = "\n".join(
+            str(message.get("content", ""))
+            for message in messages
+            if isinstance(message, dict)
+        )
+        if hasattr(self._tokenizer, "apply_chat_template"):
+            try:
+                encoded = self._tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    return_tensors="pt",
+                )
+            except (TypeError, ValueError):
+                encoded = self._tokenizer(prompt, return_tensors="pt")
+        else:
+            encoded = self._tokenizer(prompt, return_tensors="pt")
+        if not isinstance(encoded, dict):
+            encoded = {"input_ids": encoded}
+        encoded = self._move_to_device(encoded)
+        input_length = encoded["input_ids"].shape[-1]
+        max_new_tokens = int(payload.get("max_tokens", 256))
+        with torch.inference_mode():
+            generated = self._model.generate(
+                **encoded,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+            )
+        content = self._tokenizer.decode(
+            generated[0][input_length:].detach().cpu(), skip_special_tokens=True
+        )
+        return {
+            "choices": [{"message": {"role": "assistant", "content": content}}]
+        }
 
     def _rerank(self, query: str, texts: list[str]) -> dict[str, object]:
         """Score query-document pairs using a classifier or Qwen relevance prompt."""
@@ -559,19 +607,53 @@ class _TransformersModel:
         values = output.last_hidden_state
         if bool(self._definition.parameter("normalize", True)):
             values = torch.nn.functional.normalize(values, p=2, dim=-1)
-        return {
-            "data": [
-                {
-                    "index": i,
-                    "token_embeddings": [
-                        row.detach().cpu().tolist()
-                        for row, keep in zip(values[i], mask[i], strict=True)
-                        if bool(keep)
-                    ],
-                }
-                for i in range(len(texts))
+        offsets: list[list[tuple[int, int]]] = []
+        try:
+            offset_values = self._tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                max_length=int(
+                    cast(int, self._definition.parameter("max_length", 256))
+                ),
+                return_offsets_mapping=True,
+                return_tensors="pt",
+            )["offset_mapping"]
+        except (TypeError, ValueError, KeyError):
+            offset_values = None
+        for index in range(len(texts)):
+            if offset_values is None:
+                offsets.append([])
+            else:
+                offsets.append(
+                    [
+                        (int(pair[0]), int(pair[1]))
+                        for pair in offset_values[index]
+                    ]
+                )
+        data: list[dict[str, object]] = []
+        for index in range(len(texts)):
+            row_offsets = offsets[index] or [(1, 1)] * len(values[index])
+            selected_values = [
+                row.detach().cpu().tolist()
+                for row, pair, keep in zip(
+                    values[index], row_offsets, mask[index], strict=True
+                )
+                if bool(keep) and (not offsets[index] or pair[1] > pair[0])
             ]
-        }
+            selected_offsets = [
+                pair
+                for pair, keep in zip(row_offsets, mask[index], strict=True)
+                if bool(keep) and (not offsets[index] or pair[1] > pair[0])
+            ]
+            data.append(
+                {
+                    "index": index,
+                    "token_embeddings": selected_values,
+                    "token_offsets": selected_offsets if offsets[index] else [],
+                }
+            )
+        return {"data": data}
 
     def _sparse(self, texts: list[str]) -> dict[str, object]:
         """Return SPLADE logits when available, with a safe token-weight fallback."""

@@ -165,5 +165,6 @@ class ManagedLocalTokenEmbedder:
         if len(values) != len(texts):
             raise RuntimeError("Local token model returned an unexpected vector count")
         return tuple(
-            TokenEmbedding(value.values, self.model_identity) for value in values
+            TokenEmbedding(value.values, self.model_identity, value.offsets)
+            for value in values
         )

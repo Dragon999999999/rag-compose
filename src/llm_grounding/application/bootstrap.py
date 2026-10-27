@@ -203,7 +203,11 @@ def create_phase_one_application(
         ingestion_config.knowledge_builder
     )
     parser = registry.build_parser(architecture.parser)
-    chunker = registry.build_chunker(ingestion_config.chunker)
+    chunker = registry.build_chunker(
+        ingestion_config.chunker,
+        model_catalog=catalog,
+        local_model_manager=local_model_manager,
+    )
     artifacts = MinioArtifactStore(minio_settings)
     ingestion = DocumentIngestionService(
         repository,
