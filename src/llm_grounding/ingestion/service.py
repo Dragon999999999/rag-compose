@@ -20,6 +20,7 @@ from llm_grounding.domain.evidence import EvidenceUnit
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
@@ -65,6 +66,7 @@ class DocumentIngestionService:
         vectors: VectorStore | None,
         *,
         embedder_factory: Callable[[EmbeddingConfig], Embedder] = build_embedder,
+        local_model_manager: LocalModelManager | None = None,
     ) -> None:
         """Inject persistence, extraction, and indexing dependencies.
 
@@ -77,7 +79,11 @@ class DocumentIngestionService:
         self._parser = parser
         self._knowledge_builder = knowledge_builder
         self._chunker = chunker
-        self._embedder_factory = embedder_factory
+        self._embedder_factory = (
+            (lambda config: build_embedder(config, local_model_manager))
+            if local_model_manager is not None
+            else embedder_factory
+        )
         self._embedders = (
             {embedder.model_identity: embedder} if embedder is not None else {}
         )

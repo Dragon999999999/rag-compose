@@ -21,6 +21,8 @@ dependencies = [
     "python-multipart>=0.0.20,<1",
     "python-dotenv>=1,<2",
     "jsonschema>=4.23,<5",
+    "docker>=7,<8",
+    "huggingface-hub>=0.26,<1",
 ]
 
 [project.optional-dependencies]

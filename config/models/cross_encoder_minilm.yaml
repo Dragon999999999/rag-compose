@@ -1,5 +1,16 @@
 id: cross_encoder_minilm
 stage: reranker
+location: local
 backend: sentence_transformers
 name: cross-encoder/ms-marco-MiniLM-L6-v2
-dimension: 384
+source:
+  type: huggingface
+  repository: cross-encoder/ms-marco-MiniLM-L6-v2
+storage:
+  relative_path: reranker/cross_encoder_minilm
+runtime:
+  type: in_process
+  device: cpu
+  idle_timeout_seconds: 600
+parameters:
+  batch_size: 16

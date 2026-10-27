@@ -1,0 +1,110 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: schema.yaml
+title: Model configuration
+description: Standard source contract for local and remote pipeline models.
+type: object
+required: [id, stage, location, backend, name]
+properties:
+  id:
+    type: string
+    pattern: '^[A-Za-z][A-Za-z0-9_.-]*$'
+  stage:
+    enum: [embedding, reranker, reasoner, validation]
+  location:
+    enum: [local, remote]
+  backend:
+    enum: [openai_compatible, sentence_transformers, fake]
+  provider:
+    type: string
+    minLength: 1
+  name:
+    type: string
+    minLength: 1
+  connection:
+    type: object
+    required: [endpoint]
+    additionalProperties: false
+    properties:
+      endpoint: {type: string, format: uri}
+      auth:
+        type: object
+        additionalProperties: false
+        properties:
+          env_var: {type: string, minLength: 1}
+          file_env_var: {type: string, minLength: 1}
+      timeout_seconds: {type: number, exclusiveMinimum: 0, maximum: 3600}
+      retries: {type: integer, minimum: 0, maximum: 5}
+  source:
+    type: object
+    required: [type]
+    additionalProperties: false
+    properties:
+      type: {enum: [huggingface, url, local_directory]}
+      repository: {type: string, minLength: 1}
+      revision: {type: string, minLength: 1}
+      download_url: {type: string, format: uri}
+      path: {type: string, minLength: 1}
+      sha256:
+        type: string
+        pattern: '^[A-Fa-f0-9]{64}$'
+  storage:
+    type: object
+    required: [relative_path]
+    additionalProperties: false
+    properties:
+      relative_path: {type: string, minLength: 1}
+  runtime:
+    type: object
+    required: [type]
+    additionalProperties: false
+    properties:
+      type: {enum: [docker, in_process]}
+      image: {type: string, minLength: 1}
+      command:
+        type: array
+        items: {type: string}
+      container_path: {type: string, minLength: 1}
+      port: {type: integer, minimum: 1, maximum: 65535}
+      host_port: {type: [integer, 'null'], minimum: 1, maximum: 65535}
+      readiness_path: {type: string, minLength: 1}
+      readiness_timeout_seconds: {type: number, exclusiveMinimum: 0, maximum: 3600}
+      idle_timeout_seconds: {type: number, minimum: 0, maximum: 86400}
+      device: {type: string, minLength: 1}
+      environment:
+        type: object
+        additionalProperties: {type: string}
+      cpu_limit: {type: [number, 'null'], exclusiveMinimum: 0}
+      memory_limit: {type: [string, 'null'], minLength: 1}
+      gpu_count: {type: [integer, 'null'], minimum: 1, maximum: 128}
+  parameters:
+    type: object
+    additionalProperties: true
+allOf:
+  - if: {properties: {location: {const: remote}}}
+    then:
+      required: [connection]
+      properties:
+        source: {type: 'null'}
+        storage: {type: 'null'}
+        runtime: {type: 'null'}
+  - if: {properties: {location: {const: local}}}
+    then:
+      required: [source, storage, runtime]
+      properties:
+        connection: {type: 'null'}
+  - if: {properties: {source: {properties: {type: {const: huggingface}}}}}
+    then:
+      properties:
+        source:
+          required: [repository]
+  - if: {properties: {source: {properties: {type: {const: url}}}}}
+    then:
+      properties:
+        source:
+          required: [download_url, sha256]
+  - if: {properties: {source: {properties: {type: {const: local_directory}}}}}
+    then:
+      properties:
+        source:
+          required: [path]
+additionalProperties: false

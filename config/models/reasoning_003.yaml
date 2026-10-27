@@ -1,11 +1,13 @@
 id: reasoning_003
 stage: reasoner
+location: remote
 backend: openai_compatible
 provider: aqueduct
 name: qwen-3.6-35b
-base_url: https://aqueduct.ai.datalab.tuwien.ac.at/v1
-auth:
-  env_var: AQUEDUCT_API_KEY
-  file_env_var: AQUEDUCT_API_KEY_FILE
-timeout_seconds: 90
-retries: 1
+connection:
+  endpoint: https://aqueduct.ai.datalab.tuwien.ac.at/v1
+  auth:
+    env_var: AQUEDUCT_API_KEY
+    file_env_var: AQUEDUCT_API_KEY_FILE
+  timeout_seconds: 90
+  retries: 1

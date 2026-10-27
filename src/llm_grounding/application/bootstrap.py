@@ -14,7 +14,10 @@ from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.embedding.factory import build_embedder
-from llm_grounding.infrastructure.config.loader import load_model_catalog
+from llm_grounding.infrastructure.config.loader import (
+    load_model_catalog,
+    load_model_registry,
+)
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     ModelCatalog,
@@ -24,6 +27,7 @@ from llm_grounding.infrastructure.config.models import (
 from llm_grounding.infrastructure.config.settings import MinioSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.database.session import create_session_factory
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.storage.minio import MinioArtifactStore
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
 from llm_grounding.infrastructure.vector.factory import VectorStoreFactory
@@ -56,6 +60,7 @@ class PhaseOneApplication:
         pipeline_sync: PipelineSynchronizer | None = None,
         component_sync: ComponentSynchronizer | None = None,
         pipeline_service: PipelineService | None = None,
+        local_model_manager: LocalModelManager | None = None,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
         self.projects, self.chats, self._engine, self._vectors = (
@@ -75,6 +80,7 @@ class PhaseOneApplication:
         self.ingestion_config = ingestion_config
         self._pipeline_sync = pipeline_sync
         self._component_sync = component_sync
+        self._local_model_manager = local_model_manager
         self.pipeline_service = pipeline_service
         self.pipeline_runtime = pipeline_service.runtime if pipeline_service else None
         self.pipelines: tuple[Pipeline, ...] = ()
@@ -108,6 +114,8 @@ class PhaseOneApplication:
             await self.summaries.close()
         if self._vectors is not None and hasattr(self._vectors, "close"):
             await self._vectors.close()
+        if self._local_model_manager is not None:
+            await self._local_model_manager.close()
         await self._engine.dispose()
 
 
@@ -129,6 +137,7 @@ def create_phase_one_application(
     *,
     model_catalog: ModelCatalog | None = None,
     pipeline_directory: Path | None = None,
+    local_model_manager: LocalModelManager | None = None,
 ) -> PhaseOneApplication:
     """Construct PostgreSQL/MinIO/Qdrant Basic RAG services from typed configuration.
 
@@ -171,12 +180,17 @@ def create_phase_one_application(
             repository,
         )
     catalog = model_catalog or load_model_catalog()
+    local_model_manager = local_model_manager or LocalModelManager(
+        load_model_registry()
+    )
     pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, catalog)
     component_sync = ComponentSynchronizer(repository)
-    pipeline_runtime = PipelineRuntimeResolver(repository, vectors, catalog)
+    pipeline_runtime = PipelineRuntimeResolver(
+        repository, vectors, catalog, local_model_manager=local_model_manager
+    )
     pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
     embedder = (
-        build_embedder(ingestion_config.embedding)
+        build_embedder(ingestion_config.embedding, local_model_manager)
         if ingestion_config.embedding is not None
         else None
     )
@@ -195,6 +209,7 @@ def create_phase_one_application(
         chunker,
         embedder,
         vectors,
+        local_model_manager=local_model_manager,
     )
     runner = None
     summaries = None
@@ -259,4 +274,5 @@ def create_phase_one_application(
         pipeline_sync,
         component_sync,
         pipeline_service,
+        local_model_manager,
     )

@@ -22,6 +22,7 @@ from llm_grounding.infrastructure.config.models import (
 )
 from llm_grounding.infrastructure.config.overrides import apply_query_overrides
 from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
+from llm_grounding.infrastructure.model_management.registry import ModelRegistry
 from llm_grounding.ingestion.models import IngestionConfig
 
 
@@ -222,6 +223,14 @@ def load_configuration_registry(
         raise ConfigurationError(str(exc)) from exc
 
 
+def load_model_registry(path: Path | None = None) -> ModelRegistry:
+    """Load the validated standalone model registry for local lifecycle services."""
+    try:
+        return ModelRegistry.from_directory(path or _standalone_models_directory())
+    except (OSError, UnicodeError, yaml.YAMLError, ValueError) as exc:
+        raise ConfigurationError(str(exc)) from exc
+
+
 def _standalone_models_directory() -> Path:
     """Return the checkout or packaged standalone model directory."""
     checkout = _checkout_root() / "config/models"
@@ -275,9 +284,7 @@ def _default_defaults_path() -> Path:
     raise ConfigurationError("No application defaults configuration exists")
 
 
-def _model_validate(
-    value: object, kind: str
-) -> DeclarativePipelineConfig:
+def _model_validate(value: object, kind: str) -> DeclarativePipelineConfig:
     """Validate one canonical source model with loader-level error formatting."""
     try:
         return DeclarativePipelineConfig.model_validate(value)

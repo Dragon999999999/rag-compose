@@ -73,12 +73,14 @@ class EmbeddingConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    type: Literal[
-        "embedding", "sentence_transformers", "fake", "openai_compatible"
-    ] = "sentence_transformers"
-    implementation: Literal[
-        "sentence_transformers", "fake", "openai_compatible"
-    ] = "sentence_transformers"
+    model_id: str | None = Field(default=None, min_length=1)
+    location: Literal["local", "remote"] = "local"
+    type: Literal["embedding", "sentence_transformers", "fake", "openai_compatible"] = (
+        "sentence_transformers"
+    )
+    implementation: Literal["sentence_transformers", "fake", "openai_compatible"] = (
+        "sentence_transformers"
+    )
     provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_space_id: str | None = Field(default=None, min_length=1)
@@ -117,12 +119,19 @@ class EmbeddingConfig(BaseModel):
             normalized = dict(value)
             normalized["type"] = selected
             normalized.setdefault("implementation", selected)
+            normalized.setdefault(
+                "location", "remote" if selected == "openai_compatible" else "local"
+            )
             return normalized
         return value
 
     @model_validator(mode="after")
     def validate_provider_settings(self) -> "EmbeddingConfig":
         """Require an endpoint for remote OpenAI-compatible embeddings."""
+        if self.implementation == "openai_compatible" and self.location != "remote":
+            raise ValueError("openai_compatible embeddings must be remote")
+        if self.implementation != "openai_compatible" and self.location != "local":
+            raise ValueError("local embedding implementations must be local")
         if self.implementation == "openai_compatible" and self.base_url is None:
             raise ValueError(
                 "openai_compatible embeddings require a credential-free base_url"
@@ -185,6 +194,8 @@ class EmbeddingConfig(BaseModel):
                 "retries",
                 "api_key_env",
                 "api_key_file_env",
+                "model_id",
+                "location",
             },
         )
         if self.embedding_space_id is None:
@@ -250,7 +261,5 @@ class IngestionConfig(BaseModel):
                 if self.embedding.similarity_metric == "cosine":
                     embedding.pop("similarity_metric", None)
         return sha256(
-            json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode(
-                "utf-8"
-            )
+            json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         ).hexdigest()

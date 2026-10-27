@@ -38,9 +38,7 @@ class ApiSettings:
         try:
             port = int(raw_port)
         except ValueError as exc:
-            raise ValueError(
-                "API_PORT must be an integer between 1 and 65535"
-            ) from exc
+            raise ValueError("API_PORT must be an integer between 1 and 65535") from exc
         if not 1 <= port <= 65535:
             raise ValueError("API_PORT must be an integer between 1 and 65535")
         return cls(host=_value("API_HOST", "127.0.0.1"), port=port)
@@ -95,3 +93,15 @@ class QdrantSettings:
         api_key = _value("QDRANT_API_KEY") or None
         collection = _value("QDRANT_COLLECTION", "llm_grounding_v1")
         return cls(url=url, api_key=api_key, collection=collection)
+
+
+@dataclass(frozen=True)
+class ModelStorageSettings:
+    """Persistent root for downloaded local model weights."""
+
+    root: str
+
+    @classmethod
+    def from_environment(cls) -> "ModelStorageSettings":
+        """Read ``MODEL_STORAGE_ROOT`` without embedding a machine-specific path."""
+        return cls(_value("MODEL_STORAGE_ROOT", "~/.cache/llm-grounding/models"))

@@ -20,6 +20,7 @@ from llm_grounding.infrastructure.config.overrides import (
     catalog_for_query_overrides,
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
@@ -61,6 +62,7 @@ class PipelineRuntimeResolver:
         *,
         max_cache_size: int = 8,
         registry: ComponentRegistry | None = None,
+        local_model_manager: LocalModelManager | None = None,
     ) -> None:
         """Configure shared infrastructure and a bounded runtime cache."""
         if max_cache_size < 1:
@@ -69,6 +71,7 @@ class PipelineRuntimeResolver:
         self._vectors = vectors
         self._catalog = catalog
         self._registry = registry or ComponentRegistry()
+        self._local_model_manager = local_model_manager
         self._max_cache_size = max_cache_size
         self._runtimes: OrderedDict[str, tuple[str, ResolvedPipeline]] = OrderedDict()
         self._embedders: OrderedDict[str, Embedder] = OrderedDict()
@@ -194,9 +197,7 @@ class PipelineRuntimeResolver:
             architecture, effective_ingestion = effective_config.resolve_query(
                 catalog, ingestion
             )
-            runner = self._build_basic_rag(
-                architecture, effective_ingestion, catalog
-            )
+            runner = self._build_basic_rag(architecture, effective_ingestion, catalog)
             return ResolvedPipeline(
                 record,
                 effective_config,
@@ -252,8 +253,7 @@ class PipelineRuntimeResolver:
                 )
             if self._vectors is None:
                 raise PipelineResolutionError(
-                    "The selected dense query pipeline has no vector backend "
-                    "available"
+                    "The selected dense query pipeline has no vector backend available"
                 )
             if architecture.retriever.query_embedder is not None:
                 try:
@@ -311,7 +311,7 @@ class PipelineRuntimeResolver:
         if cached is not None:
             self._embedders.move_to_end(identity)
             return cached
-        embedder = build_embedder(config)
+        embedder = build_embedder(config, self._local_model_manager)
         self._embedders[identity] = embedder
         self._embedders.move_to_end(identity)
         while len(self._embedders) > self._max_cache_size:

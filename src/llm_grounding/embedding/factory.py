@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from llm_grounding.embedding.fake import DeterministicFakeEmbedder
+from llm_grounding.embedding.local_manager import ManagedLocalEmbedder
 from llm_grounding.embedding.openai_compatible import OpenAICompatibleEmbedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.embedding.sentence_transformers import (
@@ -33,7 +34,9 @@ class EmbeddingProviderFactory:
             raise ValueError("Embedding implementation name must be non-empty")
         self._constructors[implementation] = constructor
 
-    def create(self, config: EmbeddingConfig) -> Embedder:
+    def create(
+        self, config: EmbeddingConfig, local_model_manager: object | None = None
+    ) -> Embedder:
         """Construct the provider selected by a validated embedding configuration."""
         try:
             constructor = self._constructors[config.implementation]
@@ -41,6 +44,12 @@ class EmbeddingProviderFactory:
             raise ValueError(
                 f"Unsupported embedding implementation: {config.implementation}"
             ) from exc
+        if (
+            local_model_manager is not None
+            and config.location == "local"
+            and config.model_id is not None
+        ):
+            return ManagedLocalEmbedder(config, local_model_manager)  # type: ignore[arg-type]
         return constructor(config)
 
     @property
@@ -52,7 +61,9 @@ class EmbeddingProviderFactory:
 _DEFAULT_FACTORY = EmbeddingProviderFactory()
 
 
-def build_embedder(config: EmbeddingConfig) -> Embedder:
+def build_embedder(
+    config: EmbeddingConfig, local_model_manager: object | None = None
+) -> Embedder:
     """Build the registered embedder implementation selected by configuration.
 
     This is the single construction boundary used by ingestion and query-time
@@ -62,4 +73,4 @@ def build_embedder(config: EmbeddingConfig) -> Embedder:
     Raises:
         ValueError: If ``config`` selects an unsupported implementation.
     """
-    return _DEFAULT_FACTORY.create(config)
+    return _DEFAULT_FACTORY.create(config, local_model_manager)

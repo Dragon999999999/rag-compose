@@ -20,6 +20,7 @@ from llm_grounding.infrastructure.config.declarative import (
     OpenAICompatibleModelDefinition,
     SentenceTransformersModelDefinition,
 )
+from llm_grounding.infrastructure.config.model_schema import validate_model_file
 from llm_grounding.infrastructure.config.models import (
     ApplicationDefaults,
     ChatHistoryConfig,
@@ -62,7 +63,7 @@ class ConfigurationRegistry:
         models: dict[str, ModelDefinition] = {}
         components: dict[str, tuple[str, ComponentDefinition]] = {}
         for path in _yaml_paths(models_directory):
-            model_definition = _load_model(path)
+            model_definition = _load_model(path, models_directory)
             if model_definition.id in models:
                 raise ValueError(
                     f"Duplicate model configuration ID: {model_definition.id}"
@@ -95,8 +96,7 @@ class ConfigurationRegistry:
             ) from exc
         if actual_category != category:
             raise ValueError(
-                f"Component {component_id} belongs to {actual_category}, "
-                f"not {category}"
+                f"Component {component_id} belongs to {actual_category}, not {category}"
             )
         return definition
 
@@ -144,9 +144,7 @@ class ConfigurationRegistry:
                 vector_backend = self._component(
                     "vector_backend", vector_backend_id, VectorBackendConfig
                 )
-                self._validate_backend_compatibility(
-                    embedding_config, vector_backend
-                )
+                self._validate_backend_compatibility(embedding_config, vector_backend)
             representation = PipelineRepresentationConfig(
                 parser=self._component(
                     "parser", source.representation.parser, ComponentConfig
@@ -275,6 +273,8 @@ class ConfigurationRegistry:
                 f"Model {model_id} backend {definition.backend!r} "
                 "cannot be used by a reasoning component"
             )
+        if definition.connection is None or definition.base_url is None:
+            raise ValueError(f"Remote model {model_id} has no endpoint configuration")
         return ModelConfig(
             provider=definition.provider,
             name=definition.name,
@@ -290,6 +290,8 @@ class ConfigurationRegistry:
         definition = self.model(model_id)
         if isinstance(definition, OpenAICompatibleModelDefinition):
             return EmbeddingConfig(
+                model_id=model_id,
+                location=definition.location,
                 type="openai_compatible",
                 implementation="openai_compatible",
                 provider=definition.provider,
@@ -306,6 +308,8 @@ class ConfigurationRegistry:
             )
         if isinstance(definition, SentenceTransformersModelDefinition):
             return EmbeddingConfig(
+                model_id=model_id,
+                location=definition.location,
                 type="sentence_transformers",
                 implementation="sentence_transformers",
                 model=definition.name,
@@ -320,6 +324,8 @@ class ConfigurationRegistry:
             )
         if isinstance(definition, FakeModelDefinition):
             return EmbeddingConfig(
+                model_id=model_id,
+                location=definition.location,
                 type="fake",
                 implementation="fake",
                 model=definition.name,
@@ -338,10 +344,7 @@ class ConfigurationRegistry:
     def _reranker(self, component_id: str) -> RerankerConfig:
         """Resolve a reranker component and substitute its model ID when needed."""
         definition = self.component("reranker", component_id)
-        if (
-            definition.implementation == "cross_encoder"
-            and definition.model_id is None
-        ):
+        if definition.implementation == "cross_encoder" and definition.model_id is None:
             raise ValueError(f"Reranker component {component_id} requires model_id")
         if (
             definition.implementation != "cross_encoder"
@@ -407,8 +410,7 @@ class ConfigurationRegistry:
         """Reject component references to models assigned to another stage."""
         if model.stage != expected_stage:
             raise ValueError(
-                f"Model {model_id} is tagged for {model.stage}, "
-                f"not {expected_stage}"
+                f"Model {model_id} is tagged for {model.stage}, not {expected_stage}"
             )
 
 
@@ -425,23 +427,20 @@ def _yaml_paths(directory: Path) -> tuple[Path, ...]:
     )
 
 
-def _load_model(path: Path) -> ModelDefinition:
+def _load_model(path: Path, models_directory: Path) -> ModelDefinition:
     """Load one provider-discriminated model definition with path context."""
     try:
-        value = _MODEL_ADAPTER.validate_python(yaml.safe_load(path.read_text("utf-8")))
-        return value
-    except (OSError, UnicodeError, yaml.YAMLError, ValidationError) as exc:
+        value = validate_model_file(path, models_directory)
+        validated = _MODEL_ADAPTER.validate_python(value)
+        return validated
+    except (OSError, UnicodeError, yaml.YAMLError, ValidationError, ValueError) as exc:
         raise ValueError(f"Invalid model configuration file: {path}") from exc
 
 
 def _load_component(path: Path, components_directory: Path) -> ComponentDefinition:
     """Validate and load one reusable component definition with path context."""
     try:
-        value = validate_component_file(
-            path, path.parent.name, components_directory
-        )
-        return ComponentDefinition.model_validate(
-            value
-        )
+        value = validate_component_file(path, path.parent.name, components_directory)
+        return ComponentDefinition.model_validate(value)
     except (OSError, UnicodeError, yaml.YAMLError, ValidationError, ValueError) as exc:
         raise ValueError(f"Invalid component configuration file: {path}") from exc

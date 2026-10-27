@@ -1,0 +1,142 @@
+"""Verify standardized model definitions and local lifecycle boundaries."""
+
+import asyncio
+import hashlib
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from llm_grounding.infrastructure.config.declarative import ModelDefinition
+from llm_grounding.infrastructure.config.loader import load_model_registry
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
+from llm_grounding.infrastructure.model_management.models import ModelEndpoint
+from llm_grounding.infrastructure.model_management.registry import ModelRegistry
+from llm_grounding.infrastructure.model_management.storage import ModelStorageManager
+
+
+def test_model_registry_validates_standard_sources_and_excludes_schema() -> None:
+    """Canonical model files expose location and nested source/runtime metadata."""
+    registry = load_model_registry()
+
+    assert len(registry.list()) == 6
+    embedding = registry.resolve("embedding_001")
+    assert embedding.location == "local"
+    assert embedding.source is not None
+    assert embedding.source.type == "huggingface"
+    assert embedding.runtime is not None
+    assert embedding.runtime.type == "docker"
+    assert registry.resolve("reasoning_002").location == "remote"
+
+
+@pytest.mark.asyncio
+async def test_storage_downloads_once_and_reuses_verified_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete URL installation is reused without a second source request."""
+    registry = load_model_registry()
+    original = registry.resolve("embedding_001")
+    payload = b"test model weights"
+    source = original.source
+    assert source is not None
+    definition = original.model_copy(
+        update={
+            "source": source.model_copy(
+                update={
+                    "type": "url",
+                    "download_url": "https://models.example.test/model.bin",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "repository": None,
+                }
+            ),
+            "storage": original.storage.model_copy(
+                update={"relative_path": "embedding/test-model"}
+            ),
+        }
+    )
+    calls = 0
+
+    def download(_url: str, destination: str | Path) -> None:
+        nonlocal calls
+        calls += 1
+        Path(destination).write_bytes(payload)
+
+    monkeypatch.setattr("urllib.request.urlretrieve", download)
+    storage = ModelStorageManager(tmp_path)
+
+    first = await storage.ensure_available(definition)
+    second = await storage.ensure_available(definition)
+
+    assert first == second
+    assert calls == 1
+    assert (first / ".model_complete").is_file()
+
+
+class _FakeStorage:
+    """Avoid filesystem work when testing lease sharing."""
+
+    async def ensure_available(self, _definition: object) -> Path:
+        """Return a stable test path."""
+        return Path("/tmp/model")
+
+    def is_available(self, _definition: object) -> bool:
+        """Report test weights as available."""
+        return True
+
+
+class _FakeRuntime:
+    """Record lifecycle calls made by LocalModelManager."""
+
+    def __init__(self) -> None:
+        self.starts = 0
+        self.stops = 0
+
+    async def start_and_wait(
+        self, definition: ModelDefinition, _weights: Path
+    ) -> ModelEndpoint:
+        """Return a deterministic ready endpoint."""
+        self.starts += 1
+        return ModelEndpoint(definition.id, "http://127.0.0.1:8000", "test")
+
+    async def status(
+        self, _definition: object
+    ) -> tuple[bool, ModelEndpoint | None, str | None]:
+        """Return an idle fake runtime state."""
+        return False, None, "stopped"
+
+    async def stop(self, _definition: object) -> None:
+        """Record a stop without external side effects."""
+        self.stops += 1
+
+    async def restart(self, _definition: object) -> None:
+        """Provide the manager lifecycle contract for the test."""
+
+    async def remove(self, _definition: object) -> None:
+        """Provide the manager lifecycle contract for the test."""
+
+
+@pytest.mark.asyncio
+async def test_manager_shares_one_runtime_for_concurrent_leases() -> None:
+    """Concurrent callers share one started model and stop only after release."""
+    definition = load_model_registry().resolve("embedding_001")
+    runtime_config = definition.runtime
+    assert runtime_config is not None
+    definition = definition.model_copy(
+        update={
+            "runtime": runtime_config.model_copy(update={"idle_timeout_seconds": 0})
+        }
+    )
+    registry = ModelRegistry({definition.id: definition})
+    runtime = _FakeRuntime()
+    manager = LocalModelManager(
+        registry,
+        cast(ModelStorageManager, _FakeStorage()),
+        cast(object, runtime),
+    )
+
+    async with manager.acquire(definition.id):
+        async with manager.acquire(definition.id):
+            assert runtime.starts == 1
+            assert (await manager.status(definition.id)).active_leases == 2
+    await asyncio.sleep(0)
+    assert runtime.stops == 1
