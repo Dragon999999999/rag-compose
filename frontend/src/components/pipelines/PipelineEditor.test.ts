@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { PipelineConfig } from "../../api/types";
-import { orderPipelineStages, QUERY_STAGES } from "./PipelineEditor";
+import {
+  orderPipelineStages,
+  QUERY_STAGES,
+  readExecutionStrategy,
+  updateExecutionStrategy,
+} from "./PipelineEditor";
 
 describe("pipeline query stage order", () => {
   it("keeps assessors and decision policy immediately before the reasoner", () => {
@@ -46,5 +51,25 @@ describe("pipeline query stage order", () => {
       "custom_setting",
     ]);
     expect(ordered.query?.custom_setting).toBe(true);
+  });
+
+  it("persists execution strategy settings while retaining a valid branch shape", () => {
+    const config: PipelineConfig = {
+      schema_version: 1,
+      kind: "query",
+      name: "query",
+      version: 1,
+      description: "",
+      is_default: false,
+      query: {},
+    };
+
+    const branching = updateExecutionStrategy(config, "branching");
+
+    expect(readExecutionStrategy(branching)).toBe("branching");
+    expect(branching.query?.execution).toEqual({
+      strategy: "branching",
+      branches: [{ id: "branch-1" }, { id: "branch-2" }],
+    });
   });
 });

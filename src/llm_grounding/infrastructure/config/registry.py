@@ -26,11 +26,13 @@ from llm_grounding.infrastructure.config.models import (
     AssessorConfig,
     ChatHistoryConfig,
     ComponentConfig,
+    DecisionPolicyConfig,
     KnowledgeBuilderConfig,
     ModelCatalog,
     ModelConfig,
     PipelineConfig,
     PipelineEmbeddingConfig,
+    PipelineExecutionConfig,
     PipelineQueryConfig,
     PipelineReasonerConfig,
     PipelineRepresentationConfig,
@@ -201,7 +203,9 @@ class ConfigurationRegistry:
                     for item in source.query.assessors
                 ),
                 decision_policy=self._component(
-                    "decision_policy", source.query.decision_policy, ComponentConfig
+                    "decision_policy",
+                    source.query.decision_policy,
+                    DecisionPolicyConfig,
                 ),
                 renderer=self._component(
                     "renderer", source.query.renderer, ComponentConfig
@@ -210,6 +214,9 @@ class ConfigurationRegistry:
                     ChatHistoryConfig.model_validate(source.query.chat_history)
                     if source.query.chat_history is not None
                     else None
+                ),
+                execution=PipelineExecutionConfig.model_validate(
+                    source.query.execution or {}
                 ),
             )
         return PipelineConfig(

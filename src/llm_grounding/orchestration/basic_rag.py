@@ -1,13 +1,13 @@
 """Current grounded query orchestration, separate from document ingestion."""
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
 from llm_grounding.assessment.protocol import Assessor
-from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
+from llm_grounding.decision.protocol import DecisionPolicy
 from llm_grounding.domain.answers import (
     Answer,
     Assessment,
@@ -24,7 +24,10 @@ from llm_grounding.domain.corpus import (
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, RetrievalResult
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
-from llm_grounding.infrastructure.config.models import RerankerConfig
+from llm_grounding.infrastructure.config.models import (
+    PipelineExecutionConfig,
+    RerankerConfig,
+)
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.observability.embedding import embedding_diagnostics
@@ -59,7 +62,7 @@ class BasicRagRunner:
         summary: Retriever,
         reasoner: BasicGroundedReasoner,
         assessor: Assessor | Sequence[Assessor],
-        policy: BasicGroundingPolicy,
+        policy: DecisionPolicy,
         renderer: GroundedAnswerRenderer,
         diagnostics: GroundingDiagnostics | None = None,
         embedding_config: EmbeddingConfig | None = None,
@@ -67,6 +70,10 @@ class BasicRagRunner:
         reranker_config: RerankerConfig | None = None,
         reranker_builder: Callable[[RerankerConfig], Reranker] | None = None,
         repository: PostgresRepository | None = None,
+        execution: PipelineExecutionConfig | None = None,
+        branch_retrievers: Mapping[str, Retriever] | None = None,
+        branch_rerankers: Mapping[str, Reranker] | None = None,
+        branch_assessors: Mapping[str, Sequence[Assessor]] | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
@@ -76,6 +83,7 @@ class BasicRagRunner:
             else (assessor,)
         )
         self._policy, self._renderer = policy, renderer
+        self._execution = execution or PipelineExecutionConfig()
         self._reranker = reranker or IdentityReranker()
         self._reranker_config = reranker_config or RerankerConfig()
         if reranker_builder is None:
@@ -101,6 +109,11 @@ class BasicRagRunner:
                 )
             ] = default_embedder
         self._repository = repository
+        self._branch_retrievers = dict(branch_retrievers or {})
+        self._branch_rerankers = dict(branch_rerankers or {})
+        self._branch_assessors = {
+            key: tuple(value) for key, value in (branch_assessors or {}).items()
+        }
         self._last_retrieval_response: RetrievalResponse | None = None
 
     async def run(
@@ -111,18 +124,71 @@ class BasicRagRunner:
         generate_chat_name: bool = False,
         runtime_config: dict[str, Any] | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
-        """Execute Basic RAG and retain metadata suitable for persistence."""
+        """Execute the configured topology with bounded branch or retry control."""
+        if self._execution.strategy == "linear":
+            return await self._run_once(
+                request,
+                history,
+                generate_chat_name=generate_chat_name,
+                runtime_config=runtime_config,
+            )
+        if self._execution.strategy == "branching":
+            return await self._run_branching(
+                request,
+                history,
+                generate_chat_name=generate_chat_name,
+                runtime_config=runtime_config,
+            )
+        return await self._run_recursive(
+            request,
+            history,
+            generate_chat_name=generate_chat_name,
+            runtime_config=runtime_config,
+        )
+
+    async def _run_once(
+        self,
+        request: CorpusRequest,
+        history: tuple[Message, ...] = (),
+        *,
+        generate_chat_name: bool = False,
+        runtime_config: dict[str, Any] | None = None,
+        _candidate_override: tuple[ChunkRetrievalResult, ...] | None = None,
+        _chunk_override: tuple[ChunkRetrievalResult, ...] | None = None,
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Execute one linear pass and retain metadata suitable for persistence."""
         traces = TraceRecorder()
         usage = UsageAccumulator()
         total_span = traces.start("rag_e2e")
         values = self._runtime_values(runtime_config)
+        policy_token_budget = getattr(self._policy, "token_budget", None)
+        if "context_budget_tokens" not in values and isinstance(
+            policy_token_budget, int
+        ):
+            values["context_budget_tokens"] = policy_token_budget
+        policy_top_k = getattr(self._policy, "top_k", None)
+        if "context_top_k" not in values and isinstance(policy_top_k, int):
+            values["context_top_k"] = policy_top_k
         retrieval_span = traces.start("retrieval")
-        candidates = await self._retrieve_candidates(request, values)
+        if _candidate_override is not None:
+            candidates = _candidate_override
+        elif _chunk_override is not None:
+            candidates = _chunk_override
+        else:
+            candidates = await self._retrieve_candidates(request, values)
         traces.end(retrieval_span, output_count=len(candidates))
         rerank_span = traces.start("rerank", input_count=len(candidates))
-        chunks = await self._rerank_chunks(request.task, candidates, values)
-        usage.add_reranker()
+        chunks = (
+            _chunk_override
+            if _chunk_override is not None
+            else await self._rerank_chunks(request.task, candidates, values)
+        )
+        if _chunk_override is None:
+            usage.add_reranker()
         traces.end(rerank_span, output_count=len(chunks))
+        selection_span = traces.start("context_selection", input_count=len(chunks))
+        chunks = self._select_context(chunks, values)
+        traces.end(selection_span, output_count=len(chunks))
         query_embedding = (
             self._last_retrieval_response.query_embedding
             if self._last_retrieval_response is not None
@@ -201,14 +267,30 @@ class BasicRagRunner:
         traces.end(reasoning_span, output_count=1)
         assessment_span = traces.start("assessment")
         assessment_values: list[Assessment] = []
-        for assessor in self._assessors:
+        assessors = self._branch_assessors.get(
+            str(values.get("branch_id")), self._assessors
+        )
+        for assessor in assessors:
             assessment_values.extend(
                 await assessor.assess_context(reasoning, context)
             )
         assessments = tuple(assessment_values)
         traces.end(assessment_span, output_count=len(assessments))
         decision_span = traces.start("decision", input_count=len(assessments))
-        decision = await self._policy.decide(reasoning, assessments)
+        policy_result = reasoning
+        if hasattr(self._policy, "token_budget"):
+            policy_result = reasoning.__class__(
+                reasoning.result_id,
+                reasoning.payload,
+                reasoning.claims,
+                {
+                    **reasoning.metadata,
+                    "context_token_count": sum(
+                        len(item.chunk.text.split()) for item in chunks
+                    ),
+                },
+            )
+        decision = await self._policy.decide(policy_result, assessments)
         traces.end(decision_span, output_count=1)
         self._diagnostics.report(context, reasoning, assessments, decision)
         rejected = decision.action == DecisionAction.REJECT
@@ -254,6 +336,9 @@ class BasicRagRunner:
                 ],
                 "assessment_labels": [item.label for item in assessments],
                 "decision": decision.action,
+                "decision_metadata": decision.metadata,
+                "parameter_overrides": decision.metadata.get("parameter_overrides", {}),
+                "branch_ids": decision.metadata.get("branch_ids", []),
                 "generated_chat_name": reasoning.payload.get("chat_name"),
                 "answer_payload": answer.payload,
                 "evidence_ids": list(answer.evidence_ids),
@@ -292,6 +377,254 @@ class BasicRagRunner:
             },
         )
 
+    async def _run_branching(
+        self,
+        request: CorpusRequest,
+        history: tuple[Message, ...],
+        *,
+        generate_chat_name: bool,
+        runtime_config: dict[str, Any] | None,
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Execute configured branches sequentially and join their outcomes."""
+        branches = self._execution.branches
+        if len(branches) > self._execution.max_stage_calls:
+            raise RuntimeError("Branch count exceeds the configured execution budget")
+        base_values = dict(runtime_config or {})
+        shared_candidates: tuple[ChunkRetrievalResult, ...] | None = None
+        shared_chunks: tuple[ChunkRetrievalResult, ...] | None = None
+        if any(branch.start_at != "retriever" for branch in branches):
+            shared_candidates = await self._retrieve_candidates(request, base_values)
+            shared_chunks = await self._rerank_chunks(
+                request.task, shared_candidates, base_values
+            )
+        outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]] = []
+        for branch in branches:
+            branch_values = dict(base_values)
+            branch_values.update(branch.parameter_overrides)
+            branch_values["branch_id"] = branch.id
+            if branch.retriever is not None:
+                branch_values["retriever"] = branch.retriever
+            if branch.reranker is not None:
+                branch_values["reranker"] = branch.reranker
+            result = await self._run_once(
+                request,
+                history,
+                generate_chat_name=generate_chat_name,
+                runtime_config=branch_values,
+                _candidate_override=(
+                    shared_candidates if branch.start_at == "reranker" else None
+                ),
+                _chunk_override=(
+                    shared_chunks if branch.start_at == "assessor" else None
+                ),
+            )
+            outcomes.append((branch.id, result))
+        return self._join_branch_outcomes(outcomes)
+
+    def _join_branch_outcomes(
+        self,
+        outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]],
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Select or merge branch results while retaining every branch trace."""
+        if not outcomes:
+            raise RuntimeError("Branching execution requires at least one outcome")
+        selected_ids: set[str] = set()
+        for _, (_, _, metadata) in outcomes:
+            raw_ids = metadata.get("branch_ids")
+            if isinstance(raw_ids, list):
+                selected_ids.update(
+                    value for value in raw_ids if isinstance(value, str)
+                )
+        selected = [
+            item for item in outcomes if not selected_ids or item[0] in selected_ids
+        ]
+        if not selected:
+            selected = outcomes
+        accepted = [
+            item
+            for item in selected
+            if self._action_value(item[1][2].get("decision"))
+            in {DecisionAction.ACCEPT.value, DecisionAction.MERGE_BRANCHES.value}
+        ]
+        chosen = accepted[0] if accepted else selected[0]
+        result_id, answer, metadata = chosen[1]
+        branch_records = [
+            {
+                "branch_id": branch_id,
+                "result_id": result[0],
+                "status": result[2].get("status"),
+                "decision": self._action_value(result[2].get("decision")),
+                "retrieved_chunk_ids": result[2].get("retrieved_chunk_ids", []),
+                "retrieval_results": result[2].get("retrieval_results", []),
+                "assessment_labels": result[2].get("assessment_labels", []),
+                "trace": result[2].get("trace", []),
+            }
+            for branch_id, result in outcomes
+        ]
+        merged_metadata = dict(metadata)
+        merged_metadata.update(
+            {
+                "execution_strategy": "branching",
+                "branch_ids": [branch_id for branch_id, _ in selected],
+                "branch_results": branch_records,
+                "termination_reason": "branch_joined_at_decision_policy",
+            }
+        )
+        if self._execution.evidence_merge in {"union", "rrf"}:
+            merged_metadata["retrieved_chunk_ids"] = self._merged_chunk_ids(outcomes)
+            if self._execution.evidence_merge == "rrf":
+                merged_metadata["retrieval_results"] = self._fused_branch_results(
+                    outcomes
+                )
+        return result_id, answer, merged_metadata
+
+    async def _run_recursive(
+        self,
+        request: CorpusRequest,
+        history: tuple[Message, ...],
+        *,
+        generate_chat_name: bool,
+        runtime_config: dict[str, Any] | None,
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Execute bounded retrieval rounds until a policy terminates the run."""
+        values = dict(runtime_config or {})
+        attempts: list[dict[str, object]] = []
+        result: tuple[str, Answer, dict[str, object]] | None = None
+        for round_number in range(self._execution.max_rounds):
+            if (
+                round_number > 0
+                and round_number - 1 < len(self._execution.retry_overrides)
+            ):
+                values.update(self._execution.retry_overrides[round_number - 1])
+            result = await self._run_once(
+                request,
+                history,
+                generate_chat_name=generate_chat_name,
+                runtime_config=values,
+            )
+            result_metadata = result[2]
+            attempts.append(
+                {
+                    "round": round_number + 1,
+                    "decision": self._action_value(result_metadata.get("decision")),
+                    "retrieved_chunk_ids": result_metadata.get(
+                        "retrieved_chunk_ids", []
+                    ),
+                    "retrieval_results": result_metadata.get("retrieval_results", []),
+                    "trace": result_metadata.get("trace", []),
+                    "parameter_overrides": dict(values),
+                }
+            )
+            action = self._action_value(result_metadata.get("decision"))
+            if action not in self._execution.retry_on:
+                break
+            policy_overrides = result_metadata.get("parameter_overrides")
+            if isinstance(policy_overrides, dict):
+                values.update(policy_overrides)
+        if result is None:
+            raise RuntimeError("Recursive execution did not produce an outcome")
+        result_id, answer, metadata = result
+        merged_metadata = dict(metadata)
+        merged_metadata.update(
+            {
+                "execution_strategy": "recursive",
+                "execution_round": len(attempts),
+                "execution_attempts": attempts,
+                "termination_reason": (
+                    "max_rounds_reached"
+                    if self._action_value(metadata.get("decision"))
+                    in self._execution.retry_on
+                    else "decision_policy_terminated"
+                ),
+            }
+        )
+        if self._execution.evidence_merge in {"union", "rrf"}:
+            merged_metadata["retrieved_chunk_ids"] = self._merged_attempt_chunk_ids(
+                attempts
+            )
+            if self._execution.evidence_merge == "rrf":
+                merged_metadata["retrieval_results"] = self._fused_attempt_results(
+                    attempts
+                )
+        return result_id, answer, merged_metadata
+
+    @staticmethod
+    def _action_value(value: object) -> str | None:
+        """Normalize enum and string decisions for persisted execution metadata."""
+        if isinstance(value, DecisionAction):
+            return value.value
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _merged_chunk_ids(
+        outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]],
+    ) -> list[str]:
+        """Deduplicate branch evidence in deterministic branch and rank order."""
+        merged: list[str] = []
+        for _, (_, _, metadata) in outcomes:
+            for value in metadata.get("retrieved_chunk_ids", []):
+                if isinstance(value, str) and value not in merged:
+                    merged.append(value)
+        return merged
+
+    @staticmethod
+    def _fused_branch_results(
+        outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]],
+    ) -> list[dict[str, object]]:
+        """Add reciprocal-rank fusion scores without overwriting native scores."""
+        fused: dict[str, dict[str, object]] = {}
+        for _, (_, _, metadata) in outcomes:
+            for item in metadata.get("retrieval_results", []):
+                if not isinstance(item, dict) or not isinstance(
+                    item.get("chunk_id"), str
+                ):
+                    continue
+                chunk_id = item["chunk_id"]
+                rank = item.get("rank")
+                if not isinstance(rank, int):
+                    continue
+                record = fused.setdefault(chunk_id, dict(item))
+                record["fusion_score"] = float(
+                    record.get("fusion_score", 0.0)
+                ) + 1.0 / (60 + rank)
+        return sorted(
+            fused.values(),
+            key=lambda item: (
+                -float(item.get("fusion_score", 0.0)),
+                str(item["chunk_id"]),
+            ),
+        )
+
+    @staticmethod
+    def _merged_attempt_chunk_ids(attempts: list[dict[str, object]]) -> list[str]:
+        """Deduplicate evidence across recursive rounds in execution order."""
+        merged: list[str] = []
+        for attempt in attempts:
+            for value in attempt.get("retrieved_chunk_ids", []):
+                if isinstance(value, str) and value not in merged:
+                    merged.append(value)
+        return merged
+
+    @staticmethod
+    def _fused_attempt_results(
+        attempts: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Fuse recursive-round ranks without replacing each native score."""
+        outcomes = [
+            (
+                str(attempt.get("round", "")),
+                (
+                    "",
+                    Answer(""),
+                    {
+                        "retrieval_results": attempt.get("retrieval_results", [])
+                    },
+                ),
+            )
+            for attempt in attempts
+        ]
+        return BasicRagRunner._fused_branch_results(outcomes)
+
     async def retrieve(
         self,
         request: CorpusRequest,
@@ -318,8 +651,11 @@ class BasicRagRunner:
             embedding_config=self._embedding_config,
         )
         if request.task_type == TaskType.SUMMARY:
-            if isinstance(self._summary, SummaryRetriever):
-                response = await self._summary.retrieve(
+            summary = self._branch_retrievers.get(
+                str(values.get("retriever")), self._summary
+            )
+            if isinstance(summary, SummaryRetriever):
+                response = await summary.retrieve(
                     retrieval_request,
                     context,
                     context_chars=(
@@ -334,9 +670,12 @@ class BasicRagRunner:
                     ),
                 )
             else:
-                response = await self._summary.retrieve(retrieval_request, context)
+                response = await summary.retrieve(retrieval_request, context)
         else:
-            response = await self._vector.retrieve(retrieval_request, context)
+            retriever = self._branch_retrievers.get(
+                str(values.get("retriever")), self._vector
+            )
+            response = await retriever.retrieve(retrieval_request, context)
         self._last_retrieval_response = response
         return response.results
 
@@ -395,8 +734,49 @@ class BasicRagRunner:
                 "Reranker returned an unknown retrieval identifier"
             ) from exc
 
+    @staticmethod
+    def _select_context(
+        chunks: tuple[ChunkRetrievalResult, ...], values: dict[str, Any]
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Apply deterministic evidence filters and an optional token budget."""
+        selected = chunks
+        allowed = values.get("evidence_ids", values.get("chunk_ids"))
+        if isinstance(allowed, (list, tuple, set)):
+            allowed_ids = {value for value in allowed if isinstance(value, str)}
+            selected = tuple(
+                item for item in selected if item.chunk.chunk_id in allowed_ids
+            )
+        excluded = values.get("exclude_evidence_ids")
+        if isinstance(excluded, (list, tuple, set)):
+            excluded_ids = {value for value in excluded if isinstance(value, str)}
+            selected = tuple(
+                item for item in selected if item.chunk.chunk_id not in excluded_ids
+            )
+        context_top_k = values.get("context_top_k")
+        if isinstance(context_top_k, int) and context_top_k > 0:
+            selected = selected[:context_top_k]
+        budget = values.get("context_budget_tokens")
+        if not isinstance(budget, int) or budget < 1:
+            return selected
+        total = 0
+        within_budget: list[ChunkRetrievalResult] = []
+        for item in selected:
+            token_count = len(item.chunk.text.split())
+            if within_budget and total + token_count > budget:
+                break
+            if not within_budget and token_count > budget:
+                continue
+            within_budget.append(item)
+            total += token_count
+        return tuple(within_budget)
+
     def _reranker_for(self, values: dict[str, Any]) -> Reranker:
         """Resolve and cache a request-local reranker when evaluation overrides it."""
+        requested_reranker = values.get("reranker")
+        if isinstance(requested_reranker, str):
+            branch_reranker = self._branch_rerankers.get(requested_reranker)
+            if branch_reranker is not None:
+                return branch_reranker
         override_keys = {
             "reranker",
             "rerank_top_k",

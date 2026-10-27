@@ -21,7 +21,7 @@ def test_component_registry_validates_instances_and_excludes_schemas() -> None:
     """All shipped instances load while schema files remain non-components."""
     registry = load_configuration_registry()
 
-    assert len(registry.components) == 50
+    assert len(registry.components) == 59
     assert "schema" not in registry.components
     retriever = registry.component(
         "retriever", "retriever_sparse_postgres_fts"
@@ -92,6 +92,6 @@ async def test_component_synchronizer_persists_validated_definitions() -> None:
     repository = Repository()
     result = await ComponentSynchronizer(repository).synchronize()  # type: ignore[arg-type]
 
-    assert result.imported == 50
-    assert len(repository.rows) == 50
+    assert result.imported == 59
+    assert len(repository.rows) == 59
     assert ("retriever", "retriever_sparse_postgres_fts") in repository.rows

@@ -1,0 +1,6 @@
+id: decision_consensus
+type: decision_policy
+implementation: consensus
+description: Accept when assessor labels reach a configured consensus.
+config:
+  min_agreement: 0.5

@@ -318,6 +318,86 @@ class RerankerConfig(ComponentConfig):
         return self
 
 
+class DecisionPolicyConfig(ComponentConfig):
+    """Configure a deterministic policy that interprets assessor outputs.
+
+    Policies return actions; they never invoke retrieval, model inference, or
+    persistence. The execution runner interprets retry and branch actions.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    type: str = Field(default="decision_policy", min_length=1)
+    implementation: Literal[
+        "basic_grounding",
+        "always_accept",
+        "threshold",
+        "top_k",
+        "token_budget",
+        "consensus",
+        "fallback_retrieval",
+        "adaptive_retrieval",
+        "select_branches",
+        "merge_branches",
+    ] = "basic_grounding"
+    threshold: float | None = Field(default=None, allow_inf_nan=False)
+    assessment_dimension: str | None = Field(default=None, min_length=1)
+    top_k: int | None = Field(default=None, ge=1, le=1000)
+    token_budget: int | None = Field(default=None, ge=1, le=10_000_000)
+    min_agreement: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
+    max_rounds: int = Field(default=2, ge=1, le=100)
+    parameter_overrides: dict[str, object] = Field(default_factory=dict)
+    branch_ids: tuple[str, ...] = ()
+
+
+class ExecutionBranchConfig(BaseModel):
+    """Describe one sequential branch of a branching query execution."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    start_at: Literal["retriever", "reranker", "assessor"] = "retriever"
+    retriever: str | None = Field(default=None, min_length=1)
+    reranker: str | None = Field(default=None, min_length=1)
+    assessors: tuple[str, ...] = ()
+    parameter_overrides: dict[str, object] = Field(default_factory=dict)
+
+
+class PipelineExecutionConfig(BaseModel):
+    """Define topology and bounded control flow for one query pipeline."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    strategy: Literal["linear", "branching", "recursive"] = "linear"
+    branches: tuple[ExecutionBranchConfig, ...] = ()
+    join_at: Literal["decision_policy"] = "decision_policy"
+    evidence_merge: Literal["replace", "union", "rrf"] = "replace"
+    max_rounds: int = Field(default=1, ge=1, le=100)
+    max_stage_calls: int = Field(default=100, ge=1, le=1000)
+    retry_overrides: tuple[dict[str, object], ...] = ()
+    retry_on: tuple[
+        Literal["retrieve_again", "select_branches", "merge_branches"], ...
+    ] = (
+        "retrieve_again",
+    )
+
+    @model_validator(mode="after")
+    def validate_execution_shape(self) -> "PipelineExecutionConfig":
+        """Reject ambiguous or unbounded topology settings."""
+        branch_ids = [branch.id for branch in self.branches]
+        if len(set(branch_ids)) != len(branch_ids):
+            raise ValueError("Execution branch IDs must be unique")
+        if self.strategy == "branching" and len(self.branches) < 2:
+            raise ValueError("Branching execution requires at least two branches")
+        if self.strategy == "recursive" and self.max_rounds < 2:
+            raise ValueError("Recursive execution requires max_rounds of at least 2")
+        if self.max_rounds > self.max_stage_calls:
+            raise ValueError("max_rounds cannot exceed max_stage_calls")
+        if len(self.retry_overrides) > self.max_rounds - 1:
+            raise ValueError("retry_overrides cannot exceed the configured max_rounds")
+        return self
+
+
 class ChatHistoryConfig(BaseModel):
     """Limit conversational context without treating it as corpus evidence."""
 
@@ -341,9 +421,10 @@ class ArchitectureConfig(BaseModel):
     )
     reasoner: ReasonerConfig
     assessors: tuple[AssessorConfig, ...]
-    decision_policy: ComponentConfig
+    decision_policy: DecisionPolicyConfig
     renderer: ComponentConfig
     chat_history: ChatHistoryConfig | None = None
+    execution: PipelineExecutionConfig = Field(default_factory=PipelineExecutionConfig)
 
     def identity(self) -> str:
         """Hash architecture semantics without including endpoint credentials."""
@@ -482,9 +563,10 @@ class PipelineQueryConfig(BaseModel):
     )
     reasoner: PipelineReasonerConfig
     assessors: tuple[AssessorConfig, ...]
-    decision_policy: ComponentConfig
+    decision_policy: DecisionPolicyConfig
     renderer: ComponentConfig
     chat_history: ChatHistoryConfig | None = None
+    execution: PipelineExecutionConfig = Field(default_factory=PipelineExecutionConfig)
 
 
 class ModelCatalog(BaseModel):
@@ -707,5 +789,6 @@ class PipelineConfig(BaseModel):
             decision_policy=self.query.decision_policy,
             renderer=self.query.renderer,
             chat_history=self.query.chat_history,
+            execution=self.query.execution,
         )
         return architecture, ingestion

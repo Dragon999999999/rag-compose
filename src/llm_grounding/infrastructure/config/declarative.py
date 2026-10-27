@@ -441,6 +441,7 @@ class DeclarativeQuery(BaseModel):
     decision_policy: str = Field(min_length=1)
     renderer: str = Field(min_length=1)
     chat_history: dict[str, object] | None = None
+    execution: dict[str, object] | None = None
 
 
 class DeclarativePipelineConfig(BaseModel):

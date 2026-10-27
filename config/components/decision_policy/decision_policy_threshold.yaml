@@ -1,0 +1,6 @@
+id: decision_threshold
+type: decision_policy
+implementation: threshold
+description: Accept when configured assessor scores meet a threshold.
+config:
+  threshold: 0.5

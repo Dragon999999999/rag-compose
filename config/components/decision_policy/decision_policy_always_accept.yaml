@@ -1,0 +1,5 @@
+id: decision_always_accept
+type: decision_policy
+implementation: always_accept
+description: Accept every candidate without additional measurements.
+config: {}

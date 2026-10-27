@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import type {
   CatalogStage,
+  ExecutionStrategy,
   JsonSchema,
   ModelCatalog,
   Pipeline,
@@ -353,6 +354,7 @@ export function PipelineEditor() {
         <label>Description<input maxLength={4000} onChange={(event) => setDescription(event.target.value)} value={description} /></label>
         <label>Version<input min="1" onChange={(event) => setVersion(event.target.value)} type="number" value={version} /></label>
         <label className="editor-checkbox"><input checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} type="checkbox" /> Default pipeline</label>
+        {pipelineKind === "query" && <ExecutionSettings catalog={catalog.data} config={draft} onChange={setDraft} />}
       </section>
 
       {(localError || saveError) && <p className="form-error pipeline-editor-error" role="alert">{localError ?? saveError?.message}</p>}
@@ -645,4 +647,86 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function humanize(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ExecutionSettings({ catalog, config, onChange }: { catalog: PipelineCatalog; config: PipelineConfig; onChange: (config: PipelineConfig) => void }) {
+  const strategy = readExecutionStrategy(config);
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  const branches = Array.isArray(execution.branches)
+    ? execution.branches.filter(isRecord)
+    : [];
+  return (
+    <div className="execution-settings">
+      <label>Execution strategy<select value={strategy} onChange={(event) => onChange(updateExecutionStrategy(config, event.target.value as ExecutionStrategy))}>
+        <option value="linear">Linear</option>
+        <option value="branching">Branching</option>
+        <option value="recursive">Recursive</option>
+      </select></label>
+      {strategy === "recursive" && <label>Maximum rounds<input min="2" max="100" type="number" value={typeof execution.max_rounds === "number" ? execution.max_rounds : 2} onChange={(event) => onChange(updateExecutionValue(config, "max_rounds", Math.max(2, Number(event.target.value) || 2)))} /></label>}
+      {strategy === "branching" && <>
+        <label>Branches<input value={branches.map((branch, index) => typeof branch.id === "string" ? branch.id : `branch-${index + 1}`).join(", ")} onChange={(event) => onChange(updateBranchIds(config, event.target.value))} /></label>
+        <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Replace with selected branch</option><option value="union">Union branch evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
+        <div className="execution-branches">{branches.map((branch, index) => <div className="execution-branch" key={typeof branch.id === "string" ? branch.id : index}>
+          <strong>{typeof branch.id === "string" ? branch.id : `Branch ${index + 1}`}</strong>
+          <label>Start at<select value={branch.start_at === "reranker" || branch.start_at === "assessor" ? branch.start_at : "retriever"} onChange={(event) => onChange(updateBranchField(config, index, "start_at", event.target.value))}><option value="retriever">Retriever</option><option value="reranker">Reranker</option><option value="assessor">Assessor</option></select></label>
+          <label>Retriever<select value={typeof branch.retriever === "string" ? branch.retriever : ""} onChange={(event) => onChange(updateBranchField(config, index, "retriever", event.target.value))}><option value="">Use pipeline retriever</option>{catalog.stages.retriever?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
+          <label>Reranker<select value={typeof branch.reranker === "string" ? branch.reranker : ""} onChange={(event) => onChange(updateBranchField(config, index, "reranker", event.target.value))}><option value="">Use pipeline reranker</option>{catalog.stages.reranker?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
+          <label>Assessor<select value={Array.isArray(branch.assessors) && typeof branch.assessors[0] === "string" ? branch.assessors[0] : ""} onChange={(event) => onChange(updateBranchField(config, index, "assessor", event.target.value))}><option value="">Use pipeline assessors</option>{catalog.stages.assessor?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
+        </div>)}</div>
+      </>}
+    </div>
+  );
+}
+
+export function readExecutionStrategy(config: PipelineConfig): ExecutionStrategy {
+  const execution = config.query?.execution;
+  if (isRecord(execution) && (execution.strategy === "branching" || execution.strategy === "recursive")) {
+    return execution.strategy;
+  }
+  return "linear";
+}
+
+export function updateExecutionStrategy(config: PipelineConfig, strategy: ExecutionStrategy): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  if (strategy === "branching" && !Array.isArray(execution.branches)) {
+    execution.branches = [{ id: "branch-1" }, { id: "branch-2" }];
+  }
+  if (strategy === "recursive" && typeof execution.max_rounds !== "number") {
+    execution.max_rounds = 2;
+  }
+  execution.strategy = strategy;
+  return { ...config, query: { ...(config.query ?? {}), execution } };
+}
+
+function updateExecutionValue(config: PipelineConfig, key: string, value: unknown): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  execution[key] = value;
+  return { ...config, query: { ...(config.query ?? {}), execution } };
+}
+
+function updateBranchIds(config: PipelineConfig, value: string): PipelineConfig {
+  const ids = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const previous = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
+  execution.branches = ids.map((id, index) => ({
+    ...(previous[index] ?? {}),
+    id,
+  }));
+  return { ...config, query: { ...(config.query ?? {}), execution } };
+}
+
+function updateBranchField(config: PipelineConfig, index: number, key: "start_at" | "retriever" | "reranker" | "assessor", value: string): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch) => ({ ...branch })) : [];
+  if (!branches[index]) return config;
+  if (key === "assessor") {
+    if (value) branches[index].assessors = [value];
+    else delete branches[index].assessors;
+  } else if (value) {
+    branches[index][key] = value;
+  } else {
+    delete branches[index][key];
+  }
+  execution.branches = branches;
+  return { ...config, query: { ...(config.query ?? {}), execution } };
 }

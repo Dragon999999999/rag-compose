@@ -269,6 +269,7 @@ def create_phase_one_application(
             reranker_builder=lambda config: registry.build_reranker(
                 config, local_model_manager
             ),
+            execution=architecture.execution,
         )
         summaries = DocumentSummaryService(repository, runner)
     max_history = (

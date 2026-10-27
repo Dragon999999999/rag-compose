@@ -1,0 +1,7 @@
+id: decision_adaptive_retrieval
+type: decision_policy
+implementation: adaptive_retrieval
+description: Request bounded adaptive retrieval with parameter overrides.
+config:
+  threshold: 0.5
+  parameter_overrides: {}

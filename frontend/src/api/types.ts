@@ -1,4 +1,5 @@
 export type PipelineKind = "ingestion" | "query";
+export type ExecutionStrategy = "linear" | "branching" | "recursive";
 export type Project = {
   id: string;
   name: string;

@@ -1,0 +1,7 @@
+id: decision_fallback_retrieval
+type: decision_policy
+implementation: fallback_retrieval
+description: Request bounded fallback retrieval when evidence is weak.
+config:
+  threshold: 0.5
+  parameter_overrides: {}

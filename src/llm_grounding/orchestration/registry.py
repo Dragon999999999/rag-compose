@@ -19,6 +19,18 @@ from llm_grounding.assessment.deterministic import (
 from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
+from llm_grounding.decision.policies import (
+    AdaptiveRetrievalPolicy,
+    AlwaysAcceptPolicy,
+    BranchFusionPolicy,
+    BranchSelectionPolicy,
+    ConsensusPolicy,
+    FallbackRetrievalPolicy,
+    ThresholdPolicy,
+    TokenBudgetPolicy,
+    TopKPolicy,
+)
+from llm_grounding.decision.protocol import DecisionPolicy
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
@@ -193,7 +205,20 @@ class ComponentRegistry:
                 "diversity",
             }
         )
-        self.pipeline_decision_policies = frozenset({"basic_grounding"})
+        self.pipeline_decision_policies = frozenset(
+            {
+                "basic_grounding",
+                "always_accept",
+                "threshold",
+                "top_k",
+                "token_budget",
+                "consensus",
+                "fallback_retrieval",
+                "adaptive_retrieval",
+                "select_branches",
+                "merge_branches",
+            }
+        )
         self.pipeline_renderers = frozenset({"grounded_answer"})
         self.chunkers: dict[str, Callable[[ChunkerConfig], Chunker]] = {
             "block_aware": BlockAwareChunker,
@@ -390,13 +415,50 @@ class ComponentRegistry:
             return DiversityAssessor(max_pairs=config.max_pairs)
         raise ConfigurationError(f"Unknown assessor component {implementation!r}")
 
-    def build_decision_policy(self, config: ComponentConfig) -> BasicGroundingPolicy:
-        """Construct one registered decision policy."""
-        if config.implementation != "basic_grounding":
-            raise ConfigurationError(
-                f"Unknown decision_policy component {config.type!r}"
+    def build_decision_policy(self, config: ComponentConfig) -> DecisionPolicy:
+        """Construct one deterministic decision policy from its typed settings."""
+        implementation = config.implementation or config.type
+        if implementation == "basic_grounding":
+            return BasicGroundingPolicy()
+        if not hasattr(config, "model_dump"):
+            raise ConfigurationError("Decision policy configuration is invalid")
+        values = config.model_dump(mode="python")
+        if implementation == "always_accept":
+            return AlwaysAcceptPolicy()
+        if implementation == "threshold":
+            return ThresholdPolicy(
+                values.get("threshold") if values.get("threshold") is not None else 0.5,
+                values.get("assessment_dimension"),
             )
-        return BasicGroundingPolicy()
+        if implementation == "top_k":
+            return TopKPolicy(
+                values.get("top_k") if values.get("top_k") is not None else 5,
+                values.get("assessment_dimension"),
+            )
+        if implementation == "token_budget":
+            budget = values.get("token_budget")
+            if not isinstance(budget, int):
+                raise ConfigurationError("token_budget policy requires token_budget")
+            return TokenBudgetPolicy(budget)
+        if implementation == "consensus":
+            return ConsensusPolicy(values.get("min_agreement", 0.5))
+        if implementation == "fallback_retrieval":
+            return FallbackRetrievalPolicy(
+                values.get("threshold") if values.get("threshold") is not None else 0.5,
+                values.get("parameter_overrides"),
+            )
+        if implementation == "adaptive_retrieval":
+            return AdaptiveRetrievalPolicy(
+                values.get("threshold") if values.get("threshold") is not None else 0.5,
+                values.get("parameter_overrides"),
+            )
+        if implementation == "select_branches":
+            return BranchSelectionPolicy(values.get("branch_ids", ()))
+        if implementation == "merge_branches":
+            return BranchFusionPolicy()
+        raise ConfigurationError(
+            f"Unknown decision_policy component {implementation!r}"
+        )
 
     def build_renderer(self, config: ComponentConfig) -> GroundedAnswerRenderer:
         """Construct one registered answer renderer."""
@@ -473,6 +535,29 @@ class ComponentRegistry:
                     ),
                 )
             )
+            for branch in config.query.execution.branches:
+                if (
+                    branch.retriever is not None
+                    and branch.retriever not in self.retrievers
+                ):
+                    raise ConfigurationError(
+                        "Unknown branching retriever implementation "
+                        f"{branch.retriever!r}"
+                    )
+                if (
+                    branch.reranker is not None
+                    and branch.reranker not in self.rerankers
+                ):
+                    raise ConfigurationError(
+                        "Unknown branching reranker implementation "
+                        f"{branch.reranker!r}"
+                    )
+                unknown_assessors = set(branch.assessors) - self.pipeline_assessors
+                if unknown_assessors:
+                    raise ConfigurationError(
+                        "Unknown branching assessor implementation(s): "
+                        + ", ".join(sorted(unknown_assessors))
+                    )
             selections.extend(
                 (
                     "assessor",

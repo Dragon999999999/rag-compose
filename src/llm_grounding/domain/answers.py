@@ -41,11 +41,14 @@ class Assessment:
 
 
 class DecisionAction(StrEnum):
-    """Describe whether candidate output is authorized for rendering."""
+    """Describe authorization or bounded control flow for a query run."""
 
     ACCEPT = "accept"
     REJECT = "reject"
     ABSTAIN = "abstain"
+    RETRIEVE_AGAIN = "retrieve_again"
+    SELECT_BRANCHES = "select_branches"
+    MERGE_BRANCHES = "merge_branches"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,5 @@
+id: decision_merge_branches
+type: decision_policy
+implementation: merge_branches
+description: Merge branch results at the decision-policy join.
+config: {}

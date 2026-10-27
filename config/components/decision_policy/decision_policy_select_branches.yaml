@@ -1,0 +1,6 @@
+id: decision_select_branches
+type: decision_policy
+implementation: select_branches
+description: Select configured branches at the decision-policy join.
+config:
+  branch_ids: []
