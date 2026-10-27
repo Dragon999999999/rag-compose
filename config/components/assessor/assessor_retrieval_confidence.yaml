@@ -1,0 +1,5 @@
+id: assessor_retrieval_confidence
+type: assessor
+implementation: retrieval_confidence
+description: Summarize native retrieval scores without treating them as probabilities.
+config: {}

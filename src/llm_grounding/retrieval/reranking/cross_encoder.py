@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+from llm_grounding.domain.evidence import RankingScore
 from llm_grounding.retrieval.models import RerankResponse
 
 DEFAULT_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L6-v2"
@@ -80,7 +81,14 @@ class CrossEncoderReranker:
         return RerankResponse(
             response.query,
             tuple(
-                replace(result, rank=rank, score=score)
+                replace(
+                    result,
+                    rank=rank,
+                    score=score,
+                    rerank_score=RankingScore(
+                        score, "cross_encoder_logit", self._model_name
+                    ),
+                )
                 for rank, (result, score) in enumerate(ordered, 1)
             ),
         )

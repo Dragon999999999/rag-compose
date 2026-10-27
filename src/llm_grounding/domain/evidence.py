@@ -5,6 +5,7 @@ is shared here because both completed runs and downstream stages retain it;
 retrieval request/response envelopes remain local to retrieval.
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -19,6 +20,42 @@ class EvidenceType(StrEnum):
     FIGURE = "figure"
     EQUATION = "equation"
     CAPTION = "caption"
+
+
+@dataclass(frozen=True)
+class RankingScore:
+    """Describe a native ranking score without changing its numeric semantics."""
+
+    value: float
+    kind: str
+    method_id: str
+    higher_is_better: bool = True
+    calibrated: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject non-finite values and empty score identities."""
+        if not math.isfinite(self.value):
+            raise ValueError("Ranking scores must be finite")
+        if not self.kind.strip() or not self.method_id.strip():
+            raise ValueError("Ranking score kind and method_id must be non-empty")
+
+
+def score_kind(method_id: str) -> str:
+    """Return the native score kind used by a registered retrieval method."""
+    return {
+        "vector": "cosine_similarity",
+        "qdrant": "cosine_similarity",
+        "pgvector": "cosine_similarity",
+        "faiss": "cosine_similarity",
+        "postgres_fts": "ts_rank_cd",
+        "bm25": "bm25",
+        "splade_v3": "splade_dot_product",
+        "bge_m3_sparse": "splade_dot_product",
+        "colbert_v2": "colbert_maxsim",
+        "hybrid_rrf": "rrf",
+        "hybrid": "rrf",
+        "hybrid_weighted": "weighted_normalized_score",
+    }.get(method_id, "retrieval")
 
 
 @dataclass(frozen=True)
@@ -62,6 +99,19 @@ class RetrievalResult:
     score: float | None = None
     query_variant: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    ranking_score: RankingScore | None = None
+    rerank_score: RankingScore | None = None
+
+    def __post_init__(self) -> None:
+        """Derive a legacy retrieval-score record when a score is present."""
+        if self.ranking_score is None and self.score is not None:
+            object.__setattr__(
+                self,
+                "ranking_score",
+                RankingScore(
+                    self.score, score_kind(self.retriever_id), self.retriever_id
+                ),
+            )
 
 
 def source_order(evidence: EvidenceUnit) -> tuple[str, int, int, str]:

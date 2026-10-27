@@ -1,0 +1,5 @@
+id: assessor_evidence_sufficiency
+type: assessor
+implementation: evidence_sufficiency
+description: Estimate query-term, entity, and aspect coverage heuristically.
+config: {}

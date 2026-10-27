@@ -50,21 +50,9 @@ class UsageAccumulator:
         input_values = [item.input_tokens for item in target]
         output_values = [item.output_tokens for item in target]
         total_values = [item.total_tokens for item in target]
-        input_tokens = (
-            sum(input_values)
-            if all(value is not None for value in input_values) and input_values
-            else None
-        )
-        output_tokens = (
-            sum(output_values)
-            if all(value is not None for value in output_values) and output_values
-            else None
-        )
-        total_tokens = (
-            sum(total_values)
-            if all(value is not None for value in total_values) and total_values
-            else None
-        )
+        input_tokens = _sum_complete(input_values)
+        output_tokens = _sum_complete(output_values)
+        total_tokens = _sum_complete(total_values)
         origins = {item.usage_origin for item in target}
         origin = (
             UsageOrigin.PROVIDER_REPORTED
@@ -89,3 +77,10 @@ class UsageAccumulator:
                 "evaluator_llm_calls": len(self._llm) - len(target),
             },
         )
+
+
+def _sum_complete(values: list[int | None]) -> int | None:
+    """Sum token values only when every target invocation reported one."""
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)

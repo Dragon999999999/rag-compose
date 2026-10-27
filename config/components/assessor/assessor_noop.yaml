@@ -1,0 +1,5 @@
+id: assessor_noop
+type: assessor
+implementation: noop
+description: Preserve the baseline without running an assessment.
+config: {}

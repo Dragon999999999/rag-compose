@@ -11,6 +11,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
+from llm_grounding.domain.evidence import RankingScore, score_kind
+
 
 @dataclass(frozen=True)
 class Project:
@@ -151,6 +153,19 @@ class ChunkRetrievalResult:
     rank: int
     retriever_id: str
     score: float | None = None
+    ranking_score: RankingScore | None = None
+    rerank_score: RankingScore | None = None
+
+    def __post_init__(self) -> None:
+        """Derive a legacy retrieval-score record when a score is present."""
+        if self.ranking_score is None and self.score is not None:
+            object.__setattr__(
+                self,
+                "ranking_score",
+                RankingScore(
+                    self.score, score_kind(self.retriever_id), self.retriever_id
+                ),
+            )
 
 
 @dataclass(frozen=True)

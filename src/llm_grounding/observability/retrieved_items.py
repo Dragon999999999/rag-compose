@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from llm_grounding.domain.corpus import ChunkRetrievalResult
-from llm_grounding.domain.evidence import EvidenceUnit
+from llm_grounding.domain.evidence import EvidenceUnit, RankingScore
 from llm_grounding.observability.models import RetrievedItem, Score, SourceRef
 
 
@@ -31,6 +31,7 @@ def retrieved_item(
     metadata["retriever_id"] = result.retriever_id
     if references:
         metadata["evidence_ids"] = [reference.evidence_id for reference in references]
+    effective_score = _score(result.rerank_score or result.ranking_score, result.score)
     return RetrievedItem(
         retrieval_id=chunk.chunk_id,
         rank=result.rank,
@@ -51,11 +52,26 @@ def retrieved_item(
                 ),
             },
         ),
-        score=Score(
-            value=result.score,
-            type="cosine_similarity" if result.score is not None else None,
-        ),
+        score=effective_score or Score(),
+        retrieval_score=_score(result.ranking_score, result.score),
+        rerank_score=_score(result.rerank_score),
         metadata=metadata,
+    )
+
+
+def _score(
+    ranking: RankingScore | None, legacy_value: float | None = None
+) -> Score | None:
+    """Translate a domain score while retaining native semantics."""
+    if ranking is None and legacy_value is None:
+        return None
+    return Score(
+        value=ranking.value if ranking is not None else legacy_value,
+        type=ranking.kind if ranking is not None else None,
+        kind=ranking.kind if ranking is not None else None,
+        method_id=ranking.method_id if ranking is not None else None,
+        higher_is_better=ranking.higher_is_better if ranking is not None else None,
+        calibrated=ranking.calibrated if ranking is not None else False,
     )
 
 

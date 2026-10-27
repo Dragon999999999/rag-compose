@@ -1,0 +1,5 @@
+id: assessor_source_references
+type: assessor
+implementation: source_reference
+description: Validate grounded claims against cited source references.
+config: {}

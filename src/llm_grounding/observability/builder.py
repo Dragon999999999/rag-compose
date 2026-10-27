@@ -317,6 +317,7 @@ class ObservationBuilder:
             dimension=item.dimension,
             label=item.label,
             score=item.score,
+            status=item.status,
             evidence_ids=list(item.evidence_ids),
             metadata=item.metadata,
         )

@@ -37,6 +37,7 @@ class Assessment:
     label: str | None = None
     evidence_ids: tuple[str, ...] = ()
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    status: str | None = None
 
 
 class DecisionAction(StrEnum):

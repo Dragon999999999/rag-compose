@@ -23,6 +23,7 @@ from llm_grounding.infrastructure.config.declarative import (
 from llm_grounding.infrastructure.config.model_schema import validate_model_file
 from llm_grounding.infrastructure.config.models import (
     ApplicationDefaults,
+    AssessorConfig,
     ChatHistoryConfig,
     ComponentConfig,
     KnowledgeBuilderConfig,
@@ -196,7 +197,7 @@ class ConfigurationRegistry:
                 reranker=self._reranker(source.query.reranker),
                 reasoner=self._pipeline_reasoner(source.query.reasoner),
                 assessors=tuple(
-                    self._component("assessor", item, ComponentConfig)
+                    self._component("assessor", item, AssessorConfig)
                     for item in source.query.assessors
                 ),
                 decision_policy=self._component(

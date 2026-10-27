@@ -71,6 +71,12 @@ class ComponentConfig(BaseModel):
             "generative": ("reranker", "generative"),
             "basic_grounded": ("reasoner", "basic_grounded"),
             "source_reference": ("assessor", "source_reference"),
+            "source_references": ("assessor", "source_reference"),
+            "noop": ("assessor", "noop"),
+            "retrieval_confidence": ("assessor", "retrieval_confidence"),
+            "relevance": ("assessor", "relevance"),
+            "evidence_sufficiency": ("assessor", "evidence_sufficiency"),
+            "diversity": ("assessor", "diversity"),
             "basic_grounding": ("decision_policy", "basic_grounding"),
             "grounded_answer": ("renderer", "grounded_answer"),
             "qdrant": ("vector_backend", "qdrant"),
@@ -86,6 +92,28 @@ class ComponentConfig(BaseModel):
         normalized = dict(value)
         normalized["type"], normalized["implementation"] = selected
         return normalized
+
+
+class AssessorConfig(ComponentConfig):
+    """Configure one deterministic assessor and its measurement thresholds."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    type: str = Field(default="assessor", min_length=1)
+    implementation: Literal[
+        "noop",
+        "source_reference",
+        "retrieval_confidence",
+        "relevance",
+        "evidence_sufficiency",
+        "diversity",
+    ] = "source_reference"
+    threshold: float | None = Field(default=None, allow_inf_nan=False)
+    score_kind: str | None = Field(default=None, min_length=1)
+    min_threshold_count: int = Field(default=0, ge=0, le=10000)
+    fallback_to_retrieval: bool = False
+    requested_aspects: tuple[str, ...] = ()
+    max_pairs: int = Field(default=1000, ge=1, le=100000)
 
 
 class ModelConfig(BaseModel):
@@ -312,7 +340,7 @@ class ArchitectureConfig(BaseModel):
         validation_alias=AliasChoices("reranker", "reranking")
     )
     reasoner: ReasonerConfig
-    assessors: tuple[ComponentConfig, ...]
+    assessors: tuple[AssessorConfig, ...]
     decision_policy: ComponentConfig
     renderer: ComponentConfig
     chat_history: ChatHistoryConfig | None = None
@@ -453,7 +481,7 @@ class PipelineQueryConfig(BaseModel):
         validation_alias=AliasChoices("reranker", "reranking")
     )
     reasoner: PipelineReasonerConfig
-    assessors: tuple[ComponentConfig, ...]
+    assessors: tuple[AssessorConfig, ...]
     decision_policy: ComponentConfig
     renderer: ComponentConfig
     chat_history: ChatHistoryConfig | None = None

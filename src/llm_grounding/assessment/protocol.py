@@ -9,14 +9,14 @@ failures. They must not change the candidate or apply acceptance thresholds.
 from typing import Protocol
 
 from llm_grounding.domain.answers import Assessment, ReasoningResult
-from llm_grounding.domain.evidence import RetrievalResult
+from llm_grounding.domain.corpus import GroundingContext
 
 
 class Assessor(Protocol):
     """Define the interchangeable assessment component contract."""
 
-    async def assess(
-        self, result: ReasoningResult, evidence: tuple[RetrievalResult, ...]
+    async def assess_context(
+        self, result: ReasoningResult, context: GroundingContext
     ) -> tuple[Assessment, ...]:
-        """Return measurements of the candidate; an empty tuple means no assessment."""
+        """Return measurements using the canonical query context."""
         ...

@@ -9,12 +9,21 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import cast
 
+from llm_grounding.assessment.deterministic import (
+    DiversityAssessor,
+    EvidenceSufficiencyAssessor,
+    NoOpAssessor,
+    RelevanceAssessor,
+    RetrievalConfidenceAssessor,
+)
+from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.assessment.source_reference import SourceReferenceAssessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
+    AssessorConfig,
     ComponentConfig,
     KnowledgeBuilderConfig,
     ModelCatalog,
@@ -174,7 +183,16 @@ class ComponentRegistry:
             ),
         }
         self.pipeline_reasoners = frozenset({"basic_grounded"})
-        self.pipeline_assessors = frozenset({"source_reference"})
+        self.pipeline_assessors = frozenset(
+            {
+                "noop",
+                "source_reference",
+                "retrieval_confidence",
+                "relevance",
+                "evidence_sufficiency",
+                "diversity",
+            }
+        )
         self.pipeline_decision_policies = frozenset({"basic_grounding"})
         self.pipeline_renderers = frozenset({"grounded_answer"})
         self.chunkers: dict[str, Callable[[ChunkerConfig], Chunker]] = {
@@ -337,11 +355,40 @@ class ComponentRegistry:
             config.prompt_id,
         )
 
-    def build_assessor(self, config: ComponentConfig) -> SourceReferenceAssessor:
-        """Construct one registered evidence assessor."""
-        if config.implementation != "source_reference":
-            raise ConfigurationError(f"Unknown assessor component {config.type!r}")
-        return SourceReferenceAssessor()
+    def build_assessor(
+        self,
+        config: AssessorConfig | ComponentConfig,
+        repository: PostgresRepository | None = None,
+    ) -> Assessor:
+        """Construct one registered deterministic evidence assessor."""
+        implementation = config.implementation or config.type
+        if implementation == "noop":
+            return NoOpAssessor()
+        if implementation == "source_reference":
+            return SourceReferenceAssessor(repository)
+        if not isinstance(config, AssessorConfig):
+            raise ConfigurationError(
+                f"Assessor {implementation!r} requires typed configuration"
+            )
+        if implementation == "retrieval_confidence":
+            return RetrievalConfidenceAssessor(
+                threshold=config.threshold,
+                score_kind=config.score_kind,
+                min_threshold_count=config.min_threshold_count,
+            )
+        if implementation == "relevance":
+            return RelevanceAssessor(
+                threshold=config.threshold,
+                fallback_to_retrieval=config.fallback_to_retrieval,
+            )
+        if implementation == "evidence_sufficiency":
+            return EvidenceSufficiencyAssessor(
+                requested_aspects=config.requested_aspects,
+                threshold=config.threshold if config.threshold is not None else 0.5,
+            )
+        if implementation == "diversity":
+            return DiversityAssessor(max_pairs=config.max_pairs)
+        raise ConfigurationError(f"Unknown assessor component {implementation!r}")
 
     def build_decision_policy(self, config: ComponentConfig) -> BasicGroundingPolicy:
         """Construct one registered decision policy."""

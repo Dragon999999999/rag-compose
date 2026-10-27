@@ -256,7 +256,10 @@ def create_phase_one_application(
             retriever,
             summary,
             reasoner,
-            registry.build_assessor(architecture.assessors[0]),
+            tuple(
+                registry.build_assessor(item, repository)
+                for item in architecture.assessors
+            ),
             registry.build_decision_policy(architecture.decision_policy),
             registry.build_renderer(architecture.renderer),
             diagnostics,

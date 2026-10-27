@@ -1,0 +1,5 @@
+id: assessor_relevance
+type: assessor
+implementation: relevance
+description: Assess existing reranking scores without additional inference.
+config: {}

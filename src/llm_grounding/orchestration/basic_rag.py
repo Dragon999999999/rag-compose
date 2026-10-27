@@ -1,14 +1,19 @@
 """Current grounded query orchestration, separate from document ingestion."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
-from llm_grounding.assessment.source_reference import SourceReferenceAssessor
+from llm_grounding.assessment.protocol import Assessor
 from llm_grounding.decision.basic_grounding import BasicGroundingPolicy
-from llm_grounding.domain.answers import Answer, DecisionAction, DecisionResult
+from llm_grounding.domain.answers import (
+    Answer,
+    Assessment,
+    DecisionAction,
+    DecisionResult,
+)
 from llm_grounding.domain.corpus import (
     ChunkRetrievalResult,
     CorpusRequest,
@@ -53,7 +58,7 @@ class BasicRagRunner:
         vector: Retriever,
         summary: Retriever,
         reasoner: BasicGroundedReasoner,
-        assessor: SourceReferenceAssessor,
+        assessor: Assessor | Sequence[Assessor],
         policy: BasicGroundingPolicy,
         renderer: GroundedAnswerRenderer,
         diagnostics: GroundingDiagnostics | None = None,
@@ -65,7 +70,12 @@ class BasicRagRunner:
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
-        self._assessor, self._policy, self._renderer = assessor, policy, renderer
+        self._assessors = (
+            tuple(assessor)
+            if isinstance(assessor, (tuple, list))
+            else (assessor,)
+        )
+        self._policy, self._renderer = policy, renderer
         self._reranker = reranker or IdentityReranker()
         self._reranker_config = reranker_config or RerankerConfig()
         if reranker_builder is None:
@@ -190,7 +200,12 @@ class BasicRagRunner:
                 usage.add_llm(LLMUsage.model_validate(generation_usage))
         traces.end(reasoning_span, output_count=1)
         assessment_span = traces.start("assessment")
-        assessments = await self._assessor.assess_context(reasoning, context)
+        assessment_values: list[Assessment] = []
+        for assessor in self._assessors:
+            assessment_values.extend(
+                await assessor.assess_context(reasoning, context)
+            )
+        assessments = tuple(assessment_values)
         traces.end(assessment_span, output_count=len(assessments))
         decision_span = traces.start("decision", input_count=len(assessments))
         decision = await self._policy.decide(reasoning, assessments)
@@ -224,6 +239,16 @@ class BasicRagRunner:
                         "rank": item.rank,
                         "retriever_id": item.retriever_id,
                         "score": item.score,
+                        "retrieval_score": (
+                            item.ranking_score.__dict__
+                            if item.ranking_score is not None
+                            else None
+                        ),
+                        "rerank_score": (
+                            item.rerank_score.__dict__
+                            if item.rerank_score is not None
+                            else None
+                        ),
                     }
                     for item in chunks
                 ],
@@ -360,6 +385,8 @@ class BasicRagRunner:
                     result.rank,
                     result.retriever_id,
                     result.score,
+                    result.ranking_score,
+                    result.rerank_score,
                 )
                 for result in ranked.results
             )

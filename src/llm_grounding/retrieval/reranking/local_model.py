@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from llm_grounding.domain.evidence import RankingScore
 from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.retrieval.models import RerankResponse
 
@@ -66,6 +67,11 @@ class LocalModelReranker:
                     result,
                     rank=rank,
                     score=indexed_scores[index],
+                    rerank_score=RankingScore(
+                        indexed_scores[index],
+                        "cross_encoder_logit",
+                        self._model_id,
+                    ),
                 )
                 for rank, (index, result) in enumerate(ordered, 1)
             ),

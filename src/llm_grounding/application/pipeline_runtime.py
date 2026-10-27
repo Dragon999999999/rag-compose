@@ -244,12 +244,6 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounded reasoner"
             )
-        if tuple(item.implementation for item in architecture.assessors) != (
-            "source_reference",
-        ):
-            raise PipelineResolutionError(
-                "The vector runtime requires the source_reference assessor"
-            )
         if architecture.decision_policy.implementation != "basic_grounding":
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounding decision policy"
@@ -374,7 +368,10 @@ class PipelineRuntimeResolver:
             retriever,
             summary,
             reasoner,
-            self._registry.build_assessor(architecture.assessors[0]),
+            tuple(
+                self._registry.build_assessor(item, self._repository)
+                for item in architecture.assessors
+            ),
             self._registry.build_decision_policy(architecture.decision_policy),
             self._registry.build_renderer(architecture.renderer),
             embedding_config=query_embedding,

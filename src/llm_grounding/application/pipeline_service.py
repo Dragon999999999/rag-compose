@@ -516,7 +516,7 @@ class PipelineService:
                     self._registry.pipeline_reasoners, "PipelineReasonerConfig"
                 ),
                 "assessor": self._stage(
-                    self._registry.pipeline_assessors, "ComponentConfig"
+                    self._registry.pipeline_assessors, "AssessorConfig"
                 ),
                 "decision_policy": self._stage(
                     self._registry.pipeline_decision_policies, "ComponentConfig"

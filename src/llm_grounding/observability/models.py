@@ -80,6 +80,10 @@ class Score(ObservationModel):
 
     value: float | None = None
     type: str | None = None
+    kind: str | None = None
+    method_id: str | None = None
+    higher_is_better: bool | None = None
+    calibrated: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -104,6 +108,8 @@ class RetrievedItem(ObservationModel):
     text: str | None = None
     source: SourceRef = Field(default_factory=SourceRef)
     score: Score = Field(default_factory=Score)
+    retrieval_score: Score | None = None
+    rerank_score: Score | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -270,6 +276,7 @@ class AssessmentModel(ObservationModel):
     dimension: str
     label: str | None = None
     score: float | None = None
+    status: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
