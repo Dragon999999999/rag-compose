@@ -32,7 +32,7 @@ def test_composition_only_pipeline_has_no_provider_settings() -> None:
         Path("config/pipelines/query_basic_v1.yaml").read_text(encoding="utf-8")
     )
 
-    assert value["query"]["retriever"] == "retriever_vector"
+    assert value["query"]["retriever"] == "retriever_dense_vector_summary"
     assert value["query"]["reasoner"] == "reasoner_basic_grounded"
     assert "base_url" not in str(value)
     assert "model_name" not in str(value)
@@ -99,5 +99,5 @@ def test_default_query_pipeline_resolves_from_component_ids() -> None:
 
     assert config.kind == "query"
     assert config.query is not None
-    assert config.query.reasoner.type == "basic_grounded"
+    assert config.query.reasoner.implementation == "basic_grounded"
     assert config.query.reasoner.model_ref in load_model_catalog().reasoning_models

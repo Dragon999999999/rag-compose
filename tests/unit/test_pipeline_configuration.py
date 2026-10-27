@@ -222,7 +222,7 @@ def test_unimplemented_retriever_is_not_advertised_as_executable() -> None:
             "query": query.query.model_copy(
                 update={
                     "retriever": query.query.retriever.model_copy(
-                        update={"type": "sparse"}
+                        update={"implementation": "unimplemented"}
                     )
                 }
             )
@@ -344,7 +344,7 @@ def test_ingestion_and_query_pipeline_specs_resolve_separately() -> None:
     assert query.representation is None
     effective_ingestion = ingestion.resolve_ingestion(catalog)
     architecture, resolved_ingestion = query.resolve_query(catalog, effective_ingestion)
-    assert architecture.retriever.type == "vector"
+    assert architecture.retriever.type == "dense"
     assert resolved_ingestion.identity() == effective_ingestion.identity()
 
 
@@ -408,7 +408,7 @@ def test_registry_keeps_pipeline_registration_closed() -> None:
     """A pipeline cannot select arbitrary Python import paths."""
     config = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))
     settings = config.model_dump()
-    settings["query"]["renderer"]["type"] = "python:os.system"
+    settings["query"]["renderer"]["implementation"] = "python:os.system"
 
     with pytest.raises(ConfigurationError, match="Unknown renderer component"):
         ComponentRegistry().validate_pipeline(

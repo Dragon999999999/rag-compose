@@ -4,7 +4,7 @@ name: query_basic_v1
 version: 1
 description: Default query pipeline for indexed project documents.
 query:
-  retriever: retriever_vector
+  retriever: retriever_dense_vector_summary
   reranker: reranker_identity
   reasoner: reasoner_basic_grounded
   assessors:

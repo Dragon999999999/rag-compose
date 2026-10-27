@@ -21,6 +21,7 @@ from llm_grounding.infrastructure.config.models import (
     PipelineEmbeddingConfig,
     RetrieverConfig,
 )
+from llm_grounding.infrastructure.config.overrides import apply_query_overrides
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
@@ -400,6 +401,7 @@ class PipelineService:
         self._registry.validate_pipeline(
             config, config.effective_catalog(self._catalog)
         )
+        apply_query_overrides(config, (("pipeline", config.stage_overrides),))
         return config
 
     async def resolve(self, pipeline_id: str) -> ResolvedPipeline:
@@ -532,7 +534,15 @@ class PipelineService:
                 "retriever_requirements": {
                     name: sorted(
                         self._registry.query_requirements(
-                            RetrieverConfig(type=name)
+                            RetrieverConfig(
+                                type={
+                                    "vector_similarity": "dense",
+                                    "postgres_all_chunks": "full_context",
+                                    "postgres_fts": "sparse",
+                                    "hybrid_rrf": "hybrid",
+                                }[name],
+                                implementation=name,
+                            )
                         )
                     )
                     for name in self._registry.retrievers

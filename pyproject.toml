@@ -20,6 +20,7 @@ dependencies = [
     "uvicorn>=0.34,<1",
     "python-multipart>=0.0.20,<1",
     "python-dotenv>=1,<2",
+    "jsonschema>=4.23,<5",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +54,7 @@ dev = [
     "ruff>=0.12",
     "mypy>=1.17",
     "types-PyYAML>=6",
+    "types-jsonschema>=4.23,<5",
 ]
 
 [tool.pytest.ini_options]

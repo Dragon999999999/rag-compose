@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
+from llm_grounding.application.component_sync import ComponentSynchronizer
 from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
@@ -53,6 +54,7 @@ class PhaseOneApplication:
         architecture: ArchitectureConfig | None = None,
         ingestion_config: IngestionConfig | None = None,
         pipeline_sync: PipelineSynchronizer | None = None,
+        component_sync: ComponentSynchronizer | None = None,
         pipeline_service: PipelineService | None = None,
     ) -> None:
         """Expose application use cases while retaining infrastructure ownership."""
@@ -72,12 +74,15 @@ class PhaseOneApplication:
         self.architecture = architecture
         self.ingestion_config = ingestion_config
         self._pipeline_sync = pipeline_sync
+        self._component_sync = component_sync
         self.pipeline_service = pipeline_service
         self.pipeline_runtime = pipeline_service.runtime if pipeline_service else None
         self.pipelines: tuple[Pipeline, ...] = ()
 
     async def startup(self) -> None:
-        """Synchronize configured pipelines and expose PostgreSQL-backed records."""
+        """Synchronize components and pipelines into PostgreSQL-backed records."""
+        if self._component_sync is not None:
+            await self._component_sync.synchronize()
         if self._pipeline_sync is not None:
             await self._pipeline_sync.synchronize()
         assign_default = getattr(
@@ -143,8 +148,8 @@ def create_phase_one_application(
     if ingestion_config is None:
         raise ValueError("An ingestion configuration is required")
     if (
-        architecture.reasoner.type != "basic_grounded"
-        or architecture.renderer.type != "grounded_answer"
+        architecture.reasoner.implementation != "basic_grounded"
+        or architecture.renderer.implementation != "grounded_answer"
     ):
         raise RuntimeError(
             "Phase 1 application requires a basic_grounded grounded-answer pipeline"
@@ -160,13 +165,14 @@ def create_phase_one_application(
             raise RuntimeError("Dense ingestion requires a resolved vector backend")
         vectors = VectorStoreFactory().create(
             VectorBackendConfig(
-                type=ingestion_config.vector_backend,
+                implementation=ingestion_config.vector_backend,
                 index_version=ingestion_config.index_version,
             ),
             repository,
         )
     catalog = model_catalog or load_model_catalog()
     pipeline_sync = PipelineSynchronizer(repository, pipeline_directory, catalog)
+    component_sync = ComponentSynchronizer(repository)
     pipeline_runtime = PipelineRuntimeResolver(repository, vectors, catalog)
     pipeline_service = PipelineService(repository, catalog, runtime=pipeline_runtime)
     embedder = (
@@ -193,7 +199,7 @@ def create_phase_one_application(
     runner = None
     summaries = None
     if (
-        architecture.retriever.type == "vector"
+        architecture.retriever.type == "dense"
         and ingestion_config.embedding is not None
         and vectors is not None
         and embedder is not None
@@ -251,5 +257,6 @@ def create_phase_one_application(
         architecture,
         ingestion_config,
         pipeline_sync,
+        component_sync,
         pipeline_service,
     )

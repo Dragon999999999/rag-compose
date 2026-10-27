@@ -12,7 +12,7 @@ class SentenceTransformersEmbedder:
 
     def __init__(self, config: EmbeddingConfig) -> None:
         """Retain configuration and defer model loading until first use."""
-        if config.type != "sentence_transformers":
+        if config.implementation != "sentence_transformers":
             raise ValueError(
                 "SentenceTransformersEmbedder requires sentence_transformers config"
             )

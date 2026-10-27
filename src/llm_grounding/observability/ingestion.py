@@ -113,7 +113,7 @@ def build_ingestion_observation(
         document_hash=document.sha256,
         parser_id=config.parser,
         parser_version=config.parser_version,
-        chunker_id=config.chunker.type,
+        chunker_id=config.chunker.implementation,
         chunker_version=config.chunker.version,
         chunk_size=config.chunker.target_chars,
         chunk_overlap=config.chunker.overlap_chars,

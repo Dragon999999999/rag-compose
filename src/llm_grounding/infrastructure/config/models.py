@@ -26,13 +26,49 @@ from llm_grounding.ingestion.models import (
 
 
 class ComponentConfig(BaseModel):
-    """Select one registered implementation without arbitrary plugin loading."""
+    """Select a component category and its registered implementation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    type: str = Field(
-        min_length=1, description="Implementation name in the stage registry."
+    id: str | None = Field(default=None, min_length=1)
+    type: str = Field(min_length=1, description="General component category.")
+    implementation: str | None = Field(
+        default=None, min_length=1, description="Registered runtime implementation."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_component_identity(cls, value: object) -> object:
+        """Normalize old direct implementation inputs for in-memory callers."""
+        if not isinstance(value, dict) or value.get("implementation") is not None:
+            return value
+        aliases = {
+            "pymupdf": ("parser", "pymupdf"),
+            "block_aware": ("chunker", "block_aware"),
+            "fixed_window": ("chunker", "fixed_window"),
+            "basic": ("knowledge_builder", "basic"),
+            "vector": ("dense", "vector_similarity"),
+            "postgres_fts": ("sparse", "postgres_fts"),
+            "hybrid_rrf": ("hybrid", "hybrid_rrf"),
+            "full_context": ("full_context", "postgres_all_chunks"),
+            "identity": ("reranker", "identity"),
+            "top_k": ("reranker", "top_k"),
+            "cross_encoder": ("reranker", "cross_encoder"),
+            "basic_grounded": ("reasoner", "basic_grounded"),
+            "source_reference": ("assessor", "source_reference"),
+            "basic_grounding": ("decision_policy", "basic_grounding"),
+            "grounded_answer": ("renderer", "grounded_answer"),
+            "qdrant": ("vector_backend", "qdrant"),
+        }
+        selected_type = value.get("type")
+        if not isinstance(selected_type, str):
+            return value
+        selected = aliases.get(selected_type)
+        if selected is None:
+            return value
+        normalized = dict(value)
+        normalized["type"], normalized["implementation"] = selected
+        return normalized
 
 
 class ModelConfig(BaseModel):
@@ -125,12 +161,12 @@ class RetrieverConfig(ComponentConfig):
 class RerankerConfig(ComponentConfig):
     """Configure candidate truncation or model-based reranking.
 
-    ``type`` is the established component name. ``provider`` is accepted as a
-    clearer YAML/API spelling for new configurations and is normalized to
-    ``type`` so existing persisted pipeline documents remain compatible.
+    ``type`` identifies the reranker family and ``implementation`` selects the
+    concrete algorithm. ``provider`` remains an input alias for API callers.
     """
 
-    type: str = Field(default="identity", min_length=1)
+    type: str = Field(default="reranker", min_length=1)
+    implementation: str = Field(default="identity", min_length=1)
     provider: Literal["identity", "top_k", "cross_encoder"] | None = Field(
         default=None,
         exclude=True,
@@ -169,11 +205,14 @@ class RerankerConfig(ComponentConfig):
         provider = value.get("provider")
         if provider is None:
             return value
-        selected = value.get("type", "identity")
-        if selected not in ("identity", provider):
-            raise ValueError("type and provider must select the same reranker")
+        selected = value.get("implementation", value.get("type", "identity"))
+        if selected not in ("identity", provider, "reranker"):
+            raise ValueError(
+                "implementation and provider must select the same reranker"
+            )
         normalized = dict(value)
         normalized["type"] = provider
+        normalized["implementation"] = provider
         return normalized
 
     @model_validator(mode="after")
@@ -182,7 +221,7 @@ class RerankerConfig(ComponentConfig):
         if self.rerank_top_k is not None and self.retrieval_top_k is not None:
             if self.rerank_top_k > self.retrieval_top_k:
                 raise ValueError("rerank_top_k must not exceed retrieval_top_k")
-        if self.type == "identity" and self.rerank_top_k is not None:
+        if self.implementation == "identity" and self.rerank_top_k is not None:
             raise ValueError(
                 "rerank_top_k requires the top_k or cross_encoder reranker"
             )
@@ -234,10 +273,25 @@ class ArchitectureConfig(BaseModel):
 class VectorBackendConfig(ComponentConfig):
     """Select the registered vector backend and its immutable index contract."""
 
-    type: str = Field(min_length=1)
+    type: str = Field(default="vector_backend", min_length=1)
+    implementation: str = Field(default="qdrant", min_length=1)
     index_version: str = Field(default="1", min_length=1, max_length=32)
     representation: Literal["dense"] = "dense"
     similarity_metric: Literal["cosine"] = "cosine"
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_backend_input(cls, value: object) -> object:
+        """Treat a direct backend identifier as its implementation selection."""
+        if not isinstance(value, dict):
+            return value
+        selected = value.get("type")
+        if selected not in {None, "vector_backend"} and "implementation" not in value:
+            normalized = dict(value)
+            normalized["type"] = "vector_backend"
+            normalized["implementation"] = selected
+            return normalized
+        return value
 
 
 class ApplicationDefaults(BaseModel):
@@ -272,6 +326,8 @@ class PipelineReasonerConfig(ComponentConfig, ModelReference):
 
 class PipelineEmbeddingConfig(ModelReference):
     """Select the named embedding model used to build and query an index."""
+
+    component_id: str | None = Field(default=None, min_length=1)
 
 
 class PipelineRepresentationConfig(BaseModel):
@@ -371,6 +427,7 @@ class PipelineConfig(BaseModel):
     is_default: bool = False
     representation: PipelineRepresentationConfig | None = None
     query: PipelineQueryConfig | None = None
+    stage_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
     resolved_catalog: ModelCatalog | None = Field(
         default=None,
         description=(
@@ -390,6 +447,8 @@ class PipelineConfig(BaseModel):
             raise ValueError("ingestion pipelines must not define query stages")
         if self.kind == "query" and self.representation is not None:
             raise ValueError("query pipelines must not define representation stages")
+        if self.kind == "ingestion" and self.stage_overrides:
+            raise ValueError("ingestion pipelines must not define stage overrides")
         return self
 
     def identity(self) -> str:
@@ -430,6 +489,10 @@ class PipelineConfig(BaseModel):
         if self.query is not None:
             if self.query.retriever.query_embedder is not None:
                 embedding_refs.add(self.query.retriever.query_embedder)
+            retriever_overrides = self.stage_overrides.get("retriever", {})
+            query_embedder = retriever_overrides.get("query_embedder")
+            if isinstance(query_embedder, str):
+                embedding_refs.add(query_embedder)
             reasoning_refs.add(self.query.reasoner.model_ref)
         return self.model_copy(
             update={
@@ -466,16 +529,16 @@ class PipelineConfig(BaseModel):
         )
         return IngestionConfig.model_validate(
             {
-                "parser": self.representation.parser.type,
+                "parser": self.representation.parser.implementation,
                 "knowledge_builder": (
-                    self.representation.knowledge_builder.type
+                    self.representation.knowledge_builder.implementation
                     if self.representation.knowledge_builder is not None
                     else None
                 ),
                 "chunker": self.representation.chunker.model_dump(mode="json"),
                 "embedding": embedding.model_dump(mode="json") if embedding else None,
                 "vector_backend": (
-                    self.representation.vector_backend.type
+                    self.representation.vector_backend.implementation
                     if self.representation.vector_backend is not None
                     else None
                 ),
@@ -498,16 +561,20 @@ class PipelineConfig(BaseModel):
         architecture = ArchitectureConfig(
             name=self.name,
             version=self.version,
-            parser=ComponentConfig(type=ingestion.parser),
+            parser=ComponentConfig(type="parser", implementation=ingestion.parser),
             knowledge_builder=(
-                ComponentConfig(type=ingestion.knowledge_builder)
+                ComponentConfig(
+                    type="knowledge_builder",
+                    implementation=ingestion.knowledge_builder,
+                )
                 if ingestion.knowledge_builder is not None
                 else None
             ),
             retriever=self.query.retriever,
             reranker=self.query.reranker,
             reasoner=ReasonerConfig(
-                type=self.query.reasoner.type,
+                type="reasoner",
+                implementation=self.query.reasoner.implementation,
                 model=reasoning,
                 prompt_id=self.query.reasoner.prompt_id,
             ),

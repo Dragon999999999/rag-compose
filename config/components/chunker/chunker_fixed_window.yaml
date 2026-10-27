@@ -1,0 +1,8 @@
+id: chunker_fixed_window
+type: chunker
+implementation: fixed_window
+description: Produce fixed-size overlapping retrieval chunks.
+config:
+  version: '1'
+  target_chars: 800
+  overlap_chars: 120

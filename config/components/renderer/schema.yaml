@@ -1,0 +1,12 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Renderer component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: renderer}
+      implementation: {enum: [grounded_answer]}
+      config:
+        type: object
+        additionalProperties: false

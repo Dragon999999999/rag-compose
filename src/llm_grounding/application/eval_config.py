@@ -67,7 +67,7 @@ class EvaluationConfigService:
         self._validate_values(values)
         if architecture.name != "query_basic_v1":
             raise ValueError("Evaluation configuration requires query_basic_v1")
-        if architecture.retriever.type != "vector":
+        if architecture.retriever.implementation != "vector_similarity":
             raise ValueError("Evaluation configuration requires the vector retriever")
         if ingestion.embedding is None or ingestion.vector_backend is None:
             raise ValueError(
@@ -202,7 +202,7 @@ class EvaluationConfigService:
             if source in values:
                 reranker_updates[target] = values[source]
         if "reranker" in values:
-            reranker_updates["type"] = values["reranker"]
+            reranker_updates["implementation"] = values["reranker"]
         if reranker_updates:
             reranker = RerankerConfig.model_validate(
                 {**architecture.reranker.model_dump(mode="json"), **reranker_updates}

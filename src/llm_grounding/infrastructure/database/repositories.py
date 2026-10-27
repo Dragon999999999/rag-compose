@@ -28,9 +28,11 @@ from llm_grounding.domain.corpus import (
     SummaryStatus,
 )
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
+from llm_grounding.infrastructure.config.declarative import ComponentDefinition
 from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.database.models import (
     ChatRow,
+    ComponentDefinitionRow,
     DocumentRow,
     DocumentSummaryRow,
     EvaluationCorpusChunkRow,
@@ -84,6 +86,64 @@ class PostgresRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         """Inject a factory so each operation owns an isolated async session."""
         self._sessions = sessions
+
+    async def upsert_component_definition(
+        self,
+        category: str,
+        definition: ComponentDefinition,
+        *,
+        source_path: str,
+        source_fingerprint: str,
+    ) -> None:
+        """Synchronize one validated component definition into PostgreSQL."""
+        values = {
+            "id": definition.id,
+            "category": category,
+            "type": definition.type,
+            "implementation": definition.implementation,
+            "description": definition.description,
+            "config_json": definition.config,
+            "requirements_json": (
+                definition.requirements.model_dump(mode="json")
+                if definition.requirements is not None
+                else {}
+            ),
+            "source_path": source_path,
+            "source_fingerprint": source_fingerprint,
+            "active": True,
+        }
+        async with self._sessions.begin() as session:
+            row = await session.get(ComponentDefinitionRow, definition.id)
+            if row is None:
+                session.add(ComponentDefinitionRow(**values))
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+
+    async def list_component_definitions(self) -> tuple[dict[str, object], ...]:
+        """Return active component definitions ordered by stable identifier."""
+        async with self._sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(ComponentDefinitionRow)
+                    .where(ComponentDefinitionRow.active.is_(True))
+                    .order_by(ComponentDefinitionRow.id)
+                )
+            ).all()
+            return tuple(
+                {
+                    "id": row.id,
+                    "category": row.category,
+                    "type": row.type,
+                    "implementation": row.implementation,
+                    "description": row.description,
+                    "config": dict(row.config_json),
+                    "requirements": dict(row.requirements_json),
+                    "source_path": row.source_path,
+                    "source_fingerprint": row.source_fingerprint,
+                }
+                for row in rows
+            )
 
     async def create_pipeline(
         self,
@@ -532,6 +592,11 @@ class PostgresRepository:
             row.pipeline_version,
             row.pipeline_config_hash,
             row.pipeline_representation_hash,
+            {
+                stage: dict(values)
+                for stage, values in dict(row.stage_overrides_json or {}).items()
+                if isinstance(stage, str) and isinstance(values, dict)
+            },
         )
 
     async def create_project(
@@ -1299,6 +1364,7 @@ class PostgresRepository:
         pipeline_version: int | None = None,
         pipeline_config_hash: str | None = None,
         pipeline_representation_hash: str | None = None,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
     ) -> Chat:
         """Create a project-scoped conversation.
 
@@ -1352,6 +1418,7 @@ class PostgresRepository:
                 pipeline_version=pipeline_version,
                 pipeline_config_hash=pipeline_config_hash,
                 pipeline_representation_hash=pipeline_representation_hash,
+                stage_overrides_json=stage_overrides or {},
             )
             session.add(row)
             await session.flush()
@@ -1431,6 +1498,18 @@ class PostgresRepository:
             row.pipeline_version = pipeline.version
             row.pipeline_config_hash = pipeline.config_hash
             row.pipeline_representation_hash = pipeline.representation_hash
+            await session.flush()
+            return self._chat(row)
+
+    async def set_chat_stage_overrides(
+        self, chat_id: str, stage_overrides: dict[str, dict[str, object]]
+    ) -> Chat:
+        """Persist validated chat-level stage overrides atomically."""
+        async with self._sessions.begin() as session:
+            row = await session.get(ChatRow, chat_id, with_for_update=True)
+            if row is None:
+                raise KeyError(f"Unknown chat: {chat_id}")
+            row.stage_overrides_json = stage_overrides
             await session.flush()
             return self._chat(row)
 

@@ -36,9 +36,11 @@ class EmbeddingProviderFactory:
     def create(self, config: EmbeddingConfig) -> Embedder:
         """Construct the provider selected by a validated embedding configuration."""
         try:
-            constructor = self._constructors[config.type]
+            constructor = self._constructors[config.implementation]
         except KeyError as exc:
-            raise ValueError(f"Unsupported embedding type: {config.type}") from exc
+            raise ValueError(
+                f"Unsupported embedding implementation: {config.implementation}"
+            ) from exc
         return constructor(config)
 
     @property
@@ -51,7 +53,7 @@ _DEFAULT_FACTORY = EmbeddingProviderFactory()
 
 
 def build_embedder(config: EmbeddingConfig) -> Embedder:
-    """Build the registered embedder implementation selected by ``config.type``.
+    """Build the registered embedder implementation selected by configuration.
 
     This is the single construction boundary used by ingestion and query-time
     retrieval. Provider credentials are resolved by the concrete adapter only

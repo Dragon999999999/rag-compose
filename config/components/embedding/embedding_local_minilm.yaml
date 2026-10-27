@@ -1,0 +1,6 @@
+id: embedding_local_minilm
+type: embedding
+implementation: sentence_transformers
+description: Local Sentence Transformers MiniLM embedding provider.
+config:
+  model_id: embedding_001

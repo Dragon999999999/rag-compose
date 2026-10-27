@@ -1,3 +1,0 @@
-id: embedding_local_minilm
-type: sentence_transformers
-model_id: embedding_001

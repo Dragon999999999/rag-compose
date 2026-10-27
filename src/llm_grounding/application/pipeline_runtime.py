@@ -14,6 +14,11 @@ from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
     PipelineConfig,
 )
+from llm_grounding.infrastructure.config.overrides import (
+    OverrideValidationError,
+    apply_query_overrides,
+    catalog_for_query_overrides,
+)
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig, IngestionConfig
@@ -34,6 +39,7 @@ class ResolvedPipeline:
 
     record: Pipeline
     config: PipelineConfig
+    override_provenance: dict[str, object]
     architecture: ArchitectureConfig
     ingestion: IngestionConfig
     runner: BasicRagRunner
@@ -69,7 +75,12 @@ class PipelineRuntimeResolver:
         self._lock = asyncio.Lock()
 
     async def resolve(
-        self, pipeline_id: str, *, ingestion: IngestionConfig | None = None
+        self,
+        pipeline_id: str,
+        *,
+        ingestion: IngestionConfig | None = None,
+        chat_overrides: dict[str, dict[str, object]] | None = None,
+        request_overrides: dict[str, dict[str, object]] | None = None,
     ) -> ResolvedPipeline:
         """Load, validate, and construct a query pipeline runtime."""
         record = await self._repository.get_pipeline(pipeline_id)
@@ -80,13 +91,25 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError(
                 "A query pipeline requires the project's effective ingestion config"
             )
-        signature = self._signature(record, config, ingestion)
+        signature = self._signature(
+            record,
+            config,
+            ingestion,
+            chat_overrides,
+            request_overrides,
+        )
         async with self._lock:
             cached = self._runtimes.get(pipeline_id)
             if cached is not None and cached[0] == signature:
                 self._runtimes.move_to_end(pipeline_id)
                 return cached[1]
-            runtime = self._build(record, config, ingestion)
+            runtime = self._build(
+                record,
+                config,
+                ingestion,
+                chat_overrides=chat_overrides,
+                request_overrides=request_overrides,
+            )
             self._runtimes[pipeline_id] = (signature, runtime)
             self._runtimes.move_to_end(pipeline_id)
             while len(self._runtimes) > self._max_cache_size:
@@ -94,10 +117,20 @@ class PipelineRuntimeResolver:
             return runtime
 
     async def resolve_pipeline(
-        self, pipeline_id: str, *, ingestion: IngestionConfig | None = None
+        self,
+        pipeline_id: str,
+        *,
+        ingestion: IngestionConfig | None = None,
+        chat_overrides: dict[str, dict[str, object]] | None = None,
+        request_overrides: dict[str, dict[str, object]] | None = None,
     ) -> ResolvedPipeline:
         """Descriptive alias for ``resolve`` used by external application clients."""
-        return await self.resolve(pipeline_id, ingestion=ingestion)
+        return await self.resolve(
+            pipeline_id,
+            ingestion=ingestion,
+            chat_overrides=chat_overrides,
+            request_overrides=request_overrides,
+        )
 
     def invalidate(self, pipeline_id: str | None = None) -> None:
         """Drop one runtime or all runtimes after a configuration mutation."""
@@ -136,6 +169,9 @@ class PipelineRuntimeResolver:
         record: Pipeline,
         config: PipelineConfig,
         ingestion: IngestionConfig | None,
+        *,
+        chat_overrides: dict[str, dict[str, object]] | None,
+        request_overrides: dict[str, dict[str, object]] | None,
     ) -> ResolvedPipeline:
         """Build a runtime while retaining existing execution engines."""
         try:
@@ -143,16 +179,36 @@ class PipelineRuntimeResolver:
                 raise PipelineResolutionError(
                     "A query pipeline requires the project's index configuration"
                 )
-            catalog = config.effective_catalog(self._catalog)
-            architecture, effective_ingestion = config.resolve_query(catalog, ingestion)
+            override_layers = (
+                ("pipeline", config.stage_overrides),
+                ("chat", chat_overrides or {}),
+                ("request", request_overrides or {}),
+            )
+            catalog = catalog_for_query_overrides(
+                config, self._catalog, override_layers
+            )
+            effective_config, provenance = apply_query_overrides(
+                config, override_layers
+            )
+            self._registry.validate_pipeline(effective_config, catalog)
+            architecture, effective_ingestion = effective_config.resolve_query(
+                catalog, ingestion
+            )
             runner = self._build_basic_rag(
                 architecture, effective_ingestion, catalog
             )
             return ResolvedPipeline(
-                record, config, architecture, effective_ingestion, runner
+                record,
+                effective_config,
+                provenance,
+                architecture,
+                effective_ingestion,
+                runner,
             )
         except PipelineResolutionError:
             raise
+        except OverrideValidationError as exc:
+            raise PipelineResolutionError(str(exc)) from exc
         except (RuntimeError, ValueError, TypeError) as exc:
             raise PipelineResolutionError(
                 f"Pipeline {record.id!r} could not be constructed"
@@ -165,19 +221,21 @@ class PipelineRuntimeResolver:
         catalog: ModelCatalog,
     ) -> BasicRagRunner:
         """Construct the selected retriever with only its required resources."""
-        if architecture.reasoner.type != "basic_grounded":
+        if architecture.reasoner.implementation != "basic_grounded":
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounded reasoner"
             )
-        if tuple(item.type for item in architecture.assessors) != ("source_reference",):
+        if tuple(item.implementation for item in architecture.assessors) != (
+            "source_reference",
+        ):
             raise PipelineResolutionError(
                 "The vector runtime requires the source_reference assessor"
             )
-        if architecture.decision_policy.type != "basic_grounding":
+        if architecture.decision_policy.implementation != "basic_grounding":
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounding decision policy"
             )
-        if architecture.renderer.type != "grounded_answer":
+        if architecture.renderer.implementation != "grounded_answer":
             raise PipelineResolutionError(
                 "The vector runtime requires the grounded_answer renderer"
             )
@@ -265,6 +323,8 @@ class PipelineRuntimeResolver:
         record: Pipeline,
         config: PipelineConfig,
         ingestion: IngestionConfig | None,
+        chat_overrides: dict[str, dict[str, object]] | None = None,
+        request_overrides: dict[str, dict[str, object]] | None = None,
     ) -> str:
         """Include persisted and catalog-resolved settings in cache invalidation."""
         catalog_data = config.effective_catalog(self._catalog).model_dump(mode="json")
@@ -277,6 +337,8 @@ class PipelineRuntimeResolver:
                 "project_ingestion": (
                     ingestion.identity() if ingestion is not None else None
                 ),
+                "chat_overrides": chat_overrides or {},
+                "request_overrides": request_overrides or {},
             },
             sort_keys=True,
             separators=(",", ":"),

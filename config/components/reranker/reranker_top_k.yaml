@@ -1,0 +1,7 @@
+id: reranker_top_k
+type: reranker
+implementation: top_k
+description: Return the first configured number of retrieved candidates.
+config:
+  retrieval_top_k: 20
+  rerank_top_k: 5

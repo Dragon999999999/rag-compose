@@ -96,12 +96,18 @@ ModelDefinition = Annotated[
 ]
 
 
-class ComponentDefinition(BaseModel):
-    """Describe one reusable component implementation and its own settings."""
+class ComponentRequirements(BaseModel):
+    """Declare resources that must exist before a component can execute."""
 
-    model_config = ConfigDict(
-        extra="allow", frozen=True, str_strip_whitespace=True
-    )
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    required: tuple[str, ...] = ()
+
+
+class ComponentDefinition(BaseModel):
+    """Describe one reusable component with a category and implementation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     id: str = Field(
         min_length=1,
@@ -109,13 +115,20 @@ class ComponentDefinition(BaseModel):
         description="Stable internal component-configuration identifier.",
     )
     type: str = Field(min_length=1)
-    model_id: str | None = Field(default=None, min_length=1)
+    implementation: str = Field(min_length=1)
+    description: str = Field(default="", max_length=4000)
+    config: dict[str, object] = Field(default_factory=dict)
+    requirements: ComponentRequirements | None = None
 
     def settings(self) -> dict[str, object]:
-        """Return operational fields for validation by the established schemas."""
-        return self.model_dump(
-            mode="json", exclude={"id", "type", "model_id"}
-        )
+        """Return nested implementation settings for typed runtime validation."""
+        return dict(self.config)
+
+    @property
+    def model_id(self) -> str | None:
+        """Return a model reference stored in the implementation config."""
+        value = self.config.get("model_id")
+        return value if isinstance(value, str) else None
 
 
 class DeclarativeRepresentation(BaseModel):
@@ -157,6 +170,7 @@ class DeclarativePipelineConfig(BaseModel):
     is_default: bool = False
     representation: DeclarativeRepresentation | None = None
     query: DeclarativeQuery | None = None
+    stage_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_kind_sections(self) -> "DeclarativePipelineConfig":

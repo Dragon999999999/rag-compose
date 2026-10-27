@@ -1,0 +1,19 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Vector backend component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: vector_backend}
+      implementation: {enum: [qdrant]}
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          index_version:
+            type: string
+            minLength: 1
+            maxLength: 32
+            default: '1'
+            x-override-scopes: []

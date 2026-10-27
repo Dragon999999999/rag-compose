@@ -650,7 +650,7 @@ def test_configs_and_reingestion_identity_track_representation_changes() -> None
     )
     architecture = query.resolve_query(load_model_catalog(), ingestion)[0]
     assert architecture.name == "query_basic_v1"
-    assert architecture.retriever.type == "vector"
+    assert architecture.retriever.type == "dense"
     assert architecture.reasoner.prompt_id == "grounded_qa_v1"
     assert (
         ingestion.identity()

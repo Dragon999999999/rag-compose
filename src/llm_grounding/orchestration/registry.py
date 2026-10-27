@@ -83,9 +83,9 @@ class ComponentRegistry:
             "basic": BasicKnowledgeBuilder
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
-            "vector": _vector_retriever_requires_runtime_dependencies,
-            "full_context": lambda: _retriever_requires_runtime_dependencies(
-                "full_context"
+            "vector_similarity": _vector_retriever_requires_runtime_dependencies,
+            "postgres_all_chunks": lambda: _retriever_requires_runtime_dependencies(
+                "postgres_all_chunks"
             ),
             "postgres_fts": lambda: _retriever_requires_runtime_dependencies(
                 "postgres_fts"
@@ -115,8 +115,8 @@ class ComponentRegistry:
         self._retriever_factories: dict[
             str, Callable[[RetrieverConfig, RetrieverDependencies], Retriever]
         ] = {
-            "vector": self._build_vector_retriever,
-            "full_context": self._build_full_context_retriever,
+            "vector_similarity": self._build_vector_retriever,
+            "postgres_all_chunks": self._build_full_context_retriever,
             "postgres_fts": self._build_sparse_retriever,
             "hybrid_rrf": self._build_hybrid_retriever,
         }
@@ -125,20 +125,20 @@ class ComponentRegistry:
     def build_parser(self, config: ComponentConfig) -> DocumentParser:
         """Construct the configured parser from the closed parser registry."""
         try:
-            factory = self.parsers[config.type]
+            factory = self.parsers[config.implementation or config.type]
         except KeyError as exc:
             raise ConfigurationError(
-                f"Unknown parser component {config.type!r}"
+                f"Unknown parser implementation {config.implementation!r}"
             ) from exc
         return factory()
 
     def build_chunker(self, config: ChunkerConfig) -> Chunker:
         """Construct the configured chunker from validated operational settings."""
         try:
-            factory = self.chunkers[config.type]
+            factory = self.chunkers[config.implementation or config.type]
         except KeyError as exc:
             raise ConfigurationError(
-                f"Unknown chunker component {config.type!r}"
+                f"Unknown chunker implementation {config.implementation!r}"
             ) from exc
         return factory(config)
 
@@ -149,10 +149,10 @@ class ComponentRegistry:
     ) -> Retriever:
         """Construct one retriever using only resources declared by its contract."""
         try:
-            factory = self._retriever_factories[config.type]
+            factory = self._retriever_factories[config.implementation or config.type]
         except KeyError as exc:
             raise ConfigurationError(
-                f"Unknown retriever component {config.type!r}"
+                f"Unknown retriever implementation {config.implementation!r}"
             ) from exc
         return factory(config, dependencies)
 
@@ -163,12 +163,14 @@ class ComponentRegistry:
         dependencies: RetrieverDependencies,
     ) -> Retriever:
         """Construct the dense summary adapter while preserving other strategies."""
-        if config.type != "vector":
+        if config.type != "dense":
             return retriever
         if not isinstance(retriever, VectorRetriever):
             raise ConfigurationError(
                 "The vector summary adapter requires a VectorRetriever instance"
             )
+        if config.context_chars is None and config.summary_per_facet is None:
+            return retriever
         return SummaryRetriever(
             dependencies.repository,
             retriever,
@@ -178,7 +180,7 @@ class ComponentRegistry:
 
     def build_reasoner(self, config: ReasonerConfig) -> BasicGroundedReasoner:
         """Construct the configured reasoning engine through its stage registry."""
-        if config.type != "basic_grounded":
+        if config.implementation != "basic_grounded":
             raise ConfigurationError(
                 f"Unknown reasoner component {config.type!r}"
             )
@@ -192,13 +194,13 @@ class ComponentRegistry:
 
     def build_assessor(self, config: ComponentConfig) -> SourceReferenceAssessor:
         """Construct one registered evidence assessor."""
-        if config.type != "source_reference":
+        if config.implementation != "source_reference":
             raise ConfigurationError(f"Unknown assessor component {config.type!r}")
         return SourceReferenceAssessor()
 
     def build_decision_policy(self, config: ComponentConfig) -> BasicGroundingPolicy:
         """Construct one registered decision policy."""
-        if config.type != "basic_grounding":
+        if config.implementation != "basic_grounding":
             raise ConfigurationError(
                 f"Unknown decision_policy component {config.type!r}"
             )
@@ -206,7 +208,7 @@ class ComponentRegistry:
 
     def build_renderer(self, config: ComponentConfig) -> GroundedAnswerRenderer:
         """Construct one registered answer renderer."""
-        if config.type != "grounded_answer":
+        if config.implementation != "grounded_answer":
             raise ConfigurationError(f"Unknown renderer component {config.type!r}")
         return GroundedAnswerRenderer()
 
@@ -229,32 +231,62 @@ class ComponentRegistry:
         selections: list[tuple[str, str, Collection[str]]] = []
         if config.representation is not None:
             selections.append(
-                ("parser", config.representation.parser.type, self.parsers)
+                (
+                    "parser",
+                    config.representation.parser.implementation
+                    or config.representation.parser.type,
+                    self.parsers,
+                )
             )
             if config.representation.knowledge_builder is not None:
                 selections.append(
                     (
                         "knowledge_builder",
-                        config.representation.knowledge_builder.type,
+                        config.representation.knowledge_builder.implementation
+                        or config.representation.knowledge_builder.type,
                         self.knowledge_builders,
                     )
                 )
         if config.query is not None:
             selections.extend(
                 (
-                    ("retriever", config.query.retriever.type, self.retrievers),
-                    ("reranker", config.query.reranker.type, self.rerankers),
-                    ("reasoner", config.query.reasoner.type, self.pipeline_reasoners),
+                    (
+                        "retriever",
+                        config.query.retriever.implementation
+                        or config.query.retriever.type,
+                        self.retrievers,
+                    ),
+                    (
+                        "reranker",
+                        config.query.reranker.implementation,
+                        self.rerankers,
+                    ),
+                    (
+                        "reasoner",
+                        config.query.reasoner.implementation
+                        or config.query.reasoner.type,
+                        self.pipeline_reasoners,
+                    ),
                     (
                         "decision_policy",
-                        config.query.decision_policy.type,
+                        config.query.decision_policy.implementation
+                        or config.query.decision_policy.type,
                         self.pipeline_decision_policies,
                     ),
-                    ("renderer", config.query.renderer.type, self.pipeline_renderers),
+                    (
+                        "renderer",
+                        config.query.renderer.implementation
+                        or config.query.renderer.type,
+                        self.pipeline_renderers,
+                    ),
                 )
             )
             selections.extend(
-                ("assessor", item.type, self.pipeline_assessors)
+                (
+                    "assessor",
+                    item.implementation or item.type,
+                    self.pipeline_assessors,
+                )
                 for item in config.query.assessors
             )
         for stage, name, factories in selections:
@@ -265,20 +297,26 @@ class ComponentRegistry:
                 )
         if (
             config.representation is not None
-            and config.representation.chunker.type not in self.chunkers
+            and (
+                config.representation.chunker.implementation
+                or config.representation.chunker.type
+            )
+            not in self.chunkers
         ):
             raise ConfigurationError(
-                f"Unknown chunker component {config.representation.chunker.type!r}; "
+                "Unknown chunker implementation "
+                f"{config.representation.chunker.implementation!r}; "
                 f"available: {', '.join(self.chunkers)}"
             )
         if (
             config.representation is not None
             and config.representation.vector_backend is not None
-            and config.representation.vector_backend.type not in self.vector_backends
+            and config.representation.vector_backend.implementation
+            not in self.vector_backends
         ):
             raise ConfigurationError(
                 "Unknown vector_backend component "
-                f"{config.representation.vector_backend.type!r}; available: "
+                f"{config.representation.vector_backend.implementation!r}; available: "
                 f"{', '.join(sorted(self.vector_backends))}"
             )
         if config.representation is not None:
@@ -308,18 +346,18 @@ class ComponentRegistry:
                 raise ConfigurationError(f"Unknown {kind} model reference") from exc
         if (
             config.query is not None
-            and config.query.retriever.type == "vector"
+            and config.query.retriever.type in {"dense", "hybrid"}
             and (
                 config.representation is not None
                 and config.representation.vector_backend is not None
-                and config.representation.vector_backend.type != "qdrant"
+                and config.representation.vector_backend.implementation != "qdrant"
             )
         ):
             raise ConfigurationError(
                 "The vector retriever requires the qdrant vector backend"
             )
         if config.query is not None and (
-            config.query.reasoner.type == "basic_grounded"
+            config.query.reasoner.implementation == "basic_grounded"
             and not config.query.reasoner.prompt_id
         ):
             raise ConfigurationError(
@@ -392,10 +430,10 @@ class ComponentRegistry:
         )
 
     def query_capabilities(self, retriever_type: str) -> frozenset[str]:
-        """Return backward-compatible resource capabilities for a retriever type."""
-        if retriever_type == "vector":
+        """Return resource capabilities for a registered retriever implementation."""
+        if retriever_type == "vector_similarity":
             return frozenset({"chunk_vectors", "dense_vector_index"})
-        if retriever_type == "full_context":
+        if retriever_type == "postgres_all_chunks":
             return frozenset({"persisted_chunks"})
         if retriever_type == "postgres_fts":
             return frozenset({"persisted_chunks", "postgres_fts"})
@@ -408,13 +446,16 @@ class ComponentRegistry:
                     "dense_vector_index",
                 }
             )
-        raise ConfigurationError(f"Unknown retriever component {retriever_type!r}")
+        raise ConfigurationError(
+            f"Unknown retriever implementation {retriever_type!r}"
+        )
 
     def query_requirements(self, config: RetrieverConfig) -> frozenset[str]:
         """Return declarative requirements for a registered retriever definition."""
-        if config.type not in self.retrievers:
+        implementation = config.implementation or config.type
+        if implementation not in self.retrievers:
             raise ConfigurationError(
-                f"Unknown retriever component {config.type!r}; available: "
+                f"Unknown retriever implementation {implementation!r}; available: "
                 f"{', '.join(sorted(self.retrievers))}"
             )
         declared = frozenset(config.requirements.required)
@@ -422,7 +463,7 @@ class ComponentRegistry:
             {"dense_vector_index", "compatible_query_embedder"}
         ):
             defaults = {
-                "full_context": frozenset({"persisted_chunks"}),
+                "postgres_all_chunks": frozenset({"persisted_chunks"}),
                 "postgres_fts": frozenset({"persisted_chunks", "postgres_fts"}),
                 "hybrid_rrf": frozenset(
                     {
@@ -433,16 +474,16 @@ class ComponentRegistry:
                     }
                 ),
             }
-            return defaults.get(config.type, declared)
+            return defaults.get(implementation, declared)
         return declared
 
     def build_reranker(self, config: RerankerConfig) -> Reranker:
         """Construct one reranker from validated settings without loading models."""
         try:
-            factory = self.rerankers[config.type]
+            factory = self.rerankers[config.implementation or config.type]
         except KeyError as exc:
             raise ConfigurationError(
-                f"Unknown reranker component {config.type!r}; "
+                f"Unknown reranker implementation {config.implementation!r}; "
                 f"available: {', '.join(self.rerankers)}"
             ) from exc
         return factory(config)
@@ -454,7 +495,9 @@ class ComponentRegistry:
         if component is None:
             return None
         component_type = (
-            component.type if isinstance(component, ComponentConfig) else component
+            component.implementation or component.type
+            if isinstance(component, ComponentConfig)
+            else component
         )
         try:
             factory = self.knowledge_builders[component_type]

@@ -86,6 +86,33 @@ class PipelineRow(Base):
     )
 
 
+class ComponentDefinitionRow(Base):
+    """Persist validated standalone component definitions imported from YAML."""
+
+    __tablename__ = "component_definitions"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    requirements_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    source_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class PipelineVersionRow(Base):
     """Persist immutable pipeline configuration snapshots for reproducibility."""
 
@@ -309,6 +336,9 @@ class ChatRow(Base):
     pipeline_version: Mapped[int | None] = mapped_column(Integer)
     pipeline_config_hash: Mapped[str | None] = mapped_column(String(64))
     pipeline_representation_hash: Mapped[str | None] = mapped_column(String(64))
+    stage_overrides_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
 
 class RagRunRow(Base):

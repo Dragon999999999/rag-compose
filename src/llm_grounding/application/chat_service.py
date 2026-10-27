@@ -12,7 +12,13 @@ from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import Chat, CorpusRequest, Message, Pipeline, TaskType
 from llm_grounding.infrastructure.config.models import PipelineConfig
+from llm_grounding.infrastructure.config.overrides import (
+    OverrideValidationError,
+    apply_query_overrides,
+    catalog_for_query_overrides,
+)
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 
@@ -76,7 +82,12 @@ class ChatService:
         self._pipeline_service = pipeline_service
 
     async def create_chat(
-        self, project_id: str, name: str, pipeline_id: str | None = None
+        self,
+        project_id: str,
+        name: str,
+        pipeline_id: str | None = None,
+        *,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
     ) -> Chat:
         """Create a conversation with an explicit or application-default pipeline."""
         normalized_name = name.strip()
@@ -96,8 +107,21 @@ class ChatService:
             )
         selected = await self._select_pipeline(pipeline_id)
         indexed_representation = await self._validate_project_pipeline(
-            project_id, selected
+            project_id, selected, stage_overrides=stage_overrides or {}
         )
+        self._validate_chat_overrides(selected, stage_overrides or {})
+        if stage_overrides:
+            return await self._repository.create_chat(
+                project_id,
+                normalized_name,
+                chat_name_set=normalized_name.casefold()
+                != DEFAULT_CHAT_NAME.casefold(),
+                pipeline_id=selected.id,
+                pipeline_version=selected.version,
+                pipeline_config_hash=selected.config_hash,
+                pipeline_representation_hash=indexed_representation,
+                stage_overrides=stage_overrides,
+            )
         return await self._repository.create_chat(
             project_id,
             normalized_name,
@@ -157,6 +181,23 @@ class ChatService:
         except ValueError as exc:
             raise PipelineSelectionError("pipeline_changed", str(exc), 409) from exc
 
+    async def set_stage_overrides(
+        self, chat_id: str, stage_overrides: dict[str, dict[str, object]]
+    ) -> Chat:
+        """Validate and persist chat-level overrides for future executions."""
+        chat = await self._repository.get_chat(chat_id)
+        selected = await self._pipeline_for_chat(chat)
+        self._validate_chat_overrides(selected, stage_overrides)
+        await self._validate_project_pipeline(
+            chat.project_id, selected, stage_overrides=stage_overrides
+        )
+        try:
+            return await self._repository.set_chat_stage_overrides(
+                chat_id, stage_overrides
+            )
+        except (KeyError, ValueError) as exc:
+            raise PipelineSelectionError("chat_not_found", str(exc), 404) from exc
+
     async def messages(self, chat_id: str) -> tuple[Message, ...]:
         """Load the complete persisted conversation in chronological order."""
         return await self._repository.recent_messages(chat_id, 10_000)
@@ -167,6 +208,7 @@ class ChatService:
         message: str,
         task_type: TaskType = TaskType.QA,
         pipeline_id: str | None = None,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
     ) -> Answer:
         """Persist a question, query its corpus, then persist the answer."""
         chat = await self._repository.get_chat(chat_id)
@@ -185,9 +227,17 @@ class ChatService:
                     503,
                 )
             ingestion = await self._project_ingestion(chat.project_id)
-            runtime = await self._pipeline_runtime.resolve(
-                selected_pipeline.id, ingestion=ingestion
-            )
+            if chat.stage_overrides or stage_overrides:
+                runtime = await self._pipeline_runtime.resolve(
+                    selected_pipeline.id,
+                    ingestion=ingestion,
+                    chat_overrides=chat.stage_overrides,
+                    request_overrides=stage_overrides or {},
+                )
+            else:
+                runtime = await self._pipeline_runtime.resolve(
+                    selected_pipeline.id, ingestion=ingestion
+                )
             if not isinstance(runtime.runner, BasicRagRunner):
                 raise PipelineSelectionError(
                     "unsupported_runtime",
@@ -232,6 +282,23 @@ class ChatService:
                     or selected_pipeline.representation_hash
                 ),
             }
+            effective_config = getattr(runtime, "config", None)
+            if effective_config is not None:
+                pipeline_metadata.update(
+                    {
+                        "effective_configuration_hash": effective_config.config_hash,
+                        "effective_configuration": effective_config.model_dump(
+                            mode="json", exclude={"resolved_catalog"}
+                        ),
+                        "effective_ingestion_configuration": (
+                            runtime.ingestion.model_dump(mode="json")
+                        ),
+                        "effective_index_identifier": runtime.ingestion.identity(),
+                        "override_provenance": getattr(
+                            runtime, "override_provenance", {}
+                        ),
+                    }
+                )
             await self._repository.record_run(
                 run_id,
                 chat.project_id,
@@ -350,7 +417,21 @@ class ChatService:
         await self._validate_project_pipeline(chat.project_id, selected)
         return selected
 
-    async def _project_ingestion(self, project_id: str):
+    @staticmethod
+    def _validate_chat_overrides(
+        pipeline: Pipeline,
+        stage_overrides: dict[str, dict[str, object]],
+    ) -> None:
+        """Validate persistent overrides without mutating the pipeline record."""
+        try:
+            config = PipelineConfig.model_validate(pipeline.config)
+            apply_query_overrides(config, (("chat", stage_overrides),))
+        except OverrideValidationError as exc:
+            raise PipelineSelectionError(
+                "invalid_stage_overrides", str(exc), 422
+            ) from exc
+
+    async def _project_ingestion(self, project_id: str) -> IngestionConfig | None:
         """Resolve the effective ingestion configuration selected by a project."""
         if self._pipeline_service is None:
             return None
@@ -369,7 +450,11 @@ class ChatService:
         )
 
     async def _validate_project_pipeline(
-        self, project_id: str, pipeline: Pipeline
+        self,
+        project_id: str,
+        pipeline: Pipeline,
+        *,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
     ) -> str:
         """Validate a query pipeline against the project's indexed capabilities."""
         if self._pipeline_service is None:
@@ -380,12 +465,17 @@ class ChatService:
             return pipeline.representation_hash
         project = await get_project(project_id)
         config = PipelineConfig.model_validate(pipeline.config)
+        override_layers = (("chat", stage_overrides or {}),)
+        effective_config, _ = apply_query_overrides(config, override_layers)
+        catalog = catalog_for_query_overrides(
+            config, self._pipeline_service.model_catalog, override_layers
+        )
         index = IndexCapabilities.from_mapping(project.index_capabilities)
         compatibility: CompatibilityResult = validate_query_compatibility(
-            config,
+            effective_config,
             index,
             self._pipeline_service.registry,
-            config.effective_catalog(self._pipeline_service.model_catalog),
+            catalog,
         )
         if pipeline.kind != "query":
             raise PipelineSelectionError(

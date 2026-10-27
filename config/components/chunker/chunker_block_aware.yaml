@@ -1,0 +1,8 @@
+id: chunker_block_aware
+type: chunker
+implementation: block_aware
+description: Chunk adjacent source blocks while preserving provenance boundaries.
+config:
+  version: '1'
+  target_chars: 800
+  overlap_chars: 120

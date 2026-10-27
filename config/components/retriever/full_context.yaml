@@ -1,6 +1,0 @@
-id: retriever_full_context
-type: full_context
-context_budget_tokens: 16000
-requirements:
-  required:
-    - persisted_chunks

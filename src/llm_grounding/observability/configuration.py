@@ -50,7 +50,7 @@ def build_effective_configuration(
         ),
         ingestion=IngestionConfiguration(
             parser=ingestion.parser,
-            chunker=ingestion.chunker.type,
+            chunker=ingestion.chunker.implementation,
             target_chunk_size=ingestion.chunker.target_chars,
             overlap=ingestion.chunker.overlap_chars,
             config_hash=ingestion.identity(),
@@ -73,16 +73,16 @@ def build_effective_configuration(
             else EmbeddingConfiguration()
         ),
         retrieval=RetrievalConfiguration(
-            type=architecture.retriever.type,
+            type=architecture.retriever.implementation or architecture.retriever.type,
             top_k=architecture.retriever.top_k,
             retrieval_top_k=(
                 architecture.reranker.retrieval_top_k or architecture.retriever.top_k
             ),
-            reranker=architecture.reranker.type,
+            reranker=architecture.reranker.implementation,
             rerank_top_k=architecture.reranker.rerank_top_k,
             reranker_model_name=(
                 architecture.reranker.model_name
-                if architecture.reranker.type == "cross_encoder"
+                if architecture.reranker.implementation == "cross_encoder"
                 else None
             ),
             similarity_metric="cosine_similarity",

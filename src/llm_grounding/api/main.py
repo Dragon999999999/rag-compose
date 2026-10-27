@@ -88,6 +88,7 @@ class ChatCreateRequest(NameRequest):
     """Name a conversation and optionally select its initial pipeline."""
 
     pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+    stage_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 class ChatUpdateRequest(BaseModel):
@@ -95,14 +96,16 @@ class ChatUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+    stage_overrides: dict[str, dict[str, object]] | None = None
 
     @model_validator(mode="after")
     def require_update(self) -> "ChatUpdateRequest":
         """Reject empty PATCH requests while preserving explicit field semantics."""
-        if self.name is None and self.pipeline_id is None:
+        values = (self.name, self.pipeline_id, self.stage_overrides)
+        if all(value is None for value in values):
             raise ValueError("At least one chat field must be provided")
-        if self.name is not None and self.pipeline_id is not None:
-            raise ValueError("Update chat name and pipeline selection separately")
+        if sum(value is not None for value in values) > 1:
+            raise ValueError("Update one chat field at a time")
         return self
 
 
@@ -112,6 +115,7 @@ class AskRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
     summary: bool = False
     pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
+    stage_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 def _item(
@@ -598,7 +602,10 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     ) -> dict[str, object]:
         try:
             chat = await application.chats.create_chat(
-                project_id, request.name, request.pipeline_id
+                project_id,
+                request.name,
+                request.pipeline_id,
+                stage_overrides=request.stage_overrides,
             )
         except PipelineSelectionError as exc:
             raise _pipeline_http_error(exc) from exc
@@ -612,6 +619,10 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             if request.pipeline_id is not None:
                 chat = await application.chats.set_pipeline(
                     chat_id, request.pipeline_id
+                )
+            elif request.stage_overrides is not None:
+                chat = await application.chats.set_stage_overrides(
+                    chat_id, request.stage_overrides
                 )
             else:
                 assert request.name is not None
@@ -639,6 +650,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
                 request.message,
                 TaskType.SUMMARY if request.summary else TaskType.QA,
                 request.pipeline_id,
+                request.stage_overrides,
             )
         except PipelineSelectionError as exc:
             raise _pipeline_http_error(exc) from exc

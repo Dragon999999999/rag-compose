@@ -1,0 +1,6 @@
+id: embedding_aqueduct_qwen
+type: embedding
+implementation: openai_compatible
+description: Aqueduct Qwen embedding provider.
+config:
+  model_id: aqueduct_qwen_embedding

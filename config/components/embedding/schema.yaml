@@ -1,0 +1,18 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Embedding provider component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: embedding}
+      implementation: {enum: [openai_compatible, sentence_transformers]}
+      config:
+        type: object
+        additionalProperties: false
+        required: [model_id]
+        properties:
+          model_id:
+            type: string
+            minLength: 1
+            x-override-scopes: []

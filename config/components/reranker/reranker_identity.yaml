@@ -1,0 +1,5 @@
+id: reranker_identity
+type: reranker
+implementation: identity
+description: Preserve retriever ordering without additional reranking.
+config: {}

@@ -18,10 +18,29 @@ class ChunkerConfig(BaseModel):
     """Size chunks by Unicode characters, with overlap strictly below target size."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    type: Literal["fixed_window", "block_aware"] = "block_aware"
+    id: str | None = None
+    type: Literal["chunker"] = "chunker"
+    implementation: Literal["fixed_window", "block_aware"] = "block_aware"
     version: Literal["1"] = "1"
     target_chars: int = Field(default=800, ge=32, le=100000)
     overlap_chars: int = Field(default=120, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_implementation_input(cls, value: object) -> object:
+        """Normalize direct legacy type inputs without weakening YAML schemas."""
+        if not isinstance(value, dict):
+            return value
+        selected = value.get("type")
+        if (
+            selected in {"fixed_window", "block_aware"}
+            and "implementation" not in value
+        ):
+            normalized = dict(value)
+            normalized["type"] = "chunker"
+            normalized["implementation"] = selected
+            return normalized
+        return value
 
     @model_validator(mode="after")
     def validate_overlap(self) -> "ChunkerConfig":
@@ -54,9 +73,12 @@ class EmbeddingConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    type: Literal["sentence_transformers", "fake", "openai_compatible"] = (
-        "sentence_transformers"
-    )
+    type: Literal[
+        "embedding", "sentence_transformers", "fake", "openai_compatible"
+    ] = "sentence_transformers"
+    implementation: Literal[
+        "sentence_transformers", "fake", "openai_compatible"
+    ] = "sentence_transformers"
     provider: str | None = None
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_space_id: str | None = Field(default=None, min_length=1)
@@ -84,10 +106,24 @@ class EmbeddingConfig(BaseModel):
     timeout_seconds: float = Field(default=120, gt=0, le=3600, allow_inf_nan=False)
     retries: int = Field(default=2, ge=0, le=5)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_provider_input(cls, value: object) -> object:
+        """Normalize direct provider-style inputs into category plus implementation."""
+        if not isinstance(value, dict):
+            return value
+        selected = value.get("type")
+        if selected in {"sentence_transformers", "fake", "openai_compatible"}:
+            normalized = dict(value)
+            normalized["type"] = selected
+            normalized.setdefault("implementation", selected)
+            return normalized
+        return value
+
     @model_validator(mode="after")
     def validate_provider_settings(self) -> "EmbeddingConfig":
         """Require an endpoint for remote OpenAI-compatible embeddings."""
-        if self.type == "openai_compatible" and self.base_url is None:
+        if self.implementation == "openai_compatible" and self.base_url is None:
             raise ValueError(
                 "openai_compatible embeddings require a credential-free base_url"
             )

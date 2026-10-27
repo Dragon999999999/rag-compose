@@ -1,0 +1,11 @@
+id: retriever_dense_vector_default
+type: dense
+implementation: vector_similarity
+description: Dense vector similarity retrieval over the project index.
+config:
+  top_k: 20
+  query_embedder: null
+requirements:
+  required:
+    - dense_vector_index
+    - compatible_query_embedder

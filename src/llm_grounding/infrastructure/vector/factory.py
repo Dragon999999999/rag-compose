@@ -33,10 +33,11 @@ class VectorStoreFactory:
     ) -> VectorStore:
         """Construct the selected backend and surface unavailable infrastructure."""
         try:
-            factory = self._factories[config.type]
+            factory = self._factories[config.implementation]
         except KeyError as exc:
             raise ValueError(
-                f"No vector backend implementation is registered for {config.type!r}"
+                "No vector backend implementation is registered for "
+                f"{config.implementation!r}"
             ) from exc
         return factory(repository)
 

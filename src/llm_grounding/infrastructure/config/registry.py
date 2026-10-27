@@ -35,6 +35,7 @@ from llm_grounding.infrastructure.config.models import (
     RetrieverConfig,
     VectorBackendConfig,
 )
+from llm_grounding.infrastructure.config.schema import validate_component_file
 from llm_grounding.ingestion.models import ChunkerConfig, EmbeddingConfig
 
 _MODEL_ADAPTER: TypeAdapter[ModelDefinition] = TypeAdapter(ModelDefinition)
@@ -69,7 +70,7 @@ class ConfigurationRegistry:
             models[model_definition.id] = model_definition
         for path in _yaml_paths(components_directory):
             category = path.parent.name
-            component_definition = _load_component(path)
+            component_definition = _load_component(path, components_directory)
             if component_definition.id in components:
                 raise ValueError(
                     f"Duplicate component configuration ID: {component_definition.id}"
@@ -164,7 +165,8 @@ class ConfigurationRegistry:
                 ),
                 embedding=(
                     PipelineEmbeddingConfig(
-                        model_ref=self._model_id_for_component("embedding", embedding)
+                        model_ref=self._model_id_for_component("embedding", embedding),
+                        component_id=embedding,
                     )
                     if embedding is not None
                     else None
@@ -213,6 +215,7 @@ class ConfigurationRegistry:
             is_default=source.is_default,
             representation=representation,
             query=query,
+            stage_overrides=source.stage_overrides,
         )
 
     @staticmethod
@@ -222,12 +225,12 @@ class ConfigurationRegistry:
         """Reject embedding representations unsupported by the selected backend."""
         if embedding.representation != backend.representation:
             raise ValueError(
-                f"Vector backend {backend.type!r} does not support "
+                f"Vector backend {backend.implementation!r} does not support "
                 f"{embedding.representation} embeddings"
             )
         if embedding.similarity_metric != backend.similarity_metric:
             raise ValueError(
-                f"Vector backend {backend.type!r} does not support "
+                f"Vector backend {backend.implementation!r} does not support "
                 f"{embedding.similarity_metric} similarity"
             )
 
@@ -239,12 +242,24 @@ class ConfigurationRegistry:
     ) -> _ModelT:
         """Validate one component's operational settings with its runtime schema."""
         definition = self.component(category, component_id)
-        if category not in {"embedder", "embedding", "reasoner", "reranker"}:
+        if category not in {"embedding", "reasoner", "reranker"}:
             if definition.model_id is not None:
                 raise ValueError(
                     f"{category} component {component_id} must not reference a model"
                 )
-        values = {"type": definition.type, **definition.settings()}
+        runtime_type = (
+            definition.implementation
+            if category in {"vector_backend", "reranker"}
+            else definition.type
+        )
+        values = {
+            "id": definition.id,
+            "type": runtime_type,
+            "implementation": definition.implementation,
+            **definition.settings(),
+        }
+        if definition.requirements is not None:
+            values["requirements"] = definition.requirements.model_dump(mode="json")
         try:
             return model.model_validate(values)
         except ValidationError as exc:
@@ -276,6 +291,7 @@ class ConfigurationRegistry:
         if isinstance(definition, OpenAICompatibleModelDefinition):
             return EmbeddingConfig(
                 type="openai_compatible",
+                implementation="openai_compatible",
                 provider=definition.provider,
                 model=definition.name,
                 embedding_space_id=definition.embedding_space_id,
@@ -291,6 +307,7 @@ class ConfigurationRegistry:
         if isinstance(definition, SentenceTransformersModelDefinition):
             return EmbeddingConfig(
                 type="sentence_transformers",
+                implementation="sentence_transformers",
                 model=definition.name,
                 embedding_space_id=definition.embedding_space_id,
                 representation=definition.representation,
@@ -304,6 +321,7 @@ class ConfigurationRegistry:
         if isinstance(definition, FakeModelDefinition):
             return EmbeddingConfig(
                 type="fake",
+                implementation="fake",
                 model=definition.name,
                 embedding_space_id=definition.embedding_space_id,
                 representation=definition.representation,
@@ -320,29 +338,47 @@ class ConfigurationRegistry:
     def _reranker(self, component_id: str) -> RerankerConfig:
         """Resolve a reranker component and substitute its model ID when needed."""
         definition = self.component("reranker", component_id)
-        if definition.type == "cross_encoder" and definition.model_id is None:
+        if (
+            definition.implementation == "cross_encoder"
+            and definition.model_id is None
+        ):
             raise ValueError(f"Reranker component {component_id} requires model_id")
-        if definition.type != "cross_encoder" and definition.model_id is not None:
+        if (
+            definition.implementation != "cross_encoder"
+            and definition.model_id is not None
+        ):
             raise ValueError(
                 f"Reranker component {component_id} does not accept model_id"
             )
         values = definition.settings()
+        values.pop("model_id", None)
         if definition.model_id is not None:
             model = self.model(definition.model_id)
             self._validate_model_stage(definition.model_id, model, "reranker")
             values["model_name"] = model.name
-        return RerankerConfig.model_validate({"type": definition.type, **values})
+        return RerankerConfig.model_validate(
+            {
+                "id": definition.id,
+                "type": definition.implementation,
+                "implementation": definition.implementation,
+                **values,
+            }
+        )
 
     def _pipeline_reasoner(self, component_id: str) -> PipelineReasonerConfig:
         """Resolve a pipeline reasoner to an internal model ID reference."""
         definition = self.component("reasoner", component_id)
         if definition.model_id is None:
             raise ValueError(f"Reasoner component {component_id} requires model_id")
+        values = definition.settings()
+        values.pop("model_id", None)
         return PipelineReasonerConfig.model_validate(
             {
-                "type": definition.type,
+                "id": definition.id,
+                "type": definition.implementation,
+                "implementation": definition.implementation,
                 "model_ref": self._model_id_for_component("reasoner", component_id),
-                **definition.settings(),
+                **values,
             }
         )
 
@@ -377,10 +413,16 @@ class ConfigurationRegistry:
 
 
 def _yaml_paths(directory: Path) -> tuple[Path, ...]:
-    """Discover YAML files recursively without making filenames authoritative."""
+    """Discover component instances while excluding family schema files."""
     if not directory.is_dir():
         raise ValueError(f"Configuration directory does not exist: {directory}")
-    return tuple(sorted((*directory.rglob("*.yaml"), *directory.rglob("*.yml"))))
+    return tuple(
+        sorted(
+            path
+            for path in (*directory.rglob("*.yaml"), *directory.rglob("*.yml"))
+            if path.name not in {"schema.yaml", "schema.yml"}
+        )
+    )
 
 
 def _load_model(path: Path) -> ModelDefinition:
@@ -392,11 +434,14 @@ def _load_model(path: Path) -> ModelDefinition:
         raise ValueError(f"Invalid model configuration file: {path}") from exc
 
 
-def _load_component(path: Path) -> ComponentDefinition:
-    """Load one reusable component definition with path context."""
+def _load_component(path: Path, components_directory: Path) -> ComponentDefinition:
+    """Validate and load one reusable component definition with path context."""
     try:
-        return ComponentDefinition.model_validate(
-            yaml.safe_load(path.read_text("utf-8"))
+        value = validate_component_file(
+            path, path.parent.name, components_directory
         )
-    except (OSError, UnicodeError, yaml.YAMLError, ValidationError) as exc:
+        return ComponentDefinition.model_validate(
+            value
+        )
+    except (OSError, UnicodeError, yaml.YAMLError, ValidationError, ValueError) as exc:
         raise ValueError(f"Invalid component configuration file: {path}") from exc

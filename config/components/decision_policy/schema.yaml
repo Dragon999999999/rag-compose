@@ -1,0 +1,12 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Decision policy component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: decision_policy}
+      implementation: {enum: [basic_grounding]}
+      config:
+        type: object
+        additionalProperties: false

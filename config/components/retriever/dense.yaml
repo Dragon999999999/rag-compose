@@ -1,8 +1,0 @@
-id: retriever_dense
-type: vector
-top_k: 20
-query_embedder: null
-requirements:
-  required:
-    - dense_vector_index
-    - compatible_query_embedder

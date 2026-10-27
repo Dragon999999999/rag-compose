@@ -1,0 +1,5 @@
+id: renderer_grounded_answer
+type: renderer
+implementation: grounded_answer
+description: Render a validated grounded response for the API.
+config: {}

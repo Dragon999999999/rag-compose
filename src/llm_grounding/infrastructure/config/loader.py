@@ -20,6 +20,7 @@ from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
     PipelineConfig,
 )
+from llm_grounding.infrastructure.config.overrides import apply_query_overrides
 from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 from llm_grounding.ingestion.models import IngestionConfig
 
@@ -104,6 +105,7 @@ def load_pipeline_config(
 
             registry = ComponentRegistry()
         registry.validate_pipeline(config, model_catalog)
+        apply_query_overrides(config, (("pipeline", config.stage_overrides),))
         return config
     except ConfigurationError:
         raise

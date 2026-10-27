@@ -176,6 +176,7 @@ class Chat:
     pipeline_version: int | None = None
     pipeline_config_hash: str | None = None
     pipeline_representation_hash: str | None = None
+    stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

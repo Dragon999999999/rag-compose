@@ -1,0 +1,42 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: schema.yaml
+title: Component definition
+description: Shared contract for every configured pipeline component.
+type: object
+required:
+  - id
+  - type
+  - implementation
+properties:
+  id:
+    type: string
+    pattern: '^[A-Za-z][A-Za-z0-9_.-]*$'
+    x-override-scopes: []
+  type:
+    type: string
+    minLength: 1
+    x-override-scopes: []
+  implementation:
+    type: string
+    minLength: 1
+    x-override-scopes: []
+  description:
+    type: string
+    maxLength: 4000
+    default: ''
+    x-override-scopes: []
+  config:
+    type: object
+    default: {}
+    x-override-scopes: []
+  requirements:
+    type: object
+    additionalProperties: false
+    properties:
+      required:
+        type: array
+        uniqueItems: true
+        items:
+          type: string
+    x-override-scopes: []
+additionalProperties: false

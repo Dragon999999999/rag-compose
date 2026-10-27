@@ -1,0 +1,12 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Knowledge builder component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: knowledge_builder}
+      implementation: {enum: [basic]}
+      config:
+        type: object
+        additionalProperties: false

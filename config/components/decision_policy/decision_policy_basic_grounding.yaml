@@ -1,0 +1,5 @@
+id: decision_basic_grounding
+type: decision_policy
+implementation: basic_grounding
+description: Apply the configured grounded-answer acceptance policy.
+config: {}

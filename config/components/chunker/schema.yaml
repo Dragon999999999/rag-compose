@@ -1,0 +1,25 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Chunker component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: chunker}
+      implementation: {enum: [block_aware, fixed_window]}
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          version: {type: string, default: '1', x-override-scopes: []}
+          target_chars:
+            type: integer
+            minimum: 32
+            maximum: 100000
+            default: 800
+            x-override-scopes: [pipeline]
+          overlap_chars:
+            type: integer
+            minimum: 0
+            default: 120
+            x-override-scopes: [pipeline]

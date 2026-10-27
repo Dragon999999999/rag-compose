@@ -1,7 +1,0 @@
-id: reranker_cross_encoder
-type: cross_encoder
-model_id: cross_encoder_minilm
-retrieval_top_k: 20
-rerank_top_k: 5
-device: cpu
-batch_size: 16

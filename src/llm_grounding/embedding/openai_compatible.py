@@ -36,7 +36,7 @@ class OpenAICompatibleEmbedder:
         """Retain settings and defer client and credential creation to first use."""
         self._dimension: int | None
         if isinstance(config, EmbeddingConfig):
-            if config.type != "openai_compatible":
+            if config.implementation != "openai_compatible":
                 raise ValueError(
                     "OpenAICompatibleEmbedder requires openai_compatible config"
                 )
