@@ -25,6 +25,10 @@ from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.orchestration.registry import ComponentRegistry
 from llm_grounding.reasoning.basic_grounded import BasicGroundedReasoner
 from llm_grounding.rendering.grounded_answer import GroundedAnswerRenderer
+from llm_grounding.retrieval.full_context import FullContextRetriever
+from llm_grounding.retrieval.hybrid import HybridRetriever
+from llm_grounding.retrieval.protocol import Retriever
+from llm_grounding.retrieval.sparse import SparseRetriever
 from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
 
 
@@ -165,7 +169,7 @@ class PipelineRuntimeResolver:
         architecture: ArchitectureConfig,
         ingestion: IngestionConfig,
     ) -> BasicRagRunner:
-        """Construct the supported vector-grounded runner from selected stages."""
+        """Construct the selected retriever with only its required resources."""
         if architecture.reasoner.type != "basic_grounded":
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounded reasoner"
@@ -184,50 +188,92 @@ class PipelineRuntimeResolver:
             )
         if architecture.reasoner.prompt_id is None:
             raise PipelineResolutionError("A grounded pipeline requires prompt_id")
-        if ingestion.embedding is None or ingestion.vector_backend is None:
-            raise PipelineResolutionError(
-                "The selected dense query pipeline requires an indexed embedding "
-                "and vector backend"
-            )
-        if self._vectors is None:
-            raise PipelineResolutionError(
-                "The selected dense query pipeline has no vector backend available"
-            )
-        query_embedding = ingestion.embedding
-        if architecture.retriever.query_embedder is not None:
+        retriever_type = architecture.retriever.type
+        dense_required = retriever_type in {"vector", "hybrid_rrf"}
+        query_embedding = ingestion.embedding if dense_required else None
+        dense: VectorRetriever | None = None
+        if dense_required:
+            if ingestion.embedding is None or ingestion.vector_backend is None:
+                raise PipelineResolutionError(
+                    "The selected dense query pipeline requires an indexed "
+                    "embedding and vector backend"
+                )
+            if self._vectors is None:
+                raise PipelineResolutionError(
+                    "The selected dense query pipeline has no vector backend "
+                    "available"
+                )
+            if architecture.retriever.query_embedder is not None:
+                try:
+                    query_embedding = self._catalog.embedding(
+                        architecture.retriever.query_embedder
+                    )
+                except ValueError as exc:
+                    raise PipelineResolutionError(str(exc)) from exc
+                if not query_embedding.is_compatible_with(ingestion.embedding):
+                    raise PipelineResolutionError(
+                        "The selected query embedder is incompatible with the "
+                        "indexed embedding space"
+                    )
             if query_embedding is None:
                 raise PipelineResolutionError(
-                    "An explicit query embedder requires a dense indexed ingestion"
+                    "Dense query runtime requires an embedding provider"
                 )
-            try:
-                query_embedding = self._catalog.embedding(
-                    architecture.retriever.query_embedder
-                )
-            except ValueError as exc:
-                raise PipelineResolutionError(str(exc)) from exc
-            if not query_embedding.is_compatible_with(ingestion.embedding):
+            dense = VectorRetriever(
+                self._embedder(query_embedding),
+                self._vectors,
+                architecture.retriever.dense_top_k
+                or architecture.reranker.retrieval_top_k
+                or architecture.retriever.top_k
+                or 8,
+                embedding_config=query_embedding,
+            )
+        if retriever_type == "vector":
+            if dense is None:
+                raise PipelineResolutionError("Dense retriever construction failed")
+            retriever: Retriever = dense
+            summary: Retriever = SummaryRetriever(
+                self._repository,
+                dense,
+                architecture.retriever.context_chars or 12000,
+                architecture.retriever.summary_per_facet or 3,
+            )
+        elif retriever_type == "full_context":
+            retriever = FullContextRetriever(
+                self._repository,
+                architecture.retriever.context_budget_tokens or 16_000,
+            )
+            summary = retriever
+        elif retriever_type == "postgres_fts":
+            retriever = SparseRetriever(
+                self._repository,
+                architecture.retriever.top_k or 20,
+            )
+            summary = retriever
+        elif retriever_type == "hybrid_rrf":
+            if dense is None:
                 raise PipelineResolutionError(
-                    "The selected query embedder is incompatible with the indexed "
-                    "embedding space"
+                    "Hybrid retrieval requires dense retrieval"
                 )
-        if query_embedding is None:
-            raise PipelineResolutionError("Dense query runtime requires an embedder")
-        embedder = self._embedder(query_embedding)
-        retrieval_top_k = (
-            architecture.reranker.retrieval_top_k or architecture.retriever.top_k or 8
-        )
-        vector = VectorRetriever(
-            embedder,
-            self._vectors,
-            retrieval_top_k,
-            embedding_config=query_embedding,
-        )
-        summary = SummaryRetriever(
-            self._repository,
-            vector,
-            architecture.retriever.context_chars or 12000,
-            architecture.retriever.summary_per_facet or 3,
-        )
+            sparse = SparseRetriever(
+                self._repository,
+                architecture.retriever.sparse_top_k or 20,
+            )
+            retriever = HybridRetriever(
+                dense,
+                sparse,
+                dense_top_k=architecture.retriever.dense_top_k or 20,
+                sparse_top_k=architecture.retriever.sparse_top_k or 20,
+                top_k=architecture.retriever.top_k or 10,
+                rrf_k=architecture.retriever.rrf_k,
+                dense_weight=architecture.retriever.dense_weight,
+                sparse_weight=architecture.retriever.sparse_weight,
+            )
+            summary = retriever
+        else:
+            raise PipelineResolutionError(
+                f"Unsupported retriever runtime {retriever_type!r}"
+            )
         reasoner = BasicGroundedReasoner(
             AqueductModelClient(architecture.reasoner.model),
             PromptLibrary.default(),
@@ -235,7 +281,7 @@ class PipelineRuntimeResolver:
         )
         reranker = self._registry.build_reranker(architecture.reranker)
         return BasicRagRunner(
-            vector,
+            retriever,
             summary,
             reasoner,
             SourceReferenceAssessor(),
@@ -245,6 +291,7 @@ class PipelineRuntimeResolver:
             reranker=reranker,
             reranker_config=architecture.reranker,
             reranker_builder=self._registry.build_reranker,
+            repository=self._repository,
         )
 
     def _embedder(self, config: EmbeddingConfig) -> Embedder:

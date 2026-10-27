@@ -38,6 +38,14 @@ def _vector_retriever_requires_runtime_dependencies() -> Retriever:
     )
 
 
+def _retriever_requires_runtime_dependencies(name: str) -> Retriever:
+    """Reserve a retriever name for construction by the application composition root."""
+    raise ConfigurationError(
+        f"The {name} retriever requires project-scoped runtime dependencies; "
+        "construct it through the application bootstrap."
+    )
+
+
 class ComponentRegistry:
     """Map stage-local names to typed constructors and validate complete composition."""
 
@@ -51,6 +59,15 @@ class ComponentRegistry:
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
             "vector": _vector_retriever_requires_runtime_dependencies,
+            "full_context": lambda: _retriever_requires_runtime_dependencies(
+                "full_context"
+            ),
+            "postgres_fts": lambda: _retriever_requires_runtime_dependencies(
+                "postgres_fts"
+            ),
+            "hybrid_rrf": lambda: _retriever_requires_runtime_dependencies(
+                "hybrid_rrf"
+            ),
         }
         self.rerankers: dict[str, Callable[[RerankerConfig], Reranker]] = {
             "identity": lambda config: IdentityReranker(),
@@ -197,6 +214,19 @@ class ComponentRegistry:
         """Return backward-compatible resource capabilities for a retriever type."""
         if retriever_type == "vector":
             return frozenset({"chunk_vectors", "dense_vector_index"})
+        if retriever_type == "full_context":
+            return frozenset({"persisted_chunks"})
+        if retriever_type == "postgres_fts":
+            return frozenset({"persisted_chunks", "postgres_fts"})
+        if retriever_type == "hybrid_rrf":
+            return frozenset(
+                {
+                    "persisted_chunks",
+                    "postgres_fts",
+                    "chunk_vectors",
+                    "dense_vector_index",
+                }
+            )
         raise ConfigurationError(f"Unknown retriever component {retriever_type!r}")
 
     def query_requirements(self, config: RetrieverConfig) -> frozenset[str]:
@@ -206,7 +236,24 @@ class ComponentRegistry:
                 f"Unknown retriever component {config.type!r}; available: "
                 f"{', '.join(sorted(self.retrievers))}"
             )
-        return frozenset(config.requirements.required)
+        declared = frozenset(config.requirements.required)
+        if declared == frozenset(
+            {"dense_vector_index", "compatible_query_embedder"}
+        ):
+            defaults = {
+                "full_context": frozenset({"persisted_chunks"}),
+                "postgres_fts": frozenset({"persisted_chunks", "postgres_fts"}),
+                "hybrid_rrf": frozenset(
+                    {
+                        "persisted_chunks",
+                        "postgres_fts",
+                        "dense_vector_index",
+                        "compatible_query_embedder",
+                    }
+                ),
+            }
+            return defaults.get(config.type, declared)
+        return declared
 
     def build_reranker(self, config: RerankerConfig) -> Reranker:
         """Construct one reranker from validated settings without loading models."""

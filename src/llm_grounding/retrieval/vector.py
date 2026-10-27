@@ -94,7 +94,12 @@ class VectorRetriever:
             canonical.query,
             results,
             query,
-            metadata={"embedding_identity": query.model_identity},
+            metadata={
+                "retriever": "dense",
+                "score_type": "vector_similarity",
+                "embedding_identity": query.model_identity,
+                "embedding_dimension": query.dimension,
+            },
         )
 
 

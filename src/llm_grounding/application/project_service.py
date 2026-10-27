@@ -169,11 +169,17 @@ class ProjectService:
         for record in records:
             config = PipelineConfig.model_validate(record.config)
             compatibility = validate_query_compatibility(
-                config, index, self._pipeline_service.registry
+                config,
+                index,
+                self._pipeline_service.registry,
+                self._pipeline_service.model_catalog,
+            )
+            pipeline_summary: dict[str, object] = next(
+                iter(self._pipeline_service.summaries((record,))), {}
             )
             result.append(
                 {
-                    "pipeline": self._pipeline_service.summaries((record,))[0],
+                    "pipeline": pipeline_summary,
                     **compatibility.as_dict(),
                 }
             )

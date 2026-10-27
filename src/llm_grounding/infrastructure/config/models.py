@@ -73,7 +73,10 @@ class ReasonerConfig(ComponentConfig):
 
 
 RetrieverRequirement = Literal[
-    "postgres_fts", "dense_vector_index", "compatible_query_embedder"
+    "persisted_chunks",
+    "postgres_fts",
+    "dense_vector_index",
+    "compatible_query_embedder",
 ]
 
 
@@ -102,7 +105,13 @@ class RetrieverConfig(ComponentConfig):
 
     top_k: int | None = Field(default=None, ge=1, le=100)
     context_chars: int | None = Field(default=None, ge=1, le=200000)
+    context_budget_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
     summary_per_facet: int | None = Field(default=None, ge=1, le=20)
+    dense_top_k: int | None = Field(default=None, ge=1, le=100)
+    sparse_top_k: int | None = Field(default=None, ge=1, le=100)
+    rrf_k: int = Field(default=60, ge=1, le=10_000)
+    dense_weight: float = Field(default=1.0, gt=0, le=100, allow_inf_nan=False)
+    sparse_weight: float = Field(default=1.0, gt=0, le=100, allow_inf_nan=False)
     query_embedder: str | None = Field(
         default=None,
         min_length=1,

@@ -1,0 +1,7 @@
+id: retriever_sparse
+type: postgres_fts
+top_k: 20
+requirements:
+  required:
+    - persisted_chunks
+    - postgres_fts

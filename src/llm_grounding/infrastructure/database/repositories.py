@@ -14,6 +14,7 @@ from sqlalchemy.sql.selectable import Exists
 
 from llm_grounding.domain.corpus import (
     Chat,
+    ChunkRetrievalResult,
     Document,
     DocumentIngestion,
     DocumentSummary,
@@ -1079,6 +1080,74 @@ class PostgresRepository:
             for row in rows:
                 chunks.append(await self._chunk(session, row))
             return tuple(chunks)
+
+    async def search_chunks_fts(
+        self,
+        project_id: str,
+        query_text: str,
+        top_k: int,
+        document_ids: tuple[str, ...] = (),
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Search ready project chunks with PostgreSQL's language-neutral FTS.
+
+        The ``simple`` text-search configuration intentionally performs no
+        language-specific stemming. It gives reproducible tokenization across
+        projects containing mixed-language technical documents. Project and
+        document membership are applied in SQL before ranking, so shared
+        documents cannot leak between project corpora.
+
+        Args:
+            project_id: Project whose selected ready ingestions are searchable.
+            query_text: User query passed to PostgreSQL's web-search parser.
+            top_k: Maximum number of ranked chunks to return.
+            document_ids: Optional document scope within the project.
+
+        Returns:
+            Chunks ordered by PostgreSQL cover-density rank and stable provenance.
+        """
+        if top_k < 1:
+            raise ValueError("top_k must be positive")
+        vector = func.to_tsvector("simple", RetrievalUnitRow.text)
+        query = func.websearch_to_tsquery("simple", query_text)
+        rank = func.ts_rank_cd(vector, query).label("fts_rank")
+        async with self._sessions() as session:
+            statement = (
+                select(RetrievalUnitRow, rank)
+                .join(
+                    ProjectDocumentRow,
+                    ProjectDocumentRow.ingestion_id == RetrievalUnitRow.ingestion_id,
+                )
+                .join(IngestionRow, IngestionRow.id == RetrievalUnitRow.ingestion_id)
+                .where(
+                    ProjectDocumentRow.project_id == project_id,
+                    IngestionRow.status == IngestionStatus.READY,
+                    vector.op("@@")(query),
+                )
+            )
+            if document_ids:
+                statement = statement.where(
+                    RetrievalUnitRow.document_id.in_(document_ids)
+                )
+            rows = (
+                await session.execute(
+                    statement.order_by(
+                        rank.desc(),
+                        RetrievalUnitRow.document_id,
+                        RetrievalUnitRow.ordering,
+                    ).limit(top_k)
+                )
+            ).all()
+            results: list[ChunkRetrievalResult] = []
+            for rank_number, (row, score) in enumerate(rows, 1):
+                results.append(
+                    ChunkRetrievalResult(
+                        await self._chunk(session, row),
+                        rank_number,
+                        "sparse",
+                        float(score),
+                    )
+                )
+            return tuple(results)
 
     async def chunks_by_ids(
         self, chunk_ids: tuple[str, ...]

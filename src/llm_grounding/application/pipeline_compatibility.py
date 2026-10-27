@@ -37,7 +37,12 @@ class IndexCapabilities:
         representation_hash: str | None = None,
     ) -> "IndexCapabilities":
         """Infer capabilities from effective ingestion settings and backend support."""
-        capabilities = {"full_text", "metadata_filtering", "postgres_fts"}
+        capabilities = {
+            "full_text",
+            "metadata_filtering",
+            "persisted_chunks",
+            "postgres_fts",
+        }
         if config.embedding is not None and config.vector_backend == "qdrant":
             capabilities.update({"chunk_vectors", "dense_vector_index"})
         return cls(
@@ -152,7 +157,12 @@ def validate_query_compatibility(
     """Validate query requirements against an actual project's indexed capabilities."""
     required = required_query_capabilities(config, registry)
     resource_requirements = required - {"compatible_query_embedder"}
-    missing = resource_requirements - index.capabilities
+    available = set(index.capabilities)
+    # ``full_text`` was the pre-retriever name for the persisted chunk store.
+    # Treat it as the compatibility alias for snapshots created before Phase 4.
+    if "full_text" in available:
+        available.add("persisted_chunks")
+    missing = resource_requirements - available
     if "compatible_query_embedder" in required and (
         index.embedding_identity is None or index.dimension is None
     ):

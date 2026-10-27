@@ -150,12 +150,11 @@ def create_phase_one_application(
     if ingestion_config is None:
         raise ValueError("An ingestion configuration is required")
     if (
-        architecture.retriever.type != "vector"
-        or architecture.reasoner.type != "basic_grounded"
+        architecture.reasoner.type != "basic_grounded"
         or architecture.renderer.type != "grounded_answer"
     ):
         raise RuntimeError(
-            "Phase 1 application requires a vector/basic_grounded pipeline"
+            "Phase 1 application requires a basic_grounded grounded-answer pipeline"
         )
     if architecture.reasoner.prompt_id is None:
         raise RuntimeError("Phase 1 grounded reasoning requires a configured prompt_id")
@@ -204,7 +203,8 @@ def create_phase_one_application(
     runner = None
     summaries = None
     if (
-        ingestion_config.embedding is not None
+        architecture.retriever.type == "vector"
+        and ingestion_config.embedding is not None
         and vectors is not None
         and embedder is not None
     ):

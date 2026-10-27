@@ -20,6 +20,7 @@ from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, RetrievalR
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.models import RerankerConfig
+from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.observability.embedding import embedding_diagnostics
 from llm_grounding.observability.models import LLMUsage, RagUsage
@@ -38,9 +39,10 @@ from llm_grounding.retrieval.models import (
     RetrievalRequest,
     RetrievalResponse,
 )
+from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
-from llm_grounding.retrieval.vector import SummaryRetriever, VectorRetriever
+from llm_grounding.retrieval.vector import SummaryRetriever
 
 
 class BasicRagRunner:
@@ -48,8 +50,8 @@ class BasicRagRunner:
 
     def __init__(
         self,
-        vector: VectorRetriever,
-        summary: SummaryRetriever,
+        vector: Retriever,
+        summary: Retriever,
         reasoner: BasicGroundedReasoner,
         assessor: SourceReferenceAssessor,
         policy: BasicGroundingPolicy,
@@ -59,6 +61,7 @@ class BasicRagRunner:
         reranker: Reranker | None = None,
         reranker_config: RerankerConfig | None = None,
         reranker_builder: Callable[[RerankerConfig], Reranker] | None = None,
+        repository: PostgresRepository | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
@@ -74,14 +77,20 @@ class BasicRagRunner:
             self._reranker_config.model_dump_json(): self._reranker
         }
         self._diagnostics = diagnostics or GroundingDiagnostics()
-        self._embedding_config = embedding_config or vector.embedding_config
-        self._embedders: dict[str, Embedder] = {
-            (
-                self._embedding_config.identity()
-                if self._embedding_config is not None
-                else vector.default_embedder.model_identity
-            ): vector.default_embedder
-        }
+        self._embedding_config = embedding_config or getattr(
+            vector, "embedding_config", None
+        )
+        default_embedder = getattr(vector, "default_embedder", None)
+        self._embedders: dict[str, Embedder] = {}
+        if default_embedder is not None:
+            self._embedders[
+                (
+                    self._embedding_config.identity()
+                    if self._embedding_config is not None
+                    else default_embedder.model_identity
+                )
+            ] = default_embedder
+        self._repository = repository
         self._last_retrieval_response: RetrievalResponse | None = None
 
     async def run(
@@ -107,7 +116,7 @@ class BasicRagRunner:
         query_embedding = (
             self._last_retrieval_response.query_embedding
             if self._last_retrieval_response is not None
-            else self._vector.last_query_embedding
+            else getattr(self._vector, "last_query_embedding", None)
         )
         if query_embedding is not None:
             usage.add_embedding()
@@ -154,6 +163,11 @@ class BasicRagRunner:
                         else None
                     ),
                     "query_embedding_configuration": self._embedding_metadata(),
+                    "retrieval_metadata": (
+                        self._last_retrieval_response.metadata
+                        if self._last_retrieval_response is not None
+                        else {}
+                    ),
                     "answer_payload": {},
                     "evidence_ids": [],
                     "created_at": datetime.now(UTC).isoformat(),
@@ -244,6 +258,11 @@ class BasicRagRunner:
                     else None
                 ),
                 "query_embedding_configuration": self._embedding_metadata(),
+                "retrieval_metadata": (
+                    self._last_retrieval_response.metadata
+                    if self._last_retrieval_response is not None
+                    else {}
+                ),
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )
@@ -266,32 +285,33 @@ class BasicRagRunner:
         top_k = values.get("top_k") if isinstance(values.get("top_k"), int) else None
         if isinstance(values.get("retrieval_top_k"), int):
             top_k = values["retrieval_top_k"]
-        context_chars = (
-            values.get("context_chars")
-            if isinstance(values.get("context_chars"), int)
-            else None
-        )
-        per_facet = (
-            values.get("summary_per_facet")
-            if isinstance(values.get("summary_per_facet"), int)
-            else None
-        )
         embedder = self._request_embedder(values)
         retrieval_request = RetrievalRequest.from_corpus(request, top_k=top_k)
         context = RetrievalContext(
+            repository=self._repository,
             embedder=embedder,
             embedding_config=self._embedding_config,
         )
-        response = await (
-            self._summary.retrieve(
-                retrieval_request,
-                context,
-                context_chars=context_chars,
-                per_facet=per_facet,
-            )
-            if request.task_type == TaskType.SUMMARY
-            else self._vector.retrieve(retrieval_request, context)
-        )
+        if request.task_type == TaskType.SUMMARY:
+            if isinstance(self._summary, SummaryRetriever):
+                response = await self._summary.retrieve(
+                    retrieval_request,
+                    context,
+                    context_chars=(
+                        values.get("context_chars")
+                        if isinstance(values.get("context_chars"), int)
+                        else None
+                    ),
+                    per_facet=(
+                        values.get("summary_per_facet")
+                        if isinstance(values.get("summary_per_facet"), int)
+                        else None
+                    ),
+                )
+            else:
+                response = await self._summary.retrieve(retrieval_request, context)
+        else:
+            response = await self._vector.retrieve(retrieval_request, context)
         self._last_retrieval_response = response
         return response.results
 
