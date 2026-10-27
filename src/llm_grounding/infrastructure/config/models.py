@@ -61,6 +61,7 @@ class ComponentConfig(BaseModel):
             "identity": ("reranker", "identity"),
             "top_k": ("reranker", "top_k"),
             "cross_encoder": ("reranker", "cross_encoder"),
+            "generative": ("reranker", "generative"),
             "basic_grounded": ("reasoner", "basic_grounded"),
             "source_reference": ("assessor", "source_reference"),
             "basic_grounding": ("decision_policy", "basic_grounding"),
@@ -184,10 +185,17 @@ class RerankerConfig(ComponentConfig):
 
     type: str = Field(default="reranker", min_length=1)
     implementation: str = Field(default="identity", min_length=1)
-    provider: Literal["identity", "top_k", "cross_encoder"] | None = Field(
+    provider: Literal[
+        "identity", "top_k", "cross_encoder", "generative"
+    ] | None = Field(
         default=None,
         exclude=True,
         description="Optional provider spelling for the reranker component type.",
+    )
+    model_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Registered local model configuration used for reranking.",
     )
     retrieval_top_k: int | None = Field(
         default=None,
@@ -240,7 +248,7 @@ class RerankerConfig(ComponentConfig):
                 raise ValueError("rerank_top_k must not exceed retrieval_top_k")
         if self.implementation == "identity" and self.rerank_top_k is not None:
             raise ValueError(
-                "rerank_top_k requires the top_k or cross_encoder reranker"
+                "rerank_top_k requires the top_k or model-based reranker"
             )
         return self
 

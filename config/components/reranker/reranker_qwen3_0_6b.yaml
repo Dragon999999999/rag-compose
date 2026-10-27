@@ -1,0 +1,10 @@
+id: reranker_qwen3_0_6b
+type: reranker
+implementation: generative
+description: Score candidate relevance with the Qwen3 yes-or-no reranker.
+config:
+  model_id: reranker_qwen3_0_6b
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cuda
+  batch_size: 1

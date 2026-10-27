@@ -1,0 +1,20 @@
+id: reranker_mxbai_base_v2
+stage: reranker
+location: local
+backend: sentence_transformers
+name: mixedbread-ai/mxbai-rerank-base-v2
+source:
+  type: huggingface
+  repository: mixedbread-ai/mxbai-rerank-base-v2
+storage:
+  relative_path: reranker/mxbai_rerank_base_v2
+runtime:
+  type: in_process
+  device: cuda
+  idle_timeout_seconds: 600
+  memory_limit: 4g
+parameters:
+  reranker_type: cross_encoder
+  batch_size: 2
+  max_length: 512
+  trust_remote_code: true

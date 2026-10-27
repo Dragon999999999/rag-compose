@@ -394,6 +394,8 @@ class BasicRagRunner:
                 if source in values
             }
         )
+        if settings.get("implementation") in {"identity", "top_k"}:
+            settings["model_id"] = None
         config = RerankerConfig.model_validate(settings)
         cache_key = json.dumps(settings, sort_keys=True, separators=(",", ":"))
         reranker = self._reranker_cache.get(cache_key)

@@ -347,12 +347,10 @@ class ConfigurationRegistry:
     def _reranker(self, component_id: str) -> RerankerConfig:
         """Resolve a reranker component and substitute its model ID when needed."""
         definition = self.component("reranker", component_id)
-        if definition.implementation == "cross_encoder" and definition.model_id is None:
+        model_backed = definition.implementation in {"cross_encoder", "generative"}
+        if model_backed and definition.model_id is None:
             raise ValueError(f"Reranker component {component_id} requires model_id")
-        if (
-            definition.implementation != "cross_encoder"
-            and definition.model_id is not None
-        ):
+        if not model_backed and definition.model_id is not None:
             raise ValueError(
                 f"Reranker component {component_id} does not accept model_id"
             )
@@ -361,6 +359,7 @@ class ConfigurationRegistry:
         if definition.model_id is not None:
             model = self.model(definition.model_id)
             self._validate_model_stage(definition.model_id, model, "reranker")
+            values["model_id"] = definition.model_id
             values["model_name"] = model.name
         return RerankerConfig.model_validate(
             {

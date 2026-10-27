@@ -68,6 +68,24 @@ def test_local_embedding_catalog_preserves_model_specific_contracts() -> None:
     assert catalog.embedding("embedding_bge_m3").dimension == 1024
 
 
+def test_reranker_components_resolve_registered_model_ids() -> None:
+    """Every model-backed reranker keeps a registry reference at the boundary."""
+    registry = load_configuration_registry()
+
+    expected = {
+        "reranker_cross_encoder": "cross_encoder_minilm",
+        "reranker_bge_v2_m3": "reranker_bge_v2_m3",
+        "reranker_qwen3_0_6b": "reranker_qwen3_0_6b",
+        "reranker_mxbai_base_v2": "reranker_mxbai_base_v2",
+        "reranker_jina_v2_multilingual": "reranker_jina_v2_multilingual",
+    }
+    assert {
+        component_id: registry.component("reranker", component_id).model_id
+        for component_id in expected
+    } == expected
+    assert registry.component("reranker", "reranker_identity").model_id is None
+
+
 def test_duplicate_standalone_ids_are_rejected(tmp_path: Path) -> None:
     """IDs, rather than filenames, are authoritative and must be unique."""
     models = tmp_path / "models"

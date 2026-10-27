@@ -325,46 +325,76 @@ class InProcessModelRuntime:
 class _TransformersModel:
     """Synchronous inference adapter used behind the async in-process runtime."""
 
-    def __init__(self, definition: ModelDefinition, tokenizer: Any, model: Any) -> None:
+    def __init__(
+        self, definition: ModelDefinition, tokenizer: Any, model: Any, device: str
+    ) -> None:
         """Store loaded provider objects and model-specific configuration."""
         self._definition = definition
         self._tokenizer = tokenizer
         self._model = model
+        self._device = device
 
     @classmethod
     def load(cls, definition: ModelDefinition, weights: Path) -> "_TransformersModel":
         """Load Transformers weights from the persistent model directory."""
         try:
+            import torch  # type: ignore[import-not-found]
             from transformers import (  # type: ignore[import-not-found]
                 AutoModel,
+                AutoModelForCausalLM,
                 AutoModelForMaskedLM,
+                AutoModelForSequenceClassification,
                 AutoTokenizer,
             )
         except ImportError as exc:
             raise RuntimeError(
                 "Install llm-grounding[embeddings] with Transformers and PyTorch "
-                "to use in-process sparse or token models"
+                "to use in-process local models"
             ) from exc
         tokenizer = AutoTokenizer.from_pretrained(
             str(weights),
             local_files_only=True,
             trust_remote_code=bool(getattr(definition, "trust_remote_code", False)),
         )
-        model_loader = (
-            AutoModelForMaskedLM
-            if "splade" in definition.name.casefold()
-            else AutoModel
-        )
+        model_name = definition.name.casefold()
+        reranker_kind = str(definition.parameter("reranker_type", ""))
+        if reranker_kind == "generative" or "qwen3-reranker" in model_name:
+            model_loader = AutoModelForCausalLM
+        elif definition.stage == "reranker":
+            model_loader = AutoModelForSequenceClassification
+        elif "splade" in model_name:
+            model_loader = AutoModelForMaskedLM
+        else:
+            model_loader = AutoModel
         model = model_loader.from_pretrained(
             str(weights),
             local_files_only=True,
             trust_remote_code=bool(getattr(definition, "trust_remote_code", False)),
         )
         model.eval()
-        return cls(definition, tokenizer, model)
+        configured_device = definition.runtime.device if definition.runtime else "cpu"
+        device = configured_device
+        if configured_device.startswith("cuda") and not torch.cuda.is_available():
+            device = "cpu"
+        try:
+            model.to(device)
+        except (RuntimeError, ValueError):
+            if device == "cpu":
+                raise
+            device = "cpu"
+            model.to(device)
+        return cls(definition, tokenizer, model, device)
 
     def request(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         """Execute the supported dense, sparse, or token representation request."""
+        if path.endswith("/rerank") or path == "/rerank":
+            query = payload.get("query")
+            texts = payload.get("texts")
+            if not isinstance(query, str) or not isinstance(texts, list) or not all(
+                isinstance(item, str) for item in texts
+            ):
+                raise ValueError("In-process rerank input must contain query and texts")
+            return self._rerank(query, texts)
         inputs = payload.get("input")
         if not isinstance(inputs, list) or not all(
             isinstance(item, str) for item in inputs
@@ -378,9 +408,118 @@ class _TransformersModel:
             return self._dense(inputs)
         raise RuntimeError(f"Unsupported in-process model endpoint: {path}")
 
+    def _rerank(self, query: str, texts: list[str]) -> dict[str, object]:
+        """Score query-document pairs using a classifier or Qwen relevance prompt."""
+        if str(self._definition.parameter("reranker_type", "")) == "generative":
+            scores = [self._qwen_score(query, text) for text in texts]
+        else:
+            scores = self._classifier_scores(query, texts)
+        return {
+            "results": [
+                {"index": index, "relevance_score": score}
+                for index, score in enumerate(scores)
+            ]
+        }
+
+    def _classifier_scores(self, query: str, texts: list[str]) -> list[float]:
+        """Run a sequence-classification reranker over bounded query pairs."""
+        import torch
+
+        batch_size = int(cast(int, self._definition.parameter("batch_size", 2)))
+        scores: list[float] = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            encoded = self._tokenizer(
+                [query] * len(batch),
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=int(
+                    cast(int, self._definition.parameter("max_length", 512))
+                ),
+                return_tensors="pt",
+            )
+            encoded = self._move_to_device(encoded)
+            with torch.inference_mode():
+                logits = self._model(**encoded).logits
+            if len(logits.shape) != 2:
+                raise RuntimeError("Local classifier returned invalid reranker logits")
+            if logits.shape[1] == 1:
+                values = logits[:, 0]
+            else:
+                values = torch.sigmoid(logits[:, -1] - logits[:, 0])
+            scores.extend(float(value) for value in values.detach().cpu())
+        return scores
+
+    def _qwen_score(self, query: str, text: str) -> float:
+        """Score one pair with Qwen's yes/no next-token relevance decision."""
+        import torch
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Judge whether the Document meets the Query. "
+                    "Output only yes or no."
+                ),
+            },
+            {"role": "user", "content": f"<Query>: {query}\n<Document>: {text}"},
+        ]
+        try:
+            encoded = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
+            )
+        except TypeError:
+            input_ids = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+            )
+            encoded = {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+        if not isinstance(encoded, dict):
+            encoded = {
+                "input_ids": encoded,
+                "attention_mask": torch.ones_like(encoded),
+            }
+        encoded = self._move_to_device(encoded)
+        with torch.inference_mode():
+            logits = self._model(**encoded).logits[:, -1, :]
+        yes_id = self._token_id("yes", "yes_token_id")
+        no_id = self._token_id("no", "no_token_id")
+        return float(torch.sigmoid(logits[:, yes_id] - logits[:, no_id])[0].cpu())
+
+    def _token_id(self, token: str, parameter: str) -> int:
+        """Resolve an optional configured token ID or the tokenizer's final token."""
+        configured = self._definition.parameter(parameter)
+        if isinstance(configured, int):
+            return configured
+        encoded = self._tokenizer(token, add_special_tokens=False)["input_ids"]
+        if not encoded:
+            raise RuntimeError(f"Tokenizer produced no token ID for {token!r}")
+        return int(encoded[-1])
+
+    def _move_to_device(self, encoded: Any) -> Any:
+        """Move tensor fields while preserving the tokenizer's encoded shape."""
+        if hasattr(encoded, "to"):
+            return encoded.to(self._device)
+        if isinstance(encoded, dict):
+            return {
+                key: value.to(self._device) if hasattr(value, "to") else value
+                for key, value in encoded.items()
+            }
+        raise RuntimeError("Tokenizer returned an unsupported encoded input")
+
     def _forward(self, texts: list[str]) -> tuple[Any, Any]:
         """Tokenize and run a bounded forward pass without retaining activations."""
-        import torch  # type: ignore[import-not-found]
+        import torch
 
         tokenizer = self._tokenizer
         encoded = tokenizer(
@@ -390,6 +529,7 @@ class _TransformersModel:
             max_length=int(cast(int, self._definition.parameter("max_length", 256))),
             return_tensors="pt",
         )
+        encoded = self._move_to_device(encoded)
         with torch.inference_mode():
             output = self._model(**encoded)
         return output, encoded["attention_mask"]
@@ -406,7 +546,8 @@ class _TransformersModel:
             pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
         return {
             "data": [
-                {"index": i, "embedding": row.tolist()} for i, row in enumerate(pooled)
+                {"index": i, "embedding": row.detach().cpu().tolist()}
+                for i, row in enumerate(pooled)
             ]
         }
 
@@ -423,7 +564,7 @@ class _TransformersModel:
                 {
                     "index": i,
                     "token_embeddings": [
-                        row.tolist()
+                        row.detach().cpu().tolist()
                         for row, keep in zip(values[i], mask[i], strict=True)
                         if bool(keep)
                     ],
@@ -458,8 +599,8 @@ class _TransformersModel:
                 nonzero = selected.values > 0
                 vectors.append(
                     {
-                        "indices": selected.indices[nonzero].tolist(),
-                        "values": selected.values[nonzero].tolist(),
+                        "indices": selected.indices[nonzero].detach().cpu().tolist(),
+                        "values": selected.values[nonzero].detach().cpu().tolist(),
                     }
                 )
         else:

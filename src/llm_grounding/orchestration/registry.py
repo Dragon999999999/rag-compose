@@ -23,6 +23,7 @@ from llm_grounding.infrastructure.config.models import (
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.llm.aqueduct import AqueductModelClient
+from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.prompts import PromptLibrary, PromptLibraryError
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.ingestion.models import ChunkerConfig, EmbeddingConfig
@@ -47,6 +48,7 @@ from llm_grounding.retrieval.learned_sparse import (
 from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
+from llm_grounding.retrieval.reranking.local_model import LocalModelReranker
 from llm_grounding.retrieval.reranking.protocol import Reranker
 from llm_grounding.retrieval.reranking.top_k import TopKReranker
 from llm_grounding.retrieval.sparse import SparseRetriever
@@ -613,8 +615,22 @@ class ComponentRegistry:
             return defaults.get(implementation, declared)
         return declared
 
-    def build_reranker(self, config: RerankerConfig) -> Reranker:
+    def build_reranker(
+        self,
+        config: RerankerConfig,
+        local_model_manager: "LocalModelManager | None" = None,
+    ) -> Reranker:
         """Construct one reranker from validated settings without loading models."""
+        if config.implementation in {"cross_encoder", "generative"} and config.model_id:
+            if local_model_manager is None:
+                raise ConfigurationError(
+                    f"Reranker {config.model_id!r} requires LocalModelManager"
+                )
+            return LocalModelReranker(
+                config.model_id,
+                local_model_manager,
+                top_k=config.rerank_top_k,
+            )
         try:
             factory = self.rerankers[config.implementation or config.type]
         except KeyError as exc:

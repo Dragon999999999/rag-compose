@@ -19,7 +19,7 @@ def test_model_registry_validates_standard_sources_and_excludes_schema() -> None
     """Canonical model files expose location and nested source/runtime metadata."""
     registry = load_model_registry()
 
-    assert len(registry.list()) == 11
+    assert len(registry.list()) == 15
     embedding = registry.resolve("embedding_001")
     assert embedding.location == "local"
     assert embedding.source is not None
@@ -44,6 +44,20 @@ def test_model_registry_validates_standard_sources_and_excludes_schema() -> None
         "--trust-remote-code"
     )
     assert registry.resolve("reasoning_002").location == "remote"
+    assert {
+        registry.resolve(model_id).name
+        for model_id in (
+            "reranker_bge_v2_m3",
+            "reranker_qwen3_0_6b",
+            "reranker_mxbai_base_v2",
+            "reranker_jina_v2_multilingual",
+        )
+    } == {
+        "BAAI/bge-reranker-v2-m3",
+        "Qwen/Qwen3-Reranker-0.6B",
+        "mixedbread-ai/mxbai-rerank-base-v2",
+        "jinaai/jina-reranker-v2-base-multilingual",
+    }
 
 
 @pytest.mark.asyncio

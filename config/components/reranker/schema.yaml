@@ -6,7 +6,7 @@ allOf:
   - type: object
     properties:
       type: {const: reranker}
-      implementation: {enum: [identity, top_k, cross_encoder]}
+      implementation: {enum: [identity, top_k, cross_encoder, generative]}
       config:
         type: object
         additionalProperties: false

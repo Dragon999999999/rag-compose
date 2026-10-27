@@ -1,0 +1,10 @@
+id: reranker_mxbai_base_v2
+type: reranker
+implementation: cross_encoder
+description: Rerank candidates with Mixedbread Rerank Base v2.
+config:
+  model_id: reranker_mxbai_base_v2
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cuda
+  batch_size: 2

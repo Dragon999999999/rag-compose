@@ -367,7 +367,9 @@ class PipelineRuntimeResolver:
                 "The selected retriever could not be constructed"
             ) from exc
         reasoner = self._registry.build_reasoner(architecture.reasoner)
-        reranker = self._registry.build_reranker(architecture.reranker)
+        reranker = self._registry.build_reranker(
+            architecture.reranker, self._local_model_manager
+        )
         return BasicRagRunner(
             retriever,
             summary,
@@ -378,7 +380,9 @@ class PipelineRuntimeResolver:
             embedding_config=query_embedding,
             reranker=reranker,
             reranker_config=architecture.reranker,
-            reranker_builder=self._registry.build_reranker,
+            reranker_builder=lambda config: self._registry.build_reranker(
+                config, self._local_model_manager
+            ),
             repository=self._repository,
         )
 

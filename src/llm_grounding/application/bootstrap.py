@@ -234,7 +234,7 @@ def create_phase_one_application(
             architecture.retriever, retriever, dependencies
         )
         reasoner = registry.build_reasoner(architecture.reasoner)
-        reranker = registry.build_reranker(architecture.reranker)
+        reranker = registry.build_reranker(architecture.reranker, local_model_manager)
         runner = BasicRagRunner(
             retriever,
             summary,
@@ -246,7 +246,9 @@ def create_phase_one_application(
             ingestion_config.embedding,
             reranker=reranker,
             reranker_config=architecture.reranker,
-            reranker_builder=registry.build_reranker,
+            reranker_builder=lambda config: registry.build_reranker(
+                config, local_model_manager
+            ),
         )
         summaries = DocumentSummaryService(repository, runner)
     max_history = (
