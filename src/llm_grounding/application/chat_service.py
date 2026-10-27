@@ -136,6 +136,14 @@ class ChatService:
         """List chats belonging to a reusable project corpus."""
         return await self._repository.list_chats(project_id)
 
+    async def list_all_chats(self) -> tuple[Chat, ...]:
+        """List all persisted chats for CLI and administrative clients."""
+        return await self._repository.list_all_chats()
+
+    async def get_chat(self, chat_id: str) -> Chat:
+        """Inspect one chat and its persisted pipeline and override state."""
+        return await self._repository.get_chat(chat_id)
+
     async def delete_chat(self, chat_id: str) -> None:
         """Delete one conversation while retaining its project's corpus."""
         await self._repository.delete_chat(chat_id)
@@ -197,6 +205,47 @@ class ChatService:
             )
         except (KeyError, ValueError) as exc:
             raise PipelineSelectionError("chat_not_found", str(exc), 404) from exc
+
+    async def set_stage_override(
+        self, chat_id: str, stage: str, parameter: str, value: object
+    ) -> Chat:
+        """Set one validated chat-level stage override."""
+        chat = await self.get_chat(chat_id)
+        overrides = {
+            name: dict(values) for name, values in chat.stage_overrides.items()
+        }
+        overrides.setdefault(stage, {})[parameter] = value
+        return await self.set_stage_overrides(chat_id, overrides)
+
+    async def remove_stage_override(
+        self, chat_id: str, stage: str, parameter: str
+    ) -> Chat:
+        """Remove one chat-level stage override, retaining other overrides."""
+        chat = await self.get_chat(chat_id)
+        overrides = {
+            name: dict(values) for name, values in chat.stage_overrides.items()
+        }
+        values = overrides.get(stage)
+        if values is not None:
+            values.pop(parameter, None)
+            if not values:
+                overrides.pop(stage, None)
+        return await self.set_stage_overrides(chat_id, overrides)
+
+    async def reset_stage_overrides(
+        self, chat_id: str, stage: str | None = None
+    ) -> Chat:
+        """Reset all overrides or the overrides belonging to one stage."""
+        chat = await self.get_chat(chat_id)
+        if stage is None:
+            overrides: dict[str, dict[str, object]] = {}
+        else:
+            overrides = {
+                name: dict(values)
+                for name, values in chat.stage_overrides.items()
+                if name != stage
+            }
+        return await self.set_stage_overrides(chat_id, overrides)
 
     async def messages(self, chat_id: str) -> tuple[Message, ...]:
         """Load the complete persisted conversation in chronological order."""

@@ -32,7 +32,7 @@ embeddings = ["sentence-transformers>=5,<6"]
 reranking = ["sentence-transformers>=5,<6"]
 
 [project.scripts]
-llm-grounding = "llm_grounding.application.cli:main"
+llm-grounding = "llm_grounding.cli.main:main"
 llm-grounding-api = "llm_grounding.api.main:main"
 
 [build-system]

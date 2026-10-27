@@ -1690,6 +1690,37 @@ class PostgresRepository:
                 for row, answer_at, sent_prompt in rows
             )
 
+    async def list_all_chats(self) -> tuple[Chat, ...]:
+        """List chats across projects using the same activity ordering."""
+        async with self._sessions() as session:
+            last_answer_at = (
+                select(func.max(MessageRow.created_at))
+                .where(
+                    MessageRow.chat_id == ChatRow.id,
+                    MessageRow.role == "assistant",
+                )
+                .scalar_subquery()
+            )
+            has_sent_prompt = _sent_prompt_exists(ChatRow.id)
+            activity_at = func.coalesce(last_answer_at, ChatRow.created_at)
+            rows = (
+                await session.execute(
+                    select(
+                        ChatRow,
+                        last_answer_at.label("last_answer_at"),
+                        has_sent_prompt.label("has_sent_prompt"),
+                    ).order_by(activity_at.desc(), ChatRow.created_at.desc())
+                )
+            ).all()
+            return tuple(
+                self._chat(
+                    row,
+                    last_answer_at=answer_at,
+                    has_sent_prompt=bool(sent_prompt),
+                )
+                for row, answer_at, sent_prompt in rows
+            )
+
     async def add_message(
         self,
         chat_id: str,

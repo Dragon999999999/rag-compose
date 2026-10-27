@@ -90,3 +90,7 @@ name and continue to be generated for every prompt-answer pair.
 The implementation deliberately has no lexical, hybrid, or Qdrant backend yet. Those
 remain extension points behind retrieval/vector protocols after quality and operational
 requirements are defined.
+
+See [`docs/cli.md`](cli.md) for project inspection and ingestion-pipeline selection,
+chat pipeline and override management, pipeline type filtering, and component,
+model, and vector-database discovery.

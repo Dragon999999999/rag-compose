@@ -132,6 +132,7 @@ reuse downloaded weights across restarts. No API key or model server is needed.
 
 Persistent project corpora and the separate ingestion/query workflow are documented
 in [`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md).
+The complete CLI command reference is in [`docs/cli.md`](docs/cli.md).
 
 ## Development checks
 

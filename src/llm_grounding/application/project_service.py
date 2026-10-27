@@ -82,6 +82,31 @@ class ProjectService:
         """Rename a project through the canonical persistence boundary."""
         return await self._repository.rename_project(project_id, name)
 
+    async def get_project(self, project_id: str) -> Project:
+        """Inspect one project and its persisted ingestion selection."""
+        return await self._repository.get_project(project_id)
+
+    async def set_ingestion_pipeline_for_future(
+        self, project_id: str, ingestion_pipeline_id: str
+    ) -> Project:
+        """Select an ingestion pipeline for future documents only.
+
+        Existing document representations and their project associations are not
+        rewritten. This operation intentionally permits a representation change;
+        the selected pipeline is applied when the next document is ingested.
+        """
+        if self._pipeline_service is None:
+            raise ValueError("Pipeline management is unavailable")
+        pipeline = await self._pipeline_service.select_ingestion(ingestion_pipeline_id)
+        await self._pipeline_service.resolve_ingestion(pipeline.id)
+        return await self._repository.set_project_ingestion_pipeline(
+            project_id,
+            pipeline.id,
+            pipeline_version=pipeline.version,
+            pipeline_config_hash=pipeline.config_hash,
+            representation_hash=pipeline.representation_hash,
+        )
+
     async def list_projects(self) -> tuple[Project, ...]:
         """List available project corpora."""
         return await self._repository.list_projects()
