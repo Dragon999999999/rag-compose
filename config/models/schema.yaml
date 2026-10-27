@@ -78,6 +78,18 @@ properties:
       gpu_count: {type: [integer, 'null'], minimum: 1, maximum: 128}
   parameters:
     type: object
+    properties:
+      dimension: {type: integer, minimum: 1, maximum: 16000}
+      dimensions: {type: integer, minimum: 1, maximum: 16000}
+      normalize: {type: boolean}
+      normalization: {type: boolean}
+      batch_size: {type: integer, minimum: 1, maximum: 512}
+      embedding_space_id: {type: string, minLength: 1}
+      representation: {enum: [dense, sparse]}
+      similarity_metric: {enum: [cosine, dot, euclidean]}
+      query_prefix: {type: string}
+      document_prefix: {type: string}
+      trust_remote_code: {type: boolean}
     additionalProperties: true
 allOf:
   - if: {properties: {location: {const: remote}}}

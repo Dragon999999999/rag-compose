@@ -38,6 +38,8 @@ class SentenceTransformersEmbedder:
             "revision": self._config.revision,
             "local_files_only": not allow_download,
         }
+        if self._config.trust_remote_code:
+            kwargs["trust_remote_code"] = True
         if self._config.cache_dir_env is not None:
             cache_dir = os.environ.get(self._config.cache_dir_env, "").strip()
             if cache_dir:
@@ -50,7 +52,12 @@ class SentenceTransformersEmbedder:
     ) -> tuple[EmbeddingVector, ...]:
         """Encode text synchronously and validate the configured dimension."""
         encoder = self._load_model(allow_download=allow_download)
-        method = encoder.encode_query if query else encoder.encode_document  # type: ignore[attr-defined]
+        prefix = self._config.query_prefix if query else self._config.document_prefix
+        if prefix:
+            method = encoder.encode  # type: ignore[attr-defined]
+            texts = [f"{prefix}{text}" for text in texts]
+        else:
+            method = encoder.encode_query if query else encoder.encode_document  # type: ignore[attr-defined]
         vectors = method(
             texts,
             batch_size=self._config.batch_size,

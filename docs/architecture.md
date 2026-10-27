@@ -37,6 +37,9 @@ model `backend`, currently `openai_compatible`, `sentence_transformers`, and
 Credentials are represented only by environment-variable names such as
 `AQUEDUCT_API_KEY` and `AQUEDUCT_API_KEY_FILE`; secret values never belong in
 YAML. Models and local weights are initialized lazily by their existing adapters.
+Local embedding models may declare query and document prefixes in `parameters`;
+the shared provider applies them at both ingestion and query time so the two
+representations remain compatible.
 
 Components have their own stable IDs, implementation `type`, optional `model_id`,
 and operational settings. A component owns settings such as chunk sizes,

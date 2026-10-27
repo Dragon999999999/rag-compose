@@ -321,6 +321,9 @@ class ConfigurationRegistry:
                 normalize=definition.normalize,
                 batch_size=definition.batch_size,
                 cache_dir_env=definition.cache_dir_env,
+                query_prefix=definition.query_prefix,
+                document_prefix=definition.document_prefix,
+                trust_remote_code=definition.trust_remote_code,
             )
         if isinstance(definition, FakeModelDefinition):
             return EmbeddingConfig(

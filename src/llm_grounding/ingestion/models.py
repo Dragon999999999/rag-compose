@@ -62,6 +62,8 @@ class EmbeddingSpecification(BaseModel):
     dimensions: int = Field(ge=1, le=16000)
     normalization: bool = True
     similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
+    query_prefix: str = ""
+    document_prefix: str = ""
 
 
 class EmbeddingConfig(BaseModel):
@@ -102,6 +104,9 @@ class EmbeddingConfig(BaseModel):
     )
     batch_size: int = Field(default=32, ge=1, le=512)
     cache_dir_env: str | None = Field(default=None, min_length=1)
+    query_prefix: str = ""
+    document_prefix: str = ""
+    trust_remote_code: bool = False
     base_url: HttpUrl | None = None
     api_key_env: str = "AQUEDUCT_API_KEY"
     api_key_file_env: str = "AQUEDUCT_API_KEY_FILE"
@@ -153,6 +158,8 @@ class EmbeddingConfig(BaseModel):
             dimensions=self.dimension,
             normalization=self.normalize,
             similarity_metric=self.similarity_metric,
+            query_prefix=self.query_prefix,
+            document_prefix=self.document_prefix,
         )
 
     def vector_identity(self) -> str:

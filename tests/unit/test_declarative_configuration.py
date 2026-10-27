@@ -51,6 +51,23 @@ def test_model_catalog_uses_explicit_stage_tags() -> None:
     assert "cross_encoder_minilm" not in catalog.reasoning_models
 
 
+def test_local_embedding_catalog_preserves_model_specific_contracts() -> None:
+    """Registered local models expose dimensions and retrieval input handling."""
+    catalog = load_model_catalog()
+
+    assert catalog.embedding("embedding_001").dimension == 384
+    assert catalog.embedding("embedding_gemma_300m").dimension == 768
+    gemma = catalog.embedding("embedding_gemma_300m")
+    assert gemma.query_prefix == "task: search result | query: "
+    assert gemma.document_prefix == "title: none | text: "
+    nomic = catalog.embedding("embedding_nomic_v2_moe")
+    assert nomic.dimension == 768
+    assert nomic.query_prefix == "search_query: "
+    assert nomic.document_prefix == "search_document: "
+    assert nomic.trust_remote_code is True
+    assert catalog.embedding("embedding_bge_m3").dimension == 1024
+
+
 def test_duplicate_standalone_ids_are_rejected(tmp_path: Path) -> None:
     """IDs, rather than filenames, are authoritative and must be unique."""
     models = tmp_path / "models"
@@ -101,3 +118,21 @@ def test_default_query_pipeline_resolves_from_component_ids() -> None:
     assert config.query is not None
     assert config.query.reasoner.implementation == "basic_grounded"
     assert config.query.reasoner.model_ref in load_model_catalog().reasoning_models
+
+
+@pytest.mark.parametrize(
+    ("component_id", "model_id"),
+    (
+        ("embedding_local_minilm", "embedding_001"),
+        ("embedding_local_gemma", "embedding_gemma_300m"),
+        ("embedding_local_nomic_v2", "embedding_nomic_v2_moe"),
+        ("embedding_local_bge_m3", "embedding_bge_m3"),
+    ),
+)
+def test_embedding_components_select_each_registered_local_model(
+    component_id: str, model_id: str
+) -> None:
+    """Each local embedding component resolves to its standalone model ID."""
+    registry = load_configuration_registry()
+
+    assert registry.component("embedding", component_id).model_id == model_id

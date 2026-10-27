@@ -19,13 +19,30 @@ def test_model_registry_validates_standard_sources_and_excludes_schema() -> None
     """Canonical model files expose location and nested source/runtime metadata."""
     registry = load_model_registry()
 
-    assert len(registry.list()) == 6
+    assert len(registry.list()) == 9
     embedding = registry.resolve("embedding_001")
     assert embedding.location == "local"
     assert embedding.source is not None
     assert embedding.source.type == "huggingface"
     assert embedding.runtime is not None
     assert embedding.runtime.type == "docker"
+    assert {
+        registry.resolve(model_id).name
+        for model_id in (
+            "embedding_001",
+            "embedding_gemma_300m",
+            "embedding_nomic_v2_moe",
+            "embedding_bge_m3",
+        )
+    } == {
+        "sentence-transformers/all-MiniLM-L6-v2",
+        "google/embeddinggemma-300m",
+        "nomic-ai/nomic-embed-text-v2-moe",
+        "BAAI/bge-m3",
+    }
+    assert registry.resolve("embedding_nomic_v2_moe").runtime.command[-1] == (
+        "--trust-remote-code"
+    )
     assert registry.resolve("reasoning_002").location == "remote"
 
 

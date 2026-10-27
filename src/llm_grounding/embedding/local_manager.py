@@ -40,19 +40,22 @@ class ManagedLocalEmbedder:
 
     async def embed_documents(self, texts: list[str]) -> tuple[EmbeddingVector, ...]:
         """Acquire the local runtime for one document batch."""
-        return await self._embed(texts)
+        return await self._embed(texts, query=False)
 
     async def embed_query(self, text: str) -> EmbeddingVector:
         """Acquire the local runtime for one query and preserve its vector space."""
-        return (await self._embed([text]))[0]
+        return (await self._embed([text], query=True))[0]
 
-    async def _embed(self, texts: list[str]) -> tuple[EmbeddingVector, ...]:
+    async def _embed(
+        self, texts: list[str], *, query: bool
+    ) -> tuple[EmbeddingVector, ...]:
         """Translate a local server response into the shared embedding contract."""
         if not texts:
             return ()
         assert self._config.model_id is not None
+        prefix = self._config.query_prefix if query else self._config.document_prefix
         async with self._manager.acquire(self._config.model_id) as model:
-            values = await model.embed(texts)
+            values = await model.embed([f"{prefix}{text}" for text in texts])
         if len(values) != len(texts):
             raise RuntimeError(
                 "Local embedding server returned an unexpected vector count"

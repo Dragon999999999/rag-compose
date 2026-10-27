@@ -36,3 +36,12 @@ management.
 To register a new model, add one YAML file with the standard structure and point a
 component or pipeline at its stable ID. Do not commit downloaded weights or put
 credential values in YAML.
+
+The shipped local embedding definitions include MiniLM-L6-v2 (384 dimensions),
+EmbeddingGemma (768), Nomic Embed v2 MoE (768), and BGE-M3 (1024). They use the
+same CPU-oriented text-embeddings-inference runtime and persistent storage path.
+EmbeddingGemma and Nomic declare their required query/document prefixes in model
+parameters; the shared embedder applies those prefixes consistently for indexing
+and query retrieval. BGE-M3 is currently configured for its dense representation;
+the vector contract leaves sparse and multi-vector extensions outside the current
+single-vector index boundary.

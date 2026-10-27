@@ -1,17 +1,45 @@
 """Tests for provider construction and request-scoped embedding selection."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from llm_grounding.domain.corpus import CorpusRequest, EvidenceReference, RetrievalUnit
 from llm_grounding.embedding.factory import build_embedder
+from llm_grounding.embedding.local_manager import ManagedLocalEmbedder
 from llm_grounding.embedding.models import EmbeddingVector
 from llm_grounding.embedding.openai_compatible import OpenAICompatibleEmbedder
+from llm_grounding.infrastructure.config.loader import load_model_catalog
 from llm_grounding.infrastructure.vector.memory import InMemoryVectorStore
 from llm_grounding.ingestion.models import EmbeddingConfig
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.retrieval.vector import VectorRetriever
+
+
+class _FakeLocalLease:
+    """Record texts passed to a local inference lease."""
+
+    def __init__(self, values: tuple[float, ...]) -> None:
+        self.values = values
+        self.calls: list[list[str]] = []
+
+    async def embed(self, texts: list[str]) -> tuple[tuple[float, ...], ...]:
+        """Return one fixed-size vector per requested input."""
+        self.calls.append(texts)
+        return tuple(self.values for _ in texts)
+
+
+class _FakeLocalManager:
+    """Provide a context-managed local lease without Docker or network access."""
+
+    def __init__(self, lease: _FakeLocalLease) -> None:
+        self.lease = lease
+
+    @asynccontextmanager
+    async def acquire(self, _model_id: str):
+        """Yield the fake lease used by the managed adapter."""
+        yield self.lease
 
 
 def test_fake_factory_uses_persisted_embedding_identity() -> None:
@@ -21,6 +49,56 @@ def test_fake_factory_uses_persisted_embedding_identity() -> None:
     embedder = build_embedder(config)
 
     assert embedder.model_identity == config.identity()
+
+
+async def test_managed_local_embedder_applies_document_and_query_prefixes() -> None:
+    """Managed Docker-backed embeddings use distinct retrieval input prefixes."""
+    config = EmbeddingConfig(
+        model_id="embedding_nomic_v2_moe",
+        model="nomic-ai/nomic-embed-text-v2-moe",
+        dimension=3,
+        query_prefix="search_query: ",
+        document_prefix="search_document: ",
+    )
+    lease = _FakeLocalLease((1.0, 0.0, 0.0))
+    embedder = ManagedLocalEmbedder(config, _FakeLocalManager(lease))
+
+    await embedder.embed_documents(["document text"])
+    await embedder.embed_query("question text")
+
+    assert lease.calls == [
+        ["search_document: document text"],
+        ["search_query: question text"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    (
+        "embedding_001",
+        "embedding_gemma_300m",
+        "embedding_nomic_v2_moe",
+        "embedding_bge_m3",
+    ),
+)
+async def test_registered_local_models_produce_contract_sized_vectors(
+    model_id: str,
+) -> None:
+    """Every registered local model reaches the managed embedding contract."""
+    config = load_model_catalog().embedding(model_id)
+    lease = _FakeLocalLease(tuple(0.0 for _ in range(config.dimension)))
+    embedder = build_embedder(config, _FakeLocalManager(lease))
+
+    document_vectors = await embedder.embed_documents(["document"])
+    query_vector = await embedder.embed_query("question")
+
+    assert len(document_vectors) == 1
+    assert document_vectors[0].dimension == config.dimension
+    assert query_vector.dimension == config.dimension
+    assert lease.calls == [
+        [f"{config.document_prefix}document"],
+        [f"{config.query_prefix}question"],
+    ]
 
 
 async def test_runner_uses_request_embedding_override() -> None:

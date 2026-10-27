@@ -19,6 +19,7 @@ class _FakeSentenceTransformer:
         """Initialize call counters."""
         self.query_calls = 0
         self.document_calls = 0
+        self.encode_calls: list[list[str]] = []
 
     def encode_query(self, texts: list[str], **kwargs: object) -> list[list[float]]:
         """Return one correctly sized vector per query."""
@@ -28,6 +29,11 @@ class _FakeSentenceTransformer:
     def encode_document(self, texts: list[str], **kwargs: object) -> list[list[float]]:
         """Return one correctly sized vector per document."""
         self.document_calls += 1
+        return [[0.0] * 384 for _ in texts]
+
+    def encode(self, texts: list[str], **kwargs: object) -> list[list[float]]:
+        """Return vectors for explicitly prefixed inputs."""
+        self.encode_calls.append(texts)
         return [[0.0] * 384 for _ in texts]
 
 
@@ -94,3 +100,30 @@ async def test_document_loading_can_populate_empty_model_cache(
     assert "token" not in constructor_calls[0]
     assert model.document_calls == 1
     assert model.query_calls == 0
+
+
+async def test_explicit_prefixes_are_applied_before_generic_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Models without provider prompt metadata can declare retrieval prefixes."""
+    model, _ = _install_fake_package(monkeypatch)
+    embedder = SentenceTransformersEmbedder(
+        EmbeddingConfig(
+            query_prefix="task: search result | query: ",
+            document_prefix="title: none | text: ",
+        )
+    )
+    run_sync = AsyncMock(
+        side_effect=lambda function, *args, **kwargs: function(*args, **kwargs)
+    )
+    monkeypatch.setattr(
+        "llm_grounding.embedding.sentence_transformers.asyncio.to_thread", run_sync
+    )
+
+    await embedder.embed_documents(["document"])
+    await embedder.embed_query("question")
+
+    assert model.encode_calls == [
+        ["title: none | text: document"],
+        ["task: search result | query: question"],
+    ]

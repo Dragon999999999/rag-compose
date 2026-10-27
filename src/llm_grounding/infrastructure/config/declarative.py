@@ -294,6 +294,23 @@ class SentenceTransformersModelDefinition(ModelDefinitionBase):
         return value if isinstance(value, str) else None
 
     @property
+    def query_prefix(self) -> str:
+        """Return text prepended to query inputs before local inference."""
+        value = self.parameter("query_prefix", "")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def document_prefix(self) -> str:
+        """Return text prepended to document inputs before local inference."""
+        value = self.parameter("document_prefix", "")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def trust_remote_code(self) -> bool:
+        """Return whether the local runtime must load model-provided code."""
+        return bool(self.parameter("trust_remote_code", False))
+
+    @property
     def embedding_space_id(self) -> str | None:
         """Return the optional provider-independent embedding-space ID."""
         value = self.parameter("embedding_space_id")
