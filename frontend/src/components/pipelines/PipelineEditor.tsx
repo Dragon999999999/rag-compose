@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiRequestError } from "../../api/client";
 import type {
   CatalogStage,
+  AlternativeAcceptance,
   ExecutionStrategy,
   JsonSchema,
   ModelCatalog,
+  PipelineAlternative,
   Pipeline,
   PipelineCatalog,
   PipelineConfig,
@@ -65,6 +67,7 @@ type GraphNodeLayout = {
   x: number;
   y: number;
   shared: boolean;
+  reused: boolean;
   branchId?: string;
 };
 type GraphEdgeLayout = { from: string; to: string };
@@ -117,6 +120,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
   const mutations = usePipelineMutations();
   const [draft, setDraft] = useState<PipelineConfig | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageKey>("parser");
+  const [selectedAlternativeId, setSelectedAlternativeId] = useState("alternative-1");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [version, setVersion] = useState("1");
@@ -151,6 +155,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate(templateKey);
     setSelectedStage(stagesForKind(initial.kind)[0].key);
+    setSelectedAlternativeId("alternative-1");
   }, [isNew, loadedTemplate, pipelineKind, template, templateKey]);
 
   useEffect(() => {
@@ -164,6 +169,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate("blank");
     setSelectedStage(stagesForKind(initial.kind)[0].key);
+    setSelectedAlternativeId("alternative-1");
   }, [isNew, loadedTemplate, pipelineKind, templateKey]);
 
   const dirty = useMemo(() => {
@@ -203,7 +209,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
   );
   const selectedDefinition =
     visibleStages.find((stage) => stage.key === selectedStage) ?? visibleStages[0];
-  const selectedValue = draft ? readStage(draft, selectedDefinition) : undefined;
+  const selectedValue = draft ? readStage(draft, selectedDefinition, pipelineKind === "query" ? selectedAlternativeId : undefined) : undefined;
   const representationChanged = Boolean(
       draft &&
       savedSnapshot &&
@@ -407,11 +413,28 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
       <div className="pipeline-editor-layout">
         <section className="pipeline-graph" aria-label="Pipeline graph">
           {pipelineKind !== "query" && <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
-          {pipelineKind !== "ingestion" && <BranchingGraph
+          {pipelineKind !== "ingestion" && <AlternativesGraph
             config={draft}
-            onAddBranch={(stage, branchId) => setDraft((current) => current ? addQueryBranch(current, stage, branchId) : current)}
-            onRemoveBranch={(branchId) => setDraft((current) => current ? removeQueryBranch(current, branchId) : current)}
-            onSelect={setSelectedStage}
+            onAddAlternative={(alternativeId) => {
+              setDraft((current) => {
+                if (!current) return current;
+                const next = addQueryAlternative(current, alternativeId);
+                const alternatives = readQueryAlternatives(next);
+                setSelectedAlternativeId(alternatives[alternatives.length - 1]?.id ?? "alternative-1");
+                return next;
+              });
+            }}
+            onDuplicateAlternative={(alternativeId) => setDraft((current) => current ? duplicateQueryAlternative(current, alternativeId) : current)}
+            onAddBranch={(alternativeId, stage, branchId) => setDraft((current) => current ? addQueryBranch(current, stage, branchId, alternativeId) : current)}
+            onMoveAlternative={(alternativeId, direction) => setDraft((current) => current ? moveQueryAlternative(current, alternativeId, direction) : current)}
+            onRemoveAlternative={(alternativeId) => setDraft((current) => current ? removeQueryAlternative(current, alternativeId) : current)}
+            onChangeAcceptance={(alternativeId, acceptance) => setDraft((current) => current ? updateAlternativeAcceptance(current, alternativeId, acceptance) : current)}
+            onRemoveBranch={(alternativeId, branchId) => setDraft((current) => current ? removeQueryBranch(current, branchId, alternativeId) : current)}
+            onSelect={(stage, alternativeId) => {
+              setSelectedStage(stage);
+              setSelectedAlternativeId(alternativeId);
+            }}
+            onSelectRestart={(alternativeId, stage, pathId) => setDraft((current) => current ? updateAlternativeSource(current, alternativeId, stage, pathId) : current)}
             selected={selectedStage}
           />}
           {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
@@ -420,10 +443,10 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
           catalog={catalog.data}
           definition={selectedDefinition}
           models={models.data}
-          onChange={(value) => setDraft((current) => current ? updateStage(current, selectedDefinition, value) : current)}
-          onAddAssessor={() => setDraft((current) => current ? updateAssessors(current, [...readAssessors(current), defaultStageValue(stageByKey(QUERY_STAGES, "assessors"), catalog.data, models.data)]) : current)}
-          onRemoveAssessor={(index) => setDraft((current) => current ? updateAssessors(current, readAssessors(current).filter((_, itemIndex) => itemIndex !== index)) : current)}
-          onChangeAssessor={(index, value) => setDraft((current) => current ? updateAssessors(current, readAssessors(current).map((item, itemIndex) => itemIndex === index ? value : item)) : current)}
+          onChange={(value) => setDraft((current) => current ? updateStage(current, selectedDefinition, value, selectedAlternativeId) : current)}
+          onAddAssessor={() => setDraft((current) => current ? updateAssessors(current, [...readAssessors(current, selectedAlternativeId), defaultStageValue(stageByKey(QUERY_STAGES, "assessors"), catalog.data, models.data)], selectedAlternativeId) : current)}
+          onRemoveAssessor={(index) => setDraft((current) => current ? updateAssessors(current, readAssessors(current, selectedAlternativeId).filter((_, itemIndex) => itemIndex !== index), selectedAlternativeId) : current)}
+          onChangeAssessor={(index, value) => setDraft((current) => current ? updateAssessors(current, readAssessors(current, selectedAlternativeId).map((item, itemIndex) => itemIndex === index ? value : item), selectedAlternativeId) : current)}
           value={selectedValue}
         />
       </div>
@@ -512,20 +535,108 @@ function GraphSection({ label, stages, selected, config, onSelect }: { label: st
   );
 }
 
+function AlternativesGraph({
+  config,
+  selected,
+  onSelect,
+  onSelectRestart,
+  onAddBranch,
+  onRemoveBranch,
+  onAddAlternative,
+  onDuplicateAlternative,
+  onMoveAlternative,
+  onRemoveAlternative,
+  onChangeAcceptance,
+}: {
+  config: PipelineConfig;
+  selected: StageKey;
+  onSelect: (stage: StageKey, alternativeId: string) => void;
+  onSelectRestart: (alternativeId: string, stage: BranchStart, pathId: string) => void;
+  onAddBranch: (alternativeId: string, stage: BranchStart, branchId?: string) => void;
+  onRemoveBranch: (alternativeId: string, branchId: string) => void;
+  onAddAlternative: (alternativeId: string) => void;
+  onDuplicateAlternative: (alternativeId: string) => void;
+  onMoveAlternative: (alternativeId: string, direction: -1 | 1) => void;
+  onRemoveAlternative: (alternativeId: string) => void;
+  onChangeAcceptance: (alternativeId: string, acceptance: Partial<AlternativeAcceptance>) => void;
+}) {
+  const alternatives = readQueryAlternatives(config);
+  const latestAlternative = alternatives[alternatives.length - 1];
+  const alternativeRefs = useRef<Record<string, HTMLElement | null>>({});
+  useEffect(() => {
+    if (alternatives.length <= 1 || !latestAlternative) return;
+    alternativeRefs.current[latestAlternative.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [alternatives.length, latestAlternative?.id]);
+  return (
+    <section className="alternatives-graph" aria-label="Query pipeline alternatives">
+      {alternatives.map((alternative, index) => (
+        <section className="alternative-section" key={alternative.id} ref={(element) => { alternativeRefs.current[alternative.id] = element; }}>
+          <header className="alternative-header">
+            <div>
+              <span className="alternative-kicker">Alternative {index + 1}</span>
+              <h2>{alternative.id === "alternative-1" ? "Primary pipeline" : alternative.id}</h2>
+              {alternative.source && <p>Retries from {alternative.source.alternative_id} / {alternative.source.path_id} at {humanize(alternative.source.restart_stage)}.</p>}
+            </div>
+            {index > 0 && <div className="alternative-actions">
+              <button onClick={() => onDuplicateAlternative(alternative.id)} type="button">Duplicate</button>
+              <button disabled={index <= 1} onClick={() => onMoveAlternative(alternative.id, -1)} type="button">↑</button>
+              <button disabled={index === alternatives.length - 1} onClick={() => onMoveAlternative(alternative.id, 1)} type="button">↓</button>
+              <button className="alternative-delete" disabled={alternatives.some((item) => item.source?.alternative_id === alternative.id)} onClick={() => onRemoveAlternative(alternative.id)} type="button">Delete</button>
+            </div>}
+          </header>
+          {alternative.source && <div className="alternative-restart-picker">
+            <span>Select the restart stage. Ghosted stages reuse the selected source path.</span>
+            <select aria-label={`Source path for ${alternative.id}`} value={alternative.source.path_id} onChange={(event) => onSelectRestart(alternative.id, alternative.source!.restart_stage, event.target.value)}>
+              {sourcePathOptions(config, alternative).map((pathId) => <option key={pathId} value={pathId}>{pathId}</option>)}
+            </select>
+          </div>}
+          <div className="alternative-acceptance">
+            <label>Accept when<select value={alternative.acceptance?.strategy ?? "decision_policy"} onChange={(event) => onChangeAcceptance(alternative.id, { strategy: event.target.value as AlternativeAcceptance["strategy"] })}>
+              <option value="decision_policy">Decision policy succeeds</option>
+              <option value="always_accept">Always accept</option>
+              <option value="evidence_sufficiency">Evidence is sufficient</option>
+              <option value="minimum_score">Minimum assessment score</option>
+              <option value="validation_success">Validation succeeds</option>
+            </select></label>
+            {alternative.acceptance?.strategy === "minimum_score" && <label>Threshold<input max="1" min="0" step="0.01" type="number" value={alternative.acceptance.threshold ?? 0.5} onChange={(event) => onChangeAcceptance(alternative.id, { threshold: Number(event.target.value) })} /></label>}
+          </div>
+          <BranchingGraph
+            alternative={alternative}
+            alternativeId={alternative.id}
+            config={config}
+            onAddBranch={(stage, branchId) => onAddBranch(alternative.id, stage, branchId)}
+            onRemoveBranch={(branchId) => onRemoveBranch(alternative.id, branchId)}
+            onSelect={(stage) => onSelect(stage, alternative.id)}
+            onSelectRestart={(stage) => onSelectRestart(alternative.id, stage, alternative.source?.path_id ?? "primary")}
+            selected={selected}
+          />
+          {latestAlternative?.id === alternative.id && <button className="add-alternative-button" onClick={() => onAddAlternative(alternative.id)} type="button"><span>＋</span> Add Alternative</button>}
+        </section>
+      ))}
+    </section>
+  );
+}
+
 function BranchingGraph({
+  alternative,
+  alternativeId,
   config,
   selected,
   onSelect,
   onAddBranch,
   onRemoveBranch,
+  onSelectRestart,
 }: {
   config: PipelineConfig;
+  alternative?: PipelineAlternative;
+  alternativeId?: string;
   selected: StageKey;
   onSelect: (stage: StageKey) => void;
+  onSelectRestart?: (stage: BranchStart) => void;
   onAddBranch: (stage: BranchStart, branchId?: string) => void;
   onRemoveBranch: (branchId: string) => void;
 }) {
-  const layout = useMemo(() => buildBranchGraphLayout(config), [config]);
+  const layout = useMemo(() => buildBranchGraphLayout(config, alternative), [alternative, config]);
   return (
     <section className="graph-section branching-graph-section">
       <div className="graph-section-heading">
@@ -533,7 +644,7 @@ function BranchingGraph({
           <h2>Query processing</h2>
           <p>Branch retrieval, reranking, or assessment while keeping shared stages centered.</p>
         </div>
-        {readExecutionStrategy(config) === "branching" && <span className="graph-status">{layout.branches.length} branches</span>}
+        {layout.branches.length > 1 && <span className="graph-status">{layout.branches.length} branches</span>}
       </div>
       <div className="graph-canvas-scroll">
         <div className="graph-canvas" style={{ height: layout.height, minWidth: layout.width }}>
@@ -557,18 +668,20 @@ function BranchingGraph({
             </div>
           ))}
           {layout.nodes.map((node) => {
-            const configured = Boolean(readStage(config, node.definition));
+            const configured = Boolean(readStage(config, node.definition, alternativeId));
             const branch = node.branchId ? layout.branches.find((item) => item.id === node.branchId) : undefined;
-            const caption = node.shared ? "Shared" : branch?.label;
+            const caption = node.reused ? "Reused output" : node.shared ? "Shared" : branch?.label;
             const branchStart = stageToBranchStart(node.definition.key);
+            const selectRestart = Boolean(alternative?.source && branchStart && onSelectRestart);
             return (
-              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"}`} key={node.key} style={{ left: node.x, top: node.y }}>
+              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"} ${node.reused ? "reused-node" : ""}`} key={node.key} style={{ left: node.x, top: node.y }}>
                 <StageNode
                   caption={caption}
                   configured={configured}
                   definition={node.definition}
+                  reused={node.reused}
                   selected={selected === node.definition.key}
-                  onSelect={() => onSelect(node.definition.key)}
+                  onSelect={() => selectRestart && branchStart ? onSelectRestart?.(branchStart) : onSelect(node.definition.key)}
                 />
                 {branchStart && <button aria-label={`Add branch after ${node.definition.label}`} className="graph-add-branch" onClick={() => onAddBranch(branchStart, node.branchId)} title={`Add branch at ${node.definition.label}`} type="button">+</button>}
               </div>
@@ -581,14 +694,172 @@ function BranchingGraph({
   );
 }
 
-function StageNode({ definition, selected, configured, caption, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; onSelect: () => void }) {
-  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
+function StageNode({ definition, selected, configured, caption, reused, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; reused?: boolean; onSelect: () => void }) {
+  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"} ${reused ? "reused" : ""}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
+}
+
+function readQueryAlternatives(config: PipelineConfig): PipelineAlternative[] {
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  if (Array.isArray(execution.alternatives) && execution.alternatives.length > 0) {
+    return execution.alternatives.map((alternative, index) => normalizeAlternative(alternative, index));
+  }
+  const legacyBranches = readLegacyBranches(config);
+  return [{
+    id: "alternative-1",
+    source: null,
+    branches: readExecutionStrategy(config) === "branching" ? legacyBranches : [],
+    stage_overrides: {},
+    decision_policy: null,
+    acceptance: { strategy: "decision_policy" },
+  }];
+}
+
+function normalizeAlternative(value: unknown, index: number): PipelineAlternative {
+  const alternative = isRecord(value) ? value : {};
+  const branches = Array.isArray(alternative.branches)
+    ? alternative.branches.filter(isRecord).map((branch, branchIndex) => normalizeBranch(branch, branchIndex))
+    : [];
+  const source: PipelineAlternative["source"] = isRecord(alternative.source) && typeof alternative.source.alternative_id === "string" && typeof alternative.source.path_id === "string"
+    ? {
+      alternative_id: alternative.source.alternative_id,
+      path_id: alternative.source.path_id,
+      restart_stage: (alternative.source.restart_stage === "reranker" || alternative.source.restart_stage === "assessor" ? alternative.source.restart_stage : "retriever") as BranchStart,
+    }
+    : null;
+  return {
+    id: typeof alternative.id === "string" && alternative.id.trim() ? alternative.id : `alternative-${index + 1}`,
+    source,
+    branches,
+    stage_overrides: isRecord(alternative.stage_overrides) ? alternative.stage_overrides : {},
+    decision_policy: isRecord(alternative.decision_policy) ? alternative.decision_policy : null,
+    acceptance: isRecord(alternative.acceptance) && typeof alternative.acceptance.strategy === "string"
+      ? { strategy: alternative.acceptance.strategy as AlternativeAcceptance["strategy"], threshold: typeof alternative.acceptance.threshold === "number" ? alternative.acceptance.threshold : null, dimension: typeof alternative.acceptance.dimension === "string" ? alternative.acceptance.dimension : null }
+      : { strategy: "decision_policy" },
+  };
+}
+
+function readLegacyBranches(config: PipelineConfig): QueryBranch[] {
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  return Array.isArray(execution.branches)
+    ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index))
+    : [];
+}
+
+function sourcePathOptions(config: PipelineConfig, alternative: PipelineAlternative): string[] {
+  if (!alternative.source) return ["primary"];
+  const parent = readQueryAlternatives(config).find((item) => item.id === alternative.source?.alternative_id);
+  const paths = parent?.branches?.map((branch) => branch.id) ?? [];
+  return paths.length > 0 ? [...new Set([...paths, alternative.source.path_id])] : ["primary"];
+}
+
+function writeQueryAlternatives(config: PipelineConfig, alternatives: PipelineAlternative[]): PipelineConfig {
+  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  return {
+    ...config,
+    query: {
+      ...(config.query ?? {}),
+      execution: {
+        ...execution,
+        strategy: "linear",
+        alternatives,
+        max_attempts: Math.max(typeof execution.max_attempts === "number" ? execution.max_attempts : 1, alternatives.length),
+      },
+    },
+  };
+}
+
+/** Add a new ordered alternative whose restart stage is selected in the editor. */
+export function addQueryAlternative(config: PipelineConfig, parentId?: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const parent = alternatives.find((alternative) => alternative.id === parentId) ?? alternatives[alternatives.length - 1];
+  if (!parent) return config;
+  const id = nextAlternativeId(alternatives);
+  const pathId = parent.branches && parent.branches.length > 0 ? parent.branches[0].id : "primary";
+  return writeQueryAlternatives(config, [...alternatives, {
+    id,
+    source: { alternative_id: parent.id, path_id: pathId, restart_stage: "assessor" },
+    branches: [{ id: "primary", start_at: "assessor" }],
+    stage_overrides: {},
+    decision_policy: null,
+    acceptance: { strategy: "decision_policy" },
+  }]);
+}
+
+export function updateAlternativeSource(config: PipelineConfig, alternativeId: string, restartStage: BranchStart, pathId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config).map((alternative) => {
+    if (alternative.id !== alternativeId || !alternative.source) return alternative;
+    return {
+      ...alternative,
+      source: { ...alternative.source, restart_stage: restartStage, path_id: pathId },
+      branches: (alternative.branches ?? []).map((branch) => ({ ...branch, start_at: restartStage })),
+    };
+  });
+  return writeQueryAlternatives(config, alternatives);
+}
+
+export function updateAlternativeAcceptance(
+  config: PipelineConfig,
+  alternativeId: string,
+  acceptance: Partial<AlternativeAcceptance>,
+): PipelineConfig {
+  const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
+    ? { ...alternative, acceptance: { ...(alternative.acceptance ?? { strategy: "decision_policy" }), ...acceptance } }
+    : alternative);
+  return writeQueryAlternatives(config, alternatives);
+}
+
+export function removeQueryAlternative(config: PipelineConfig, alternativeId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  if (alternativeId === alternatives[0]?.id || alternatives.some((alternative) => alternative.source?.alternative_id === alternativeId)) return config;
+  return writeQueryAlternatives(config, alternatives.filter((alternative) => alternative.id !== alternativeId));
+}
+
+export function duplicateQueryAlternative(config: PipelineConfig, alternativeId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const index = alternatives.findIndex((alternative) => alternative.id === alternativeId);
+  if (index <= 0) return config;
+  const source = alternatives[index];
+  const duplicateId = nextAlternativeId(alternatives);
+  const duplicate: PipelineAlternative = {
+    ...source,
+    id: duplicateId,
+    source: source.source ? { ...source.source } : null,
+    branches: source.branches?.map((branch) => ({ ...branch })),
+    stage_overrides: source.stage_overrides ? { ...source.stage_overrides } : {},
+    acceptance: source.acceptance ? { ...source.acceptance } : { strategy: "decision_policy" },
+  };
+  return writeQueryAlternatives(config, [...alternatives.slice(0, index + 1), duplicate, ...alternatives.slice(index + 1)]);
+}
+
+export function moveQueryAlternative(config: PipelineConfig, alternativeId: string, direction: -1 | 1): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const index = alternatives.findIndex((alternative) => alternative.id === alternativeId);
+  const nextIndex = index + direction;
+  if (index <= 0 || nextIndex <= 0 || nextIndex >= alternatives.length) return config;
+  const reordered = [...alternatives];
+  [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+  return isAlternativeOrderingValid(reordered) ? writeQueryAlternatives(config, reordered) : config;
+}
+
+function isAlternativeOrderingValid(alternatives: PipelineAlternative[]): boolean {
+  return alternatives.every((alternative, index) => {
+    if (!alternative.source) return index === 0;
+    const sourceIndex = alternatives.findIndex((item) => item.id === alternative.source?.alternative_id);
+    return sourceIndex >= 0 && sourceIndex < index;
+  });
+}
+
+function nextAlternativeId(alternatives: PipelineAlternative[]): string {
+  const used = new Set(alternatives.map((alternative) => alternative.id));
+  let index = alternatives.length + 1;
+  while (used.has(`alternative-${index}`)) index += 1;
+  return `alternative-${index}`;
 }
 
 /** Build a centered, column-based DAG layout for query branches. */
-export function buildBranchGraphLayout(config: PipelineConfig): BranchGraphLayout {
-  const branching = readExecutionStrategy(config) === "branching";
-  const branches = queryBranches(config, branching);
+export function buildBranchGraphLayout(config: PipelineConfig, alternative?: PipelineAlternative): BranchGraphLayout {
+  const branching = alternative ? Boolean(alternative.branches?.length) : readExecutionStrategy(config) === "branching";
+  const branches = queryBranches(config, branching, alternative);
   const rowCenters = branches.map((_, index) => GRAPH_TOP_PADDING + GRAPH_NODE_HEIGHT / 2 + index * GRAPH_ROW_GAP);
   const stageColumns = QUERY_STAGES.map((stage, index) => ({ stage, index }));
   const nodeMap = new Map<string, GraphNodeLayout>();
@@ -596,6 +867,9 @@ export function buildBranchGraphLayout(config: PipelineConfig): BranchGraphLayou
   const columnStep = GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP;
   const xFor = (index: number): number => 22 + index * columnStep;
   const stageIndex = (stage: StageKey): number => QUERY_STAGES.findIndex((item) => item.key === stage);
+  const reusedBefore = (stage: StageDefinition): boolean => Boolean(
+    alternative?.source && stageIndex(stage.key) < stageIndex(branchStartToStage(alternative.source.restart_stage)),
+  );
   const sharedY = (index: number): number => {
     const descendants = branches.flatMap((branch, branchIndex) => {
       const startIndex = branching ? stageIndex(branchStartToStage(branch.start_at)) : 0;
@@ -623,6 +897,7 @@ export function buildBranchGraphLayout(config: PipelineConfig): BranchGraphLayou
       x: xFor(stageColumns.find((item) => item.stage.key === stage.key)?.index ?? 0),
       y: (identity.shared ? sharedY(stageIndex(stage.key)) : rowCenters[branches.findIndex((item) => item.id === branch.id)]) - GRAPH_NODE_HEIGHT / 2,
       shared: identity.shared,
+      reused: reusedBefore(stage),
       branchId: identity.shared ? undefined : branch.id,
     };
     nodeMap.set(node.key, node);
@@ -659,7 +934,11 @@ export function buildBranchGraphLayout(config: PipelineConfig): BranchGraphLayou
   };
 }
 
-function queryBranches(config: PipelineConfig, branching: boolean): QueryBranch[] {
+function queryBranches(config: PipelineConfig, branching: boolean, alternative?: PipelineAlternative): QueryBranch[] {
+  if (alternative) {
+    const branches = (alternative.branches ?? []).map((branch, index) => normalizeBranch(branch as Record<string, unknown>, index));
+    return branches.length > 0 ? branches : [{ id: "primary", start_at: "retriever" }];
+  }
   if (!branching) return [{ id: "pipeline", start_at: "retriever" }];
   const execution = isRecord(config.query?.execution) ? config.query.execution : {};
   const branches = Array.isArray(execution.branches)
@@ -693,8 +972,21 @@ function average(values: number[]): number {
 }
 
 /** Add a branch at a supported stage while retaining the existing config shape. */
-export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, afterBranchId?: string): PipelineConfig {
+export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, afterBranchId?: string, alternativeId?: string): PipelineConfig {
   const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  if (alternativeId || Array.isArray(execution.alternatives)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+    const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? "alternative-1"));
+    if (!target) return config;
+    const existing = target.branches ?? [];
+    const branchId = nextBranchId(existing.map((branch) => normalizeBranch(branch as Record<string, unknown>, 0)));
+    const newBranch = { id: branchId, start_at: startAt };
+    const insertionIndex = afterBranchId ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1) : existing.length;
+    target.branches = existing.length < 2
+      ? [{ ...(existing[0] ?? { id: "branch-1" }), start_at: startAt }, newBranch]
+      : [...existing.slice(0, insertionIndex), newBranch, ...existing.slice(insertionIndex)];
+    return writeQueryAlternatives(config, alternatives);
+  }
   const existing = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)) : [];
   const branchId = nextBranchId(existing.length < 2 ? [...existing, { id: "branch-1", start_at: startAt }] : existing);
   const newBranch: QueryBranch = { id: branchId, start_at: startAt };
@@ -714,8 +1006,15 @@ export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, aft
 }
 
 /** Remove a branch; a single remaining branch falls back to linear execution. */
-export function removeQueryBranch(config: PipelineConfig, branchId: string): PipelineConfig {
+export function removeQueryBranch(config: PipelineConfig, branchId: string, alternativeId?: string): PipelineConfig {
   const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  if (alternativeId || Array.isArray(execution.alternatives)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+    const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? "alternative-1"));
+    if (!target) return config;
+    target.branches = (target.branches ?? []).filter((branch) => branch.id !== branchId);
+    return writeQueryAlternatives(config, alternatives);
+  }
   const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)).filter((branch) => branch.id !== branchId) : [];
   if (branches.length === 0) return config;
   return {
@@ -765,7 +1064,7 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
 function SchemaFields({ stage, value, models, stageKey, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; onChange: (value: Record<string, unknown>) => void }) {
   const properties = stage.schema.properties ?? {};
   const required = new Set(stage.schema.required ?? []);
-  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "type" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} onChange={(next) => { let updated = { ...value }; if (field === "type" && next !== value.type) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || allowed.has(key))); } if (next === undefined) delete updated[field]; else updated[field] = next; onChange(updated); }} />)}</div>;
+  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "implementation" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} onChange={(next) => { let updated = { ...value }; if (field === "implementation" && next !== value.implementation) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || key === "implementation" || allowed.has(key))); } if (next === undefined) delete updated[field]; else updated[field] = next; onChange(updated); }} />)}</div>;
 }
 
 function SchemaField({ field, schema, required, value, implementations, modelOptions, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; implementations?: string[]; modelOptions?: string[]; onChange: (value: unknown) => void }) {
@@ -781,7 +1080,13 @@ function resolveSchema(schema: JsonSchema): JsonSchema {
   return schema.anyOf?.find((item) => item.type !== "null") ?? schema;
 }
 
-function readStage(config: PipelineConfig, definition: StageDefinition): Record<string, unknown> | undefined {
+function readStage(config: PipelineConfig, definition: StageDefinition, alternativeId?: string): Record<string, unknown> | undefined {
+  if (alternativeId && alternativeId !== "alternative-1") {
+    const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
+    if (definition.key === "decision_policy" && isRecord(alternative?.decision_policy)) return alternative.decision_policy;
+    const override = alternative?.stage_overrides?.[definition.key];
+    if (isRecord(override)) return override;
+  }
   const section = config[definition.section];
   if (!section) return undefined;
   const value = section[definition.key];
@@ -789,7 +1094,12 @@ function readStage(config: PipelineConfig, definition: StageDefinition): Record<
   return isRecord(value) ? value : undefined;
 }
 
-function readAssessors(config: PipelineConfig): Record<string, unknown>[] {
+function readAssessors(config: PipelineConfig, alternativeId?: string): Record<string, unknown>[] {
+  if (alternativeId && alternativeId !== "alternative-1") {
+    const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
+    const override = alternative?.stage_overrides?.assessors;
+    if (Array.isArray(override)) return override.filter(isRecord);
+  }
   return readAssessorValue(config.query?.assessors);
 }
 
@@ -799,14 +1109,28 @@ function readAssessorValue(value: unknown): Record<string, unknown>[] {
   return value.filter(isRecord);
 }
 
-function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>): PipelineConfig {
+function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>, alternativeId?: string): PipelineConfig {
+  if (alternativeId && alternativeId !== "alternative-1" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
+      ? definition.key === "decision_policy"
+        ? { ...alternative, decision_policy: value }
+        : { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), [definition.key]: value } }
+      : alternative);
+    return writeQueryAlternatives(config, alternatives);
+  }
   const next = cloneConfig(config);
   if (definition.key === "assessors") next.query = { ...(next.query ?? {}), assessors: [value] };
   else next[definition.section] = { ...(next[definition.section] ?? {}), [definition.key]: value };
   return next;
 }
 
-function updateAssessors(config: PipelineConfig, values: Record<string, unknown>[]): PipelineConfig {
+function updateAssessors(config: PipelineConfig, values: Record<string, unknown>[], alternativeId?: string): PipelineConfig {
+  if (alternativeId && alternativeId !== "alternative-1" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
+      ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), assessors: values } }
+      : alternative);
+    return writeQueryAlternatives(config, alternatives);
+  }
   const next = cloneConfig(config);
   next.query = { ...(next.query ?? {}), assessors: values };
   return next;
@@ -816,10 +1140,11 @@ function defaultStageValue(definition: StageDefinition, catalog: PipelineCatalog
   const stage = catalog.stages[definition.catalogKey];
   return Object.fromEntries(Object.entries(stage?.schema.properties ?? {}).map(([field, schema]) => {
     const resolved = resolveSchema(schema);
-    if (field === "type") return [field, stage?.implementations[0] ?? ""];
+    if (field === "implementation") return [field, stage?.implementations[0] ?? ""];
     if (field === "model_ref") return [field, definition.key === "embedding" ? Object.keys(models.embedding)[0] ?? "" : Object.keys(models.reasoning)[0] ?? ""];
     if (resolved.const !== undefined) return [field, resolved.const];
     if (resolved.default !== undefined) return [field, resolved.default];
+    if (resolved.enum?.length) return [field, resolved.enum[0]];
     return [field, schema.anyOf?.some((item) => item.type === "null") ? null : ""];
   }));
 }
@@ -864,7 +1189,14 @@ function emptyConfig(kind: PipelineKind): PipelineConfig {
     description: "",
     is_default: false,
     ...(kind !== "query" ? { representation: {} } : {}),
-    ...(kind !== "ingestion" ? { query: {} } : {}),
+    ...(kind !== "ingestion" ? {
+      query: {
+        execution: {
+          alternatives: [{ id: "alternative-1", source: null, branches: [], stage_overrides: {}, decision_policy: null, acceptance: { strategy: "decision_policy" } }],
+          max_attempts: 3,
+        },
+      },
+    } : {}),
   };
 }
 
@@ -927,20 +1259,18 @@ function humanize(value: string): string {
 function ExecutionSettings({ catalog, config, onChange }: { catalog: PipelineCatalog; config: PipelineConfig; onChange: (config: PipelineConfig) => void }) {
   const strategy = readExecutionStrategy(config);
   const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  const unified = Array.isArray(execution.alternatives);
   const branches = Array.isArray(execution.branches)
     ? execution.branches.filter(isRecord)
     : [];
   return (
     <div className="execution-settings">
-      <label>Execution strategy<select value={strategy} onChange={(event) => onChange(updateExecutionStrategy(config, event.target.value as ExecutionStrategy))}>
-        <option value="linear">Linear</option>
-        <option value="branching">Branching</option>
-        <option value="recursive">Recursive</option>
-      </select></label>
-      {strategy === "recursive" && <label>Maximum rounds<input min="2" max="100" type="number" value={typeof execution.max_rounds === "number" ? execution.max_rounds : 2} onChange={(event) => onChange(updateExecutionValue(config, "max_rounds", Math.max(2, Number(event.target.value) || 2)))} /></label>}
-      {strategy === "branching" && <>
+      <label>Maximum attempts<input min="1" max="100" type="number" value={typeof execution.max_attempts === "number" ? execution.max_attempts : 3} onChange={(event) => onChange(updateExecutionValue(config, "max_attempts", Math.max(1, Number(event.target.value) || 1)))} /></label>
+      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" ? execution.final_failure_policy : "last_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="last_result">Return last result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
+      <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Selected path only</option><option value="union">Union path evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
+      {!unified && strategy === "recursive" && <label>Legacy retry rounds<input min="2" max="100" type="number" value={typeof execution.max_rounds === "number" ? execution.max_rounds : 2} onChange={(event) => onChange(updateExecutionValue(config, "max_rounds", Math.max(2, Number(event.target.value) || 2)))} /></label>}
+      {!unified && strategy === "branching" && <>
         <label>Branches<input value={branches.map((branch, index) => typeof branch.id === "string" ? branch.id : `branch-${index + 1}`).join(", ")} onChange={(event) => onChange(updateBranchIds(config, event.target.value))} /></label>
-        <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Replace with selected branch</option><option value="union">Union branch evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
         <div className="execution-branches">{branches.map((branch, index) => <div className="execution-branch" key={typeof branch.id === "string" ? branch.id : index}>
           <strong>{typeof branch.id === "string" ? branch.id : `Branch ${index + 1}`}</strong>
           <label>Start at<select value={branch.start_at === "reranker" || branch.start_at === "assessor" ? branch.start_at : "retriever"} onChange={(event) => onChange(updateBranchField(config, index, "start_at", event.target.value))}><option value="retriever">Retriever</option><option value="reranker">Reranker</option><option value="assessor">Assessor</option></select></label>
@@ -978,14 +1308,14 @@ export function updateExecutionStrategy(config: PipelineConfig, strategy: Execut
 }
 
 function updateExecutionValue(config: PipelineConfig, key: string, value: unknown): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
   execution[key] = value;
   return { ...config, query: { ...(config.query ?? {}), execution } };
 }
 
 function updateBranchIds(config: PipelineConfig, value: string): PipelineConfig {
   const ids = value.split(",").map((item) => item.trim()).filter(Boolean);
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
   const previous = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
   execution.branches = ids.map((id, index) => ({
     ...(previous[index] ?? {}),
@@ -995,14 +1325,14 @@ function updateBranchIds(config: PipelineConfig, value: string): PipelineConfig 
 }
 
 function updateBranchField(config: PipelineConfig, index: number, key: "start_at" | "retriever" | "reranker" | "assessor", value: string): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
   const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch) => ({ ...branch })) : [];
   if (!branches[index]) return config;
   if (key === "assessor") {
     if (value) branches[index].assessors = [value];
     else delete branches[index].assessors;
   } else if (value) {
-    branches[index][key] = value;
+    branches[index][key] = key === "start_at" && (value === "retriever" || value === "reranker" || value === "assessor") ? value : value;
   } else {
     delete branches[index][key];
   }

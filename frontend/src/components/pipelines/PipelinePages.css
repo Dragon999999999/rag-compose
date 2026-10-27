@@ -77,6 +77,9 @@
 .graph-node span { display: block; font-size: 12px; font-weight: 750; }
 .graph-node small { color: var(--color-warning); display: block; font-size: 10px; margin-top: 7px; }
 .graph-node-caption { color: var(--color-accent) !important; font-weight: 650; }
+.graph-node.reused { background: rgb(148 163 184 / 8%); border-style: dashed; opacity: .7; }
+.reused-node { z-index: 2; }
+.reused-node .graph-add-branch { opacity: .82; }
 .graph-arrow { color: var(--color-primary); font-size: 20px; line-height: 1; }
 .graph-canvas-scroll { overflow: auto; padding: 8px 8px 18px 86px; scrollbar-gutter: stable; }
 .graph-canvas { position: relative; transition: height var(--transition-fast), min-width var(--transition-fast); }
@@ -96,6 +99,27 @@
 .compatibility-warning, .inspector-warning { background: rgb(229 184 110 / 10%); border: 1px solid rgb(229 184 110 / 28%); border-radius: var(--radius-sm); color: var(--color-warning); font-size: 12px; line-height: 1.45; margin: 12px 0 0; padding: 10px 12px; }
 
 .pipeline-inspector { min-height: 420px; padding: 18px; position: sticky; top: 24px; }
+.alternatives-graph { display: grid; gap: 22px; }
+.alternative-section { border-bottom: 1px solid var(--color-border); padding-bottom: 20px; }
+.alternative-section:last-child { border-bottom: 0; padding-bottom: 0; }
+.alternative-header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+.alternative-kicker { color: var(--color-accent); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.alternative-header h2 { color: var(--color-text); font-size: 16px; letter-spacing: -.02em; margin: 4px 0; }
+.alternative-header p { color: var(--color-text-muted); font-size: 11px; margin: 0; }
+.alternative-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.alternative-actions button { background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: 10px; padding: 5px 7px; }
+.alternative-actions button:hover:not(:disabled), .alternative-actions button:focus-visible:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+.alternative-actions button:disabled { cursor: not-allowed; opacity: .45; }
+.alternative-delete { background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-danger); font-size: 11px; padding: 6px 8px; }
+.alternative-delete:hover, .alternative-delete:focus-visible { border-color: var(--color-danger); }
+.alternative-restart-picker { align-items: center; background: rgb(146 147 246 / 7%); border: 1px solid rgb(146 147 246 / 18%); border-radius: var(--radius-sm); color: var(--color-text-muted); display: flex; flex-wrap: wrap; font-size: 11px; gap: 10px; justify-content: space-between; margin-bottom: 10px; padding: 8px 10px; }
+.alternative-restart-picker select { min-height: 30px; padding: 5px 8px; }
+.alternative-acceptance { align-items: end; display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 10px; }
+.alternative-acceptance label { color: var(--color-text-muted); display: grid; font-size: 10px; gap: 4px; }
+.alternative-acceptance input, .alternative-acceptance select { min-height: 30px; padding: 5px 8px; }
+.add-alternative-button { background: transparent; border: 1px dashed var(--color-primary); border-radius: var(--radius-sm); color: var(--color-primary); display: block; font-size: 12px; font-weight: 750; margin: 15px auto 0; padding: 9px 14px; }
+.add-alternative-button:hover, .add-alternative-button:focus-visible { background: rgb(146 147 246 / 10%); }
+.add-alternative-button span { font-size: 16px; margin-right: 4px; }
 .inspector-heading { border-bottom: 1px solid var(--color-border); margin-bottom: 18px; padding-bottom: 14px; }
 .inspector-heading > span { color: var(--color-accent); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .inspector-heading h2 { font-size: 19px; letter-spacing: -.02em; margin: 6px 0; }

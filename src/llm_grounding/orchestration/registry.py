@@ -558,6 +558,39 @@ class ComponentRegistry:
                         "Unknown branching assessor implementation(s): "
                         + ", ".join(sorted(unknown_assessors))
                     )
+            for alternative in config.query.execution.alternatives:
+                if alternative.decision_policy is not None:
+                    policy_name = (
+                        alternative.decision_policy.implementation
+                        or alternative.decision_policy.type
+                    )
+                    if policy_name not in self.pipeline_decision_policies:
+                        raise ConfigurationError(
+                            f"Unknown alternative decision policy {policy_name!r}"
+                        )
+                for branch in alternative.branches:
+                    if (
+                        branch.retriever is not None
+                        and branch.retriever not in self.retrievers
+                    ):
+                        raise ConfigurationError(
+                            "Unknown alternative retriever implementation "
+                            f"{branch.retriever!r}"
+                        )
+                    if (
+                        branch.reranker is not None
+                        and branch.reranker not in self.rerankers
+                    ):
+                        raise ConfigurationError(
+                            "Unknown alternative reranker implementation "
+                            f"{branch.reranker!r}"
+                        )
+                    unknown_assessors = set(branch.assessors) - self.pipeline_assessors
+                    if unknown_assessors:
+                        raise ConfigurationError(
+                            "Unknown alternative assessor implementation(s): "
+                            + ", ".join(sorted(unknown_assessors))
+                        )
             selections.extend(
                 (
                     "assessor",

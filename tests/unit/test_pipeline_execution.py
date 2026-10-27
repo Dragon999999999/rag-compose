@@ -1,5 +1,7 @@
 """Verify deterministic query execution strategies and decision policies."""
 
+import pytest
+
 from llm_grounding.decision.policies import (
     AdaptiveRetrievalPolicy,
     AlwaysAcceptPolicy,
@@ -107,6 +109,78 @@ def test_execution_configuration_is_bounded_and_requires_complete_topology() -> 
 
     assert len(branching.branches) == 2
     assert recursive.max_rounds == 3
+
+
+def test_unified_execution_validates_ordered_alternative_path_dependencies() -> None:
+    """Alternatives reference concrete earlier paths and preserve branch locality."""
+    execution = PipelineExecutionConfig.model_validate(
+        {
+            "max_attempts": 2,
+            "alternatives": [
+                {
+                    "id": "primary",
+                    "branches": [
+                        {"id": "dense", "start_at": "retriever"},
+                        {"id": "lexical", "start_at": "retriever"},
+                    ],
+                },
+                {
+                    "id": "retry",
+                    "source": {
+                        "alternative_id": "primary",
+                        "path_id": "lexical",
+                        "restart_stage": "assessor",
+                    },
+                    "branches": [{"id": "retry-path", "start_at": "assessor"}],
+                },
+            ],
+        }
+    )
+
+    assert execution.alternatives[1].source is not None
+    assert execution.alternatives[1].source.path_id == "lexical"
+
+
+def test_unified_execution_rejects_forward_or_ambiguous_sources() -> None:
+    """A retry cannot point forward or hide a branched source path."""
+    with pytest.raises(ValueError, match="earlier alternative"):
+        PipelineExecutionConfig.model_validate(
+            {
+                "alternatives": [
+                    {"id": "primary"},
+                    {
+                        "id": "retry",
+                        "source": {
+                            "alternative_id": "later",
+                            "path_id": "primary",
+                            "restart_stage": "retriever",
+                        },
+                    },
+                    {"id": "later"},
+                ]
+            }
+        )
+
+    with pytest.raises(ValueError, match="explicit source path"):
+        PipelineExecutionConfig.model_validate(
+            {
+                "max_attempts": 2,
+                "alternatives": [
+                    {
+                        "id": "primary",
+                        "branches": [{"id": "dense"}, {"id": "lexical"}],
+                    },
+                    {
+                        "id": "retry",
+                        "source": {
+                            "alternative_id": "primary",
+                            "path_id": "primary",
+                            "restart_stage": "assessor",
+                        },
+                    },
+                ],
+            }
+        )
 
 
 class _StubRunner(BasicRagRunner):

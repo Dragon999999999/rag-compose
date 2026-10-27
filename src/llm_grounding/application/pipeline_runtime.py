@@ -13,8 +13,12 @@ from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbe
 from llm_grounding.infrastructure.config.models import (
     ArchitectureConfig,
     AssessorConfig,
+    ComponentConfig,
     ModelCatalog,
     PipelineConfig,
+    ReasonerConfig,
+    RerankerConfig,
+    RetrieverConfig,
 )
 from llm_grounding.infrastructure.config.overrides import (
     OverrideValidationError,
@@ -400,6 +404,112 @@ class PipelineRuntimeResolver:
         reranker = self._registry.build_reranker(
             architecture.reranker, self._local_model_manager
         )
+        alternative_policies = {
+            alternative.id: self._registry.build_decision_policy(
+                alternative.decision_policy
+            )
+            for alternative in architecture.execution.alternatives
+            if alternative.decision_policy is not None
+        }
+        alternative_retrievers = {}
+        alternative_summaries = {}
+        alternative_rerankers = {}
+        alternative_assessors = {}
+        alternative_reasoners = {}
+        alternative_renderers = {}
+        for alternative in architecture.execution.alternatives:
+            overrides = alternative.stage_overrides
+            retriever_override = overrides.get("retriever")
+            if isinstance(retriever_override, dict):
+                retriever_data = architecture.retriever.model_dump(mode="python")
+                retriever_data.update(retriever_override)
+                alternative_retriever_config = RetrieverConfig.model_validate(
+                    retriever_data
+                )
+                alternative_retriever = self._registry.build_retriever(
+                    alternative_retriever_config, dependencies
+                )
+                alternative_retrievers[alternative.id] = alternative_retriever
+                alternative_summaries[alternative.id] = (
+                    self._registry.build_summary_retriever(
+                        alternative_retriever_config,
+                        alternative_retriever,
+                        dependencies,
+                    )
+                )
+            reranker_override = overrides.get("reranker")
+            if isinstance(reranker_override, dict):
+                reranker_data = architecture.reranker.model_dump(mode="python")
+                reranker_data.update(reranker_override)
+                alternative_rerankers[alternative.id] = self._registry.build_reranker(
+                    RerankerConfig.model_validate(reranker_data),
+                    self._local_model_manager,
+                )
+            assessors_override = overrides.get("assessors")
+            if isinstance(assessors_override, (list, tuple)):
+                alternative_assessors[alternative.id] = tuple(
+                    self._registry.build_assessor(
+                        AssessorConfig.model_validate(item), self._repository
+                    )
+                    for item in assessors_override
+                    if isinstance(item, dict)
+                )
+            reasoner_override = overrides.get("reasoner")
+            if isinstance(reasoner_override, dict):
+                reasoner_data = architecture.reasoner.model_dump(mode="python")
+                model_ref = reasoner_override.get("model_ref")
+                if isinstance(model_ref, str):
+                    reasoner_data["model"] = catalog.reasoning(
+                        model_ref
+                    ).model_dump(mode="python")
+                reasoner_data.update(
+                    {
+                        key: value
+                        for key, value in reasoner_override.items()
+                        if key != "model_ref"
+                    }
+                )
+                alternative_reasoners[alternative.id] = self._registry.build_reasoner(
+                    ReasonerConfig.model_validate(reasoner_data)
+                )
+            renderer_override = overrides.get("renderer")
+            if isinstance(renderer_override, dict):
+                renderer_data = architecture.renderer.model_dump(mode="python")
+                renderer_data.update(renderer_override)
+                alternative_renderers[alternative.id] = self._registry.build_renderer(
+                    ComponentConfig.model_validate(renderer_data)
+                )
+            for branch in alternative.branches:
+                if (
+                    branch.retriever is not None
+                    and branch.retriever not in branch_retrievers
+                ):
+                    branch_config = architecture.retriever.model_copy(
+                        update={"implementation": branch.retriever}
+                    )
+                    branch_retrievers[branch.retriever] = (
+                        self._registry.build_retriever(branch_config, dependencies)
+                    )
+                if (
+                    branch.reranker is not None
+                    and branch.reranker not in branch_rerankers
+                ):
+                    branch_config = architecture.reranker.model_copy(
+                        update={"implementation": branch.reranker}
+                    )
+                    branch_rerankers[branch.reranker] = (
+                        self._registry.build_reranker(
+                            branch_config, self._local_model_manager
+                        )
+                    )
+                if branch.assessors:
+                    branch_assessors[f"{alternative.id}:{branch.id}"] = tuple(
+                        self._registry.build_assessor(
+                            AssessorConfig(type="assessor", implementation=name),
+                            self._repository,
+                        )
+                        for name in branch.assessors
+                    )
         return BasicRagRunner(
             retriever,
             summary,
@@ -421,6 +531,13 @@ class PipelineRuntimeResolver:
             branch_retrievers=branch_retrievers,
             branch_rerankers=branch_rerankers,
             branch_assessors=branch_assessors,
+            alternative_policies=alternative_policies,
+            alternative_retrievers=alternative_retrievers,
+            alternative_summaries=alternative_summaries,
+            alternative_rerankers=alternative_rerankers,
+            alternative_assessors=alternative_assessors,
+            alternative_reasoners=alternative_reasoners,
+            alternative_renderers=alternative_renderers,
         )
 
     def _vector_store_for(self, ingestion: IngestionConfig) -> VectorStore | None:

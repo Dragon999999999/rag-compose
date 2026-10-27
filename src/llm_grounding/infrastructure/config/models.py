@@ -363,8 +363,86 @@ class ExecutionBranchConfig(BaseModel):
     parameter_overrides: dict[str, object] = Field(default_factory=dict)
 
 
+class AlternativeSourceConfig(BaseModel):
+    """Identify the exact earlier alternative path whose output is reused."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    alternative_id: str = Field(min_length=1, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    path_id: str = Field(min_length=1, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    restart_stage: Literal["retriever", "reranker", "assessor"]
+
+
+class AlternativeAcceptanceConfig(BaseModel):
+    """Define when an alternative succeeds and retry execution may stop."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    strategy: Literal[
+        "decision_policy",
+        "always_accept",
+        "minimum_score",
+        "evidence_sufficiency",
+        "validation_success",
+    ] = "decision_policy"
+    threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    dimension: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_threshold(self) -> "AlternativeAcceptanceConfig":
+        """Require a threshold for score-based acceptance."""
+        if self.strategy == "minimum_score" and self.threshold is None:
+            raise ValueError("minimum_score acceptance requires threshold")
+        return self
+
+
+class PipelineAlternativeConfig(BaseModel):
+    """Describe one ordered query attempt and its local branch paths."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    id: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$",
+        description="Stable alternative identifier.",
+    )
+    source: AlternativeSourceConfig | None = None
+    branches: tuple[ExecutionBranchConfig, ...] = ()
+    stage_overrides: dict[str, object] = Field(default_factory=dict)
+    decision_policy: DecisionPolicyConfig | None = None
+    acceptance: AlternativeAcceptanceConfig = Field(
+        default_factory=AlternativeAcceptanceConfig
+    )
+
+    @model_validator(mode="after")
+    def validate_branches(self) -> "PipelineAlternativeConfig":
+        """Reject duplicate path identifiers inside one alternative."""
+        branch_ids = [branch.id for branch in self.branches]
+        if len(set(branch_ids)) != len(branch_ids):
+            raise ValueError(f"Alternative {self.id!r} branch IDs must be unique")
+        unknown_stages = set(self.stage_overrides) - {
+            "retriever",
+            "reranker",
+            "assessors",
+            "decision_policy",
+            "reasoner",
+            "renderer",
+        }
+        if unknown_stages:
+            raise ValueError(
+                "Unknown alternative stage override(s): "
+                + ", ".join(sorted(unknown_stages))
+            )
+        return self
+
+
 class PipelineExecutionConfig(BaseModel):
-    """Define topology and bounded control flow for one query pipeline."""
+    """Define unified alternatives and bounded legacy query control flow.
+
+    ``alternatives`` is the canonical hierarchy. ``strategy``, ``branches``,
+    and recursive-round fields remain accepted so stored schema-version-one
+    pipelines can be read and executed without migration at load time.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -380,6 +458,9 @@ class PipelineExecutionConfig(BaseModel):
     ] = (
         "retrieve_again",
     )
+    alternatives: tuple[PipelineAlternativeConfig, ...] = ()
+    max_attempts: int = Field(default=3, ge=1, le=100)
+    final_failure_policy: Literal["last_result", "reject", "abstain"] = "last_result"
 
     @model_validator(mode="after")
     def validate_execution_shape(self) -> "PipelineExecutionConfig":
@@ -395,7 +476,54 @@ class PipelineExecutionConfig(BaseModel):
             raise ValueError("max_rounds cannot exceed max_stage_calls")
         if len(self.retry_overrides) > self.max_rounds - 1:
             raise ValueError("retry_overrides cannot exceed the configured max_rounds")
+        if self.alternatives:
+            alternative_ids = [alternative.id for alternative in self.alternatives]
+            if len(set(alternative_ids)) != len(alternative_ids):
+                raise ValueError("Alternative IDs must be unique")
+            if self.max_attempts < len(self.alternatives):
+                raise ValueError(
+                    "max_attempts must cover every configured alternative"
+                )
+            known_ids: set[str] = set()
+            for index, alternative in enumerate(self.alternatives):
+                if index == 0 and alternative.source is not None:
+                    raise ValueError("The primary alternative must not have a source")
+                if alternative.source is not None:
+                    if alternative.source.alternative_id not in known_ids:
+                        raise ValueError(
+                            "Alternative sources must reference an earlier alternative"
+                        )
+                    if alternative.source.path_id == "primary" and any(
+                        source.id == alternative.source.alternative_id
+                        and source.branches
+                        for source in self.alternatives
+                    ):
+                        raise ValueError(
+                            "Branched alternatives require an explicit source path"
+                        )
+                    if alternative.source.path_id != "primary" and not any(
+                        branch.id == alternative.source.path_id
+                        for source in self.alternatives
+                        if source.id == alternative.source.alternative_id
+                        for branch in source.branches
+                    ):
+                        raise ValueError(
+                            "Alternative source path must exist on the "
+                            "referenced alternative"
+                        )
+                known_ids.add(alternative.id)
         return self
+
+    def effective_alternatives(self) -> tuple[PipelineAlternativeConfig, ...]:
+        """Return the canonical hierarchy, adapting a legacy execution shape."""
+        if self.alternatives:
+            return self.alternatives
+        return (
+            PipelineAlternativeConfig(
+                id="alternative-1",
+                branches=self.branches if self.strategy == "branching" else (),
+            ),
+        )
 
 
 class ChatHistoryConfig(BaseModel):

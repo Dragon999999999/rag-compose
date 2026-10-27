@@ -25,6 +25,8 @@ from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, RetrievalR
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.models import (
+    AlternativeAcceptanceConfig,
+    ExecutionBranchConfig,
     PipelineExecutionConfig,
     RerankerConfig,
 )
@@ -53,6 +55,57 @@ from llm_grounding.retrieval.reranking.protocol import Reranker
 from llm_grounding.retrieval.vector import SummaryRetriever
 
 
+def _artifact_tuple(
+    artifacts: dict[str, object] | None, key: str
+) -> tuple[ChunkRetrievalResult, ...] | None:
+    """Read one typed in-memory output from an alternative source path."""
+    if artifacts is None:
+        return None
+    value = artifacts.get(key)
+    if not isinstance(value, tuple) or not all(
+        isinstance(item, ChunkRetrievalResult) for item in value
+    ):
+        return None
+    return value
+
+
+def _alternative_accepted(
+    metadata: Mapping[str, object], acceptance: AlternativeAcceptanceConfig
+) -> bool:
+    """Evaluate retry conditions without comparing raw scores blindly."""
+    if acceptance.strategy == "always_accept":
+        return True
+    if acceptance.strategy == "validation_success":
+        return metadata.get("status") == "completed"
+    if acceptance.strategy == "evidence_sufficiency":
+        return bool(metadata.get("retrieved_chunk_ids")) and metadata.get(
+            "decision"
+        ) not in {DecisionAction.REJECT, DecisionAction.ABSTAIN, "reject", "abstain"}
+    if acceptance.strategy == "minimum_score":
+        scores = metadata.get("assessment_scores")
+        if not isinstance(scores, list) or acceptance.threshold is None:
+            return False
+        dimensions = metadata.get("assessment_dimensions")
+        candidates = zip(
+            dimensions if isinstance(dimensions, list) else [None] * len(scores),
+            scores,
+            strict=True,
+        )
+        return any(
+            (acceptance.dimension is None or dimension == acceptance.dimension)
+            and isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            and score >= acceptance.threshold
+            for dimension, score in candidates
+        )
+    return metadata.get("decision") in {
+        DecisionAction.ACCEPT,
+        DecisionAction.MERGE_BRANCHES,
+        "accept",
+        "merge_branches",
+    }
+
+
 class BasicRagRunner:
     """Run project-scoped retrieval, reasoning, validation, and rendering."""
 
@@ -74,6 +127,13 @@ class BasicRagRunner:
         branch_retrievers: Mapping[str, Retriever] | None = None,
         branch_rerankers: Mapping[str, Reranker] | None = None,
         branch_assessors: Mapping[str, Sequence[Assessor]] | None = None,
+        alternative_policies: Mapping[str, DecisionPolicy] | None = None,
+        alternative_retrievers: Mapping[str, Retriever] | None = None,
+        alternative_summaries: Mapping[str, Retriever] | None = None,
+        alternative_rerankers: Mapping[str, Reranker] | None = None,
+        alternative_assessors: Mapping[str, Sequence[Assessor]] | None = None,
+        alternative_reasoners: Mapping[str, BasicGroundedReasoner] | None = None,
+        alternative_renderers: Mapping[str, GroundedAnswerRenderer] | None = None,
     ) -> None:
         """Inject independently testable query stages."""
         self._vector, self._summary, self._reasoner = vector, summary, reasoner
@@ -114,6 +174,15 @@ class BasicRagRunner:
         self._branch_assessors = {
             key: tuple(value) for key, value in (branch_assessors or {}).items()
         }
+        self._alternative_policies = dict(alternative_policies or {})
+        self._alternative_retrievers = dict(alternative_retrievers or {})
+        self._alternative_summaries = dict(alternative_summaries or {})
+        self._alternative_rerankers = dict(alternative_rerankers or {})
+        self._alternative_assessors = {
+            key: tuple(value) for key, value in (alternative_assessors or {}).items()
+        }
+        self._alternative_reasoners = dict(alternative_reasoners or {})
+        self._alternative_renderers = dict(alternative_renderers or {})
         self._last_retrieval_response: RetrievalResponse | None = None
 
     async def run(
@@ -125,26 +194,33 @@ class BasicRagRunner:
         runtime_config: dict[str, Any] | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute the configured topology with bounded branch or retry control."""
+        if self._execution.alternatives:
+            return await self._run_alternatives(
+                request,
+                history,
+                generate_chat_name=generate_chat_name,
+                runtime_config=runtime_config,
+            )
         if self._execution.strategy == "linear":
-            return await self._run_once(
+            return self._public_result(await self._run_once(
                 request,
                 history,
                 generate_chat_name=generate_chat_name,
                 runtime_config=runtime_config,
-            )
+            ))
         if self._execution.strategy == "branching":
-            return await self._run_branching(
+            return self._public_result(await self._run_branching(
                 request,
                 history,
                 generate_chat_name=generate_chat_name,
                 runtime_config=runtime_config,
-            )
-        return await self._run_recursive(
+            ))
+        return self._public_result(await self._run_recursive(
             request,
             history,
             generate_chat_name=generate_chat_name,
             runtime_config=runtime_config,
-        )
+        ))
 
     async def _run_once(
         self,
@@ -155,18 +231,26 @@ class BasicRagRunner:
         runtime_config: dict[str, Any] | None = None,
         _candidate_override: tuple[ChunkRetrievalResult, ...] | None = None,
         _chunk_override: tuple[ChunkRetrievalResult, ...] | None = None,
+        _policy_override: DecisionPolicy | None = None,
+        _retriever_override: Retriever | None = None,
+        _summary_override: Retriever | None = None,
+        _reranker_override: Reranker | None = None,
+        _assessor_override: Sequence[Assessor] | None = None,
+        _reasoner_override: BasicGroundedReasoner | None = None,
+        _renderer_override: GroundedAnswerRenderer | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute one linear pass and retain metadata suitable for persistence."""
         traces = TraceRecorder()
         usage = UsageAccumulator()
         total_span = traces.start("rag_e2e")
         values = self._runtime_values(runtime_config)
-        policy_token_budget = getattr(self._policy, "token_budget", None)
+        policy = _policy_override or self._policy
+        policy_token_budget = getattr(policy, "token_budget", None)
         if "context_budget_tokens" not in values and isinstance(
             policy_token_budget, int
         ):
             values["context_budget_tokens"] = policy_token_budget
-        policy_top_k = getattr(self._policy, "top_k", None)
+        policy_top_k = getattr(policy, "top_k", None)
         if "context_top_k" not in values and isinstance(policy_top_k, int):
             values["context_top_k"] = policy_top_k
         retrieval_span = traces.start("retrieval")
@@ -175,13 +259,23 @@ class BasicRagRunner:
         elif _chunk_override is not None:
             candidates = _chunk_override
         else:
-            candidates = await self._retrieve_candidates(request, values)
+            candidates = await self._retrieve_candidates(
+                request,
+                values,
+                retriever_override=_retriever_override,
+                summary_override=_summary_override,
+            )
         traces.end(retrieval_span, output_count=len(candidates))
         rerank_span = traces.start("rerank", input_count=len(candidates))
         chunks = (
             _chunk_override
             if _chunk_override is not None
-            else await self._rerank_chunks(request.task, candidates, values)
+            else await self._rerank_chunks(
+                request.task,
+                candidates,
+                values,
+                reranker_override=_reranker_override,
+            )
         )
         if _chunk_override is None:
             usage.add_reranker()
@@ -214,6 +308,7 @@ class BasicRagRunner:
                     "observation_status": "abstained",
                     "retrieved_chunk_ids": [],
                     "retrieval_results": [],
+                    "_artifacts": {"candidates": candidates, "chunks": chunks},
                     "retrieval_stages": [
                         stage.model_dump(mode="json")
                         for stage in build_retrieval_stages((), run_id=str(uuid4()))
@@ -258,7 +353,9 @@ class BasicRagRunner:
             for key in ("prompt_id", "model_name")
             if isinstance(values.get(key), str)
         }
-        reasoning = await self._reasoner.reason(context, **reasoner_kwargs)
+        reasoning = await (_reasoner_override or self._reasoner).reason(
+            context, **reasoner_kwargs
+        )
         generation_data = reasoning.metadata.get("generation")
         if isinstance(generation_data, dict):
             generation_usage = generation_data.get("usage")
@@ -268,7 +365,10 @@ class BasicRagRunner:
         assessment_span = traces.start("assessment")
         assessment_values: list[Assessment] = []
         assessors = self._branch_assessors.get(
-            str(values.get("branch_id")), self._assessors
+            str(values.get("branch_id")),
+            tuple(_assessor_override)
+            if _assessor_override is not None
+            else self._assessors,
         )
         for assessor in assessors:
             assessment_values.extend(
@@ -278,7 +378,7 @@ class BasicRagRunner:
         traces.end(assessment_span, output_count=len(assessments))
         decision_span = traces.start("decision", input_count=len(assessments))
         policy_result = reasoning
-        if hasattr(self._policy, "token_budget"):
+        if hasattr(policy, "token_budget"):
             policy_result = reasoning.__class__(
                 reasoning.result_id,
                 reasoning.payload,
@@ -290,7 +390,7 @@ class BasicRagRunner:
                     ),
                 },
             )
-        decision = await self._policy.decide(policy_result, assessments)
+        decision = await policy.decide(policy_result, assessments)
         traces.end(decision_span, output_count=1)
         self._diagnostics.report(context, reasoning, assessments, decision)
         rejected = decision.action == DecisionAction.REJECT
@@ -298,7 +398,9 @@ class BasicRagRunner:
         answer = (
             self._rejected_answer(decision)
             if rejected
-            else await self._renderer.render_context(decision, context)
+            else await (_renderer_override or self._renderer).render_context(
+                decision, context
+            )
         )
         traces.end(render_span, output_count=1)
         traces.end(total_span, output_count=1)
@@ -335,6 +437,8 @@ class BasicRagRunner:
                     for item in chunks
                 ],
                 "assessment_labels": [item.label for item in assessments],
+                "assessment_scores": [item.score for item in assessments],
+                "assessment_dimensions": [item.dimension for item in assessments],
                 "decision": decision.action,
                 "decision_metadata": decision.metadata,
                 "parameter_overrides": decision.metadata.get("parameter_overrides", {}),
@@ -374,6 +478,7 @@ class BasicRagRunner:
                     else {}
                 ),
                 "created_at": datetime.now(UTC).isoformat(),
+                "_artifacts": {"candidates": candidates, "chunks": chunks},
             },
         )
 
@@ -386,22 +491,63 @@ class BasicRagRunner:
         runtime_config: dict[str, Any] | None,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Execute configured branches sequentially and join their outcomes."""
-        branches = self._execution.branches
+        return await self._run_branch_group(
+            self._execution.branches,
+            request,
+            history,
+            generate_chat_name=generate_chat_name,
+            runtime_config=runtime_config,
+            evidence_merge=self._execution.evidence_merge,
+        )
+
+    async def _run_branch_group(
+        self,
+        branches: Sequence[ExecutionBranchConfig],
+        request: CorpusRequest,
+        history: tuple[Message, ...],
+        *,
+        generate_chat_name: bool,
+        runtime_config: dict[str, Any] | None,
+        source_candidates: tuple[ChunkRetrievalResult, ...] | None = None,
+        source_chunks: tuple[ChunkRetrievalResult, ...] | None = None,
+        policy_override: DecisionPolicy | None = None,
+        evidence_merge: str = "replace",
+        alternative_id: str | None = None,
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Execute branches with optional outputs reused from an earlier path."""
         if len(branches) > self._execution.max_stage_calls:
             raise RuntimeError("Branch count exceeds the configured execution budget")
         base_values = dict(runtime_config or {})
-        shared_candidates: tuple[ChunkRetrievalResult, ...] | None = None
-        shared_chunks: tuple[ChunkRetrievalResult, ...] | None = None
+        shared_candidates = source_candidates
+        shared_chunks = source_chunks
+        alternative_retriever = self._alternative_retrievers.get(alternative_id or "")
+        alternative_summary = self._alternative_summaries.get(alternative_id or "")
+        alternative_reranker = self._alternative_rerankers.get(alternative_id or "")
+        alternative_assessors = self._alternative_assessors.get(alternative_id or "")
+        alternative_reasoner = self._alternative_reasoners.get(alternative_id or "")
+        alternative_renderer = self._alternative_renderers.get(alternative_id or "")
         if any(branch.start_at != "retriever" for branch in branches):
-            shared_candidates = await self._retrieve_candidates(request, base_values)
-            shared_chunks = await self._rerank_chunks(
-                request.task, shared_candidates, base_values
-            )
+            if shared_candidates is None:
+                shared_candidates = await self._retrieve_candidates(
+                    request,
+                    base_values,
+                    retriever_override=alternative_retriever,
+                    summary_override=alternative_summary,
+                )
+            if shared_chunks is None:
+                shared_chunks = await self._rerank_chunks(
+                    request.task,
+                    shared_candidates,
+                    base_values,
+                    reranker_override=alternative_reranker,
+                )
         outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]] = []
         for branch in branches:
             branch_values = dict(base_values)
             branch_values.update(branch.parameter_overrides)
-            branch_values["branch_id"] = branch.id
+            branch_values["branch_id"] = (
+                f"{alternative_id}:{branch.id}" if alternative_id else branch.id
+            )
             if branch.retriever is not None:
                 branch_values["retriever"] = branch.retriever
             if branch.reranker is not None:
@@ -417,13 +563,169 @@ class BasicRagRunner:
                 _chunk_override=(
                     shared_chunks if branch.start_at == "assessor" else None
                 ),
+                _policy_override=policy_override,
+                _retriever_override=(
+                    self._branch_retrievers.get(branch.retriever, alternative_retriever)
+                    if branch.retriever is not None
+                    else alternative_retriever
+                ),
+                _summary_override=alternative_summary,
+                _reranker_override=(
+                    self._branch_rerankers.get(branch.reranker, alternative_reranker)
+                    if branch.reranker is not None
+                    else alternative_reranker
+                ),
+                _assessor_override=alternative_assessors,
+                _reasoner_override=alternative_reasoner,
+                _renderer_override=alternative_renderer,
             )
             outcomes.append((branch.id, result))
-        return self._join_branch_outcomes(outcomes)
+        return self._join_branch_outcomes(outcomes, evidence_merge=evidence_merge)
+
+    async def _run_alternatives(
+        self,
+        request: CorpusRequest,
+        history: tuple[Message, ...],
+        *,
+        generate_chat_name: bool,
+        runtime_config: dict[str, Any] | None,
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Execute ordered alternatives using explicit in-memory path outputs."""
+        alternatives = self._execution.alternatives
+        attempts: list[dict[str, object]] = []
+        path_outputs: dict[tuple[str, str], dict[str, object]] = {}
+        result: tuple[str, Answer, dict[str, object]] | None = None
+        accepted = False
+        for attempt_number, alternative in enumerate(
+            alternatives[: self._execution.max_attempts], start=1
+        ):
+            values = dict(runtime_config or {})
+            for stage, overrides in alternative.stage_overrides.items():
+                if not isinstance(overrides, Mapping):
+                    continue
+                immutable = {
+                    "retriever": {"type", "implementation", "requirements"},
+                    "reranker": {"type", "implementation", "model_id"},
+                    "reasoner": {"type", "implementation", "model_ref"},
+                }.get(stage, set())
+                values.update(
+                    {
+                        key: value
+                        for key, value in overrides.items()
+                        if key not in immutable
+                    }
+                )
+            source_artifacts: dict[str, object] | None = None
+            if alternative.source is not None:
+                source_artifacts = path_outputs.get(
+                    (alternative.source.alternative_id, alternative.source.path_id)
+                )
+                if source_artifacts is None:
+                    raise RuntimeError(
+                        "Alternative source output is unavailable: "
+                        f"{alternative.source.alternative_id}/{alternative.source.path_id}"
+                    )
+            source_candidates = (
+                _artifact_tuple(source_artifacts, "candidates")
+                if source_artifacts is not None
+                and alternative.source is not None
+                and alternative.source.restart_stage in {"reranker", "assessor"}
+                else None
+            )
+            source_chunks = (
+                _artifact_tuple(source_artifacts, "chunks")
+                if source_artifacts is not None
+                and alternative.source is not None
+                and alternative.source.restart_stage == "assessor"
+                else None
+            )
+            policy = getattr(self, "_alternative_policies", {}).get(alternative.id)
+            if alternative.branches:
+                result = await self._run_branch_group(
+                    alternative.branches,
+                    request,
+                    history,
+                    generate_chat_name=generate_chat_name,
+                    runtime_config=values,
+                    source_candidates=source_candidates,
+                    source_chunks=source_chunks,
+                    policy_override=policy,
+                    evidence_merge=self._execution.evidence_merge,
+                    alternative_id=alternative.id,
+                )
+            else:
+                result = await self._run_once(
+                    request,
+                    history,
+                    generate_chat_name=generate_chat_name,
+                    runtime_config=values,
+                    _candidate_override=source_candidates,
+                    _chunk_override=source_chunks,
+                    _policy_override=policy,
+                    _retriever_override=self._alternative_retrievers.get(
+                        alternative.id
+                    ),
+                    _summary_override=self._alternative_summaries.get(alternative.id),
+                    _reranker_override=self._alternative_rerankers.get(alternative.id),
+                    _assessor_override=self._alternative_assessors.get(alternative.id),
+                    _reasoner_override=self._alternative_reasoners.get(alternative.id),
+                    _renderer_override=self._alternative_renderers.get(alternative.id),
+                )
+            metadata = result[2]
+            artifacts = metadata.get("_artifacts")
+            if isinstance(artifacts, dict):
+                path_outputs[(alternative.id, "primary")] = artifacts
+            branch_outputs = metadata.get("_alternative_paths")
+            if isinstance(branch_outputs, dict):
+                for path_id, path_artifacts in branch_outputs.items():
+                    if isinstance(path_id, str) and isinstance(path_artifacts, dict):
+                        path_outputs[(alternative.id, path_id)] = path_artifacts
+            accepted = _alternative_accepted(metadata, alternative.acceptance)
+            attempts.append(
+                {
+                    "alternative_id": alternative.id,
+                    "attempt": attempt_number,
+                    "accepted": accepted,
+                    "decision": self._action_value(metadata.get("decision")),
+                    "retrieved_chunk_ids": metadata.get("retrieved_chunk_ids", []),
+                }
+            )
+            if accepted:
+                break
+        if result is None:
+            raise RuntimeError("Unified execution requires at least one alternative")
+        result_id, answer, metadata = result
+        if not accepted and self._execution.final_failure_policy in {
+            "reject",
+            "abstain",
+        }:
+            action = self._execution.final_failure_policy
+            answer = Answer(
+                "Insufficient evidence after all configured query alternatives.",
+                payload=answer.payload,
+                claims=answer.claims,
+                evidence_ids=answer.evidence_ids,
+                metadata={**answer.metadata, "final_failure_policy": action},
+            )
+        merged_metadata = dict(metadata)
+        merged_metadata.update(
+            {
+                "execution_strategy": "alternatives",
+                "alternative_id": attempts[-1]["alternative_id"],
+                "execution_attempt": len(attempts),
+                "execution_attempts": attempts,
+                "termination_reason": (
+                    "alternative_accepted" if accepted else "max_attempts_reached"
+                ),
+            }
+        )
+        return self._public_result((result_id, answer, merged_metadata))
 
     def _join_branch_outcomes(
         self,
         outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]],
+        *,
+        evidence_merge: str | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
         """Select or merge branch results while retaining every branch trace."""
         if not outcomes:
@@ -468,11 +770,16 @@ class BasicRagRunner:
                 "branch_ids": [branch_id for branch_id, _ in selected],
                 "branch_results": branch_records,
                 "termination_reason": "branch_joined_at_decision_policy",
+                "_alternative_paths": {
+                    branch_id: result[2].get("_artifacts", {})
+                    for branch_id, result in outcomes
+                },
             }
         )
-        if self._execution.evidence_merge in {"union", "rrf"}:
+        merge = evidence_merge or self._execution.evidence_merge
+        if merge in {"union", "rrf"}:
             merged_metadata["retrieved_chunk_ids"] = self._merged_chunk_ids(outcomes)
-            if self._execution.evidence_merge == "rrf":
+            if merge == "rrf":
                 merged_metadata["retrieval_results"] = self._fused_branch_results(
                     outcomes
                 )
@@ -556,6 +863,17 @@ class BasicRagRunner:
         return value if isinstance(value, str) else None
 
     @staticmethod
+    def _public_result(
+        result: tuple[str, Answer, dict[str, object]],
+    ) -> tuple[str, Answer, dict[str, object]]:
+        """Remove in-memory reuse artifacts before metadata persistence."""
+        result_id, answer, metadata = result
+        public_metadata = dict(metadata)
+        public_metadata.pop("_artifacts", None)
+        public_metadata.pop("_alternative_paths", None)
+        return result_id, answer, public_metadata
+
+    @staticmethod
     def _merged_chunk_ids(
         outcomes: list[tuple[str, tuple[str, Answer, dict[str, object]]]],
     ) -> list[str]:
@@ -637,7 +955,12 @@ class BasicRagRunner:
         return await self._rerank_chunks(request.task, candidates, values)
 
     async def _retrieve_candidates(
-        self, request: CorpusRequest, values: dict[str, Any]
+        self,
+        request: CorpusRequest,
+        values: dict[str, Any],
+        *,
+        retriever_override: Retriever | None = None,
+        summary_override: Retriever | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Retrieve the candidate set before the configured reranker runs."""
         top_k = values.get("top_k") if isinstance(values.get("top_k"), int) else None
@@ -651,7 +974,7 @@ class BasicRagRunner:
             embedding_config=self._embedding_config,
         )
         if request.task_type == TaskType.SUMMARY:
-            summary = self._branch_retrievers.get(
+            summary = summary_override or self._branch_retrievers.get(
                 str(values.get("retriever")), self._summary
             )
             if isinstance(summary, SummaryRetriever):
@@ -672,7 +995,7 @@ class BasicRagRunner:
             else:
                 response = await summary.retrieve(retrieval_request, context)
         else:
-            retriever = self._branch_retrievers.get(
+            retriever = retriever_override or self._branch_retrievers.get(
                 str(values.get("retriever")), self._vector
             )
             response = await retriever.retrieve(retrieval_request, context)
@@ -684,6 +1007,8 @@ class BasicRagRunner:
         query: str,
         candidates: tuple[ChunkRetrievalResult, ...],
         values: dict[str, Any],
+        *,
+        reranker_override: Reranker | None = None,
     ) -> tuple[ChunkRetrievalResult, ...]:
         """Adapt persistent chunks to the shared reranker response contract."""
         if not candidates:
@@ -714,7 +1039,7 @@ class BasicRagRunner:
             if isinstance(values.get("rerank_top_k"), int)
             else None
         )
-        reranker = self._reranker_for(values)
+        reranker = reranker_override or self._reranker_for(values)
         ranked = await reranker.rerank(response, top_k=rerank_top_k)
         by_id = {result.chunk.chunk_id: result for result in candidates}
         try:

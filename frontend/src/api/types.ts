@@ -1,5 +1,45 @@
 export type PipelineKind = "ingestion" | "query";
 export type ExecutionStrategy = "linear" | "branching" | "recursive";
+export type BranchStart = "retriever" | "reranker" | "assessor";
+export type PipelineExecutionBranch = {
+  id: string;
+  start_at?: BranchStart;
+  retriever?: string;
+  reranker?: string;
+  assessors?: string[];
+  parameter_overrides?: Record<string, unknown>;
+};
+export type AlternativeSource = {
+  alternative_id: string;
+  path_id: string;
+  restart_stage: BranchStart;
+};
+export type AlternativeAcceptance = {
+  strategy: "decision_policy" | "always_accept" | "minimum_score" | "evidence_sufficiency" | "validation_success";
+  threshold?: number | null;
+  dimension?: string | null;
+};
+export type PipelineAlternative = {
+  id: string;
+  source?: AlternativeSource | null;
+  branches?: PipelineExecutionBranch[];
+  stage_overrides?: Record<string, unknown>;
+  decision_policy?: Record<string, unknown> | null;
+  acceptance?: AlternativeAcceptance;
+};
+export type PipelineExecution = {
+  strategy?: ExecutionStrategy;
+  branches?: PipelineExecutionBranch[];
+  join_at?: "decision_policy";
+  evidence_merge?: "replace" | "union" | "rrf";
+  max_rounds?: number;
+  max_stage_calls?: number;
+  retry_overrides?: Record<string, unknown>[];
+  retry_on?: string[];
+  alternatives?: PipelineAlternative[];
+  max_attempts?: number;
+  final_failure_policy?: "last_result" | "reject" | "abstain";
+};
 export type Project = {
   id: string;
   name: string;
@@ -51,7 +91,7 @@ export type PipelineConfig = {
   description: string;
   is_default: boolean;
   representation?: Record<string, unknown>;
-  query?: Record<string, unknown>;
+  query?: Record<string, unknown> & { execution?: PipelineExecution };
 };
 export type Pipeline = {
   id: string;

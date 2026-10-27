@@ -52,3 +52,40 @@ batch_size: 16
 The cross-encoder is loaded lazily and stores weights below
 `~/.cache/rag-eval/models` by default. Set `RAG_EVAL_MODEL_CACHE_DIR` in the
 environment or `.env` to mount a persistent application-specific cache.
+
+## Unified query execution
+
+Query pipelines can define a canonical `execution.alternatives` sequence. The
+first entry is the primary path; each later entry is an ordered fallback
+alternative. Every alternative can contain its own local `branches`, stage
+overrides, decision policy, and acceptance rule.
+
+An alternative may reference an earlier alternative and restart at
+`retriever`, `reranker`, or `assessor`. The runtime passes the referenced
+alternative's in-memory candidates or chunks into that stage, so reuse does not
+perform a second retrieval or depend on persisted intermediate data. When the
+source alternative is branched, `source.path_id` identifies the exact branch
+output to reuse.
+
+The legacy `strategy`, `branches`, and recursive execution fields remain
+supported for existing schema-version-one configurations. New configurations
+should use `alternatives`; ingestion execution remains project-scoped, while
+query execution is selected by the chat.
+
+For example:
+
+```yaml
+query:
+  execution:
+    max_attempts: 2
+    final_failure_policy: last_result
+    alternatives:
+      - id: primary
+      - id: evidence-retry
+        source:
+          alternative_id: primary
+          path_id: primary
+          restart_stage: assessor
+        acceptance:
+          strategy: evidence_sufficiency
+```

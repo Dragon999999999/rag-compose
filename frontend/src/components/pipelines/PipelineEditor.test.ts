@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import type { PipelineConfig } from "../../api/types";
+import type { PipelineAlternative, PipelineConfig } from "../../api/types";
 import {
   addQueryBranch,
+  addQueryAlternative,
   buildBranchGraphLayout,
   orderPipelineStages,
   QUERY_STAGES,
   removeQueryBranch,
+  updateAlternativeAcceptance,
+  updateAlternativeSource,
   readExecutionStrategy,
   updateExecutionStrategy,
 } from "./PipelineEditor";
@@ -120,5 +123,44 @@ describe("pipeline query stage order", () => {
     expect(execution.strategy).toBe("branching");
     expect(execution.branches).toHaveLength(2);
     expect(removeQueryBranch(removed, "branch-1").query?.execution).toMatchObject({ strategy: "linear" });
+  });
+
+  it("creates alternatives from the latest effective path and updates restart selection", () => {
+    const primary = addQueryBranch(queryConfig(), "retriever", undefined, "alternative-1");
+    const withAlternative = addQueryAlternative(primary);
+    const execution = withAlternative.query?.execution as Record<string, unknown>;
+    const alternatives = execution.alternatives as Array<Record<string, unknown>>;
+    const retry = alternatives[1];
+
+    expect(retry.source).toEqual({
+      alternative_id: "alternative-1",
+      path_id: "branch-1",
+      restart_stage: "assessor",
+    });
+    const rerankerRetry = updateAlternativeSource(withAlternative, "alternative-2", "reranker", "branch-1");
+    const updated = ((rerankerRetry.query?.execution as Record<string, unknown>).alternatives as Array<Record<string, unknown>>)[1];
+    expect(updated.source).toMatchObject({ restart_stage: "reranker", path_id: "branch-1" });
+    expect((updated.branches as Array<Record<string, unknown>>)[0].start_at).toBe("reranker");
+  });
+
+  it("marks upstream nodes as reused in an alternative graph", () => {
+    const config = addQueryAlternative(queryConfig());
+    const execution = config.query?.execution as Record<string, unknown>;
+    const alternatives = execution.alternatives as Array<Record<string, unknown>>;
+    const layout = buildBranchGraphLayout(config, alternatives[1] as unknown as PipelineAlternative);
+
+    expect(layout.nodes.find((node) => node.definition.key === "retriever")?.reused).toBe(true);
+    expect(layout.nodes.find((node) => node.definition.key === "assessors")?.reused).toBe(false);
+  });
+
+  it("persists an alternative acceptance rule independently from its branch policy", () => {
+    const config = addQueryAlternative(queryConfig());
+    const updated = updateAlternativeAcceptance(config, "alternative-2", {
+      strategy: "minimum_score",
+      threshold: 0.75,
+    });
+    const alternatives = (updated.query?.execution as Record<string, unknown>).alternatives as Array<Record<string, unknown>>;
+
+    expect(alternatives[1].acceptance).toMatchObject({ strategy: "minimum_score", threshold: 0.75 });
   });
 });
