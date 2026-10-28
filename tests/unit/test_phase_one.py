@@ -210,6 +210,59 @@ async def test_unknown_model_source_refs_are_rejected_before_rendering() -> None
         await GroundedAnswerRenderer().render_context(decision, context)
 
 
+async def test_source_reference_assessor_uses_dictionary_evidence_records() -> None:
+    """Repository mappings are consumed as records, not iterated as string keys."""
+    from types import SimpleNamespace
+
+    chunk = RetrievalUnit(
+        "chunk-1",
+        "document-a",
+        "ingestion",
+        "paper.pdf",
+        "Supported statement.",
+        0,
+        1,
+        1,
+        (EvidenceReference("e1", 0, 20),),
+    )
+    context = GroundingContext(
+        CorpusRequest("project", "question"),
+        (ChunkRetrievalResult(chunk, 1, "vector", 0.9),),
+    )
+    result = ReasoningResult(
+        "result",
+        {
+            "turn_title": "Supported answer",
+            "answer_text": "The statement is supported.",
+            "claims": [
+                {
+                    "text": "The statement is supported.",
+                    "source_chunk_ids": ["chunk-1"],
+                }
+            ],
+            "insufficient_evidence": False,
+        },
+    )
+    repository = SimpleNamespace(
+        evidence_by_ids=AsyncMock(return_value={"e1": evidence()[0]})
+    )
+
+    assessments = await SourceReferenceAssessor(repository).assess_context(
+        result, context
+    )
+
+    assert assessments[0].label == "pass"
+    repository.evidence_by_ids.assert_awaited_once_with(("e1",))
+
+    invalid_repository = SimpleNamespace(
+        evidence_by_ids=AsyncMock(return_value=(evidence()[0],))
+    )
+    with pytest.raises(TypeError, match="must return a dictionary"):
+        await SourceReferenceAssessor(invalid_repository).assess_context(
+            result, context
+        )
+
+
 async def test_local_source_ref_is_canonicalized_before_assessment() -> None:
     """A request-local alias resolves to the retrieved canonical ID."""
     canonical_id = "709e24e2-fa17-44e8-bfab-3cf256e584f0:c000016"

@@ -1,15 +1,32 @@
 """Deterministically validate model-nominated IDs against retrieved project chunks."""
 
+from typing import Protocol, cast
+
 from llm_grounding.domain.answers import Assessment, JsonValue, ReasoningResult
 from llm_grounding.domain.corpus import GroundingContext
-from llm_grounding.domain.evidence import RetrievalResult
+from llm_grounding.domain.evidence import EvidenceUnit, RetrievalResult
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
+
+
+class SourceRecordRepository(Protocol):
+    """Provide canonical evidence records for source-reference validation.
+
+    Implementations return a mapping keyed by canonical evidence ID. The
+    assessor relies on the values retaining document identity and provenance
+    metadata for grounding checks.
+    """
+
+    async def evidence_by_ids(
+        self, evidence_ids: tuple[str, ...]
+    ) -> dict[str, EvidenceUnit]:
+        """Load canonical evidence records keyed by evidence ID."""
+        ...
 
 
 class SourceReferenceAssessor:
     """Check cited chunk IDs against the active project's retrieved context."""
 
-    def __init__(self, repository: object | None = None) -> None:
+    def __init__(self, repository: SourceRecordRepository | None = None) -> None:
         """Optionally retain the canonical repository for source-record checks."""
         self._repository = repository
 
@@ -106,7 +123,7 @@ class SourceReferenceAssessor:
 
     async def _source_records(
         self, context: GroundingContext
-    ) -> dict[str, object] | None:
+    ) -> dict[str, EvidenceUnit] | None:
         """Load canonical evidence when a repository was supplied by the runtime."""
         if self._repository is None:
             return None
@@ -119,7 +136,19 @@ class SourceReferenceAssessor:
         if not callable(loader):
             return None
         records = await loader(evidence_ids)
-        return {record.evidence_id: record for record in records}
+        if not isinstance(records, dict):
+            raise TypeError(
+                "Source record retrieval must return a dictionary keyed by "
+                "evidence ID"
+            )
+        typed_records = cast(dict[str, EvidenceUnit], records)
+        if not all(
+            isinstance(record, EvidenceUnit) for record in typed_records.values()
+        ):
+            raise TypeError(
+                "Source record retrieval returned an invalid evidence record"
+            )
+        return typed_records
 
     async def assess(
         self, result: ReasoningResult, evidence: tuple[RetrievalResult, ...]
