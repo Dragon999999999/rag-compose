@@ -191,7 +191,7 @@ export function SourcesWorkspace({
               {source.document.id === pendingSourceId ? (
                 <span />
               ) : (
-                <details className="action-menu">
+                <details className="action-menu source-action-menu">
                   <summary aria-label={`Manage ${source.document.name}`}>…</summary>
                   <button
                     className="danger-action"

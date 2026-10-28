@@ -92,11 +92,11 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .header-identity p { color: var(--color-text-muted); font-size: 12px; margin-top: 2px; }
 .header-actions { align-items: center; display: flex; gap: var(--spacing-2); }
 .action-menu { position: relative; }
-.action-menu summary { list-style: none; cursor: pointer; color: var(--color-text-muted); padding: 6px 8px; }
+.action-menu summary { align-items: center; border: 1px solid transparent; border-radius: 999px; cursor: pointer; display: flex; height: 28px; justify-content: center; list-style: none; color: var(--color-text-muted); padding: 0; width: 28px; }
 .action-menu summary::-webkit-details-marker { display: none; }
-.action-menu[open] summary { color: var(--color-text); }
-.action-menu button { display: block; width: 150px; border: 0; background: var(--color-surface-raised); color: var(--color-text-secondary); padding: 9px 10px; text-align: left; }
-.action-menu[open] button { position: relative; z-index: 2; box-shadow: var(--shadow-sm); }
+.action-menu summary:hover, .action-menu summary:focus-visible, .action-menu[open] summary { background: var(--color-surface-hover); border-color: var(--color-border); color: var(--color-text); }
+.action-menu button { background: var(--color-surface-raised); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-text-secondary); display: block; font-size: 12px; font-weight: 650; min-width: 136px; padding: 8px 10px; text-align: left; white-space: nowrap; }
+.action-menu[open] button { box-shadow: var(--shadow-md); position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; }
 .danger-action { color: var(--color-danger) !important; }
 
 .panel-toggle { align-items: center; background: var(--color-surface-raised); border: 1px solid var(--color-border); color: var(--color-text-muted); display: flex; font-size: 20px; height: 34px; justify-content: center; line-height: 1; padding: 0 4px 2px; position: fixed; top: 15px; transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast); width: 28px; z-index: 15; }
@@ -142,7 +142,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .composer textarea { flex: 1; min-height: 52px; max-height: 180px; padding: 13px 14px; resize: vertical; }
 
 .evidence-workspace, .pdf-workspace { height: 100%; overflow: auto; padding: 24px; }
-.evidence-workspace header { border-bottom: 1px solid var(--color-border); margin-bottom: 16px; padding-bottom: 14px; }
+.evidence-workspace header { border-bottom: 1px solid var(--color-border); margin-bottom: 16px; padding-bottom: 14px; padding-left: 20px; }
 .evidence-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .evidence-workspace h2, .sources-workspace h2 { color: var(--color-text); font-size: 16px; letter-spacing: -.01em; margin: 0; }
 .evidence-workspace header p { color: var(--color-text-muted); font-size: 12px; margin: 7px 0 0 24px; }
@@ -171,6 +171,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .sources-head { color: var(--color-text-muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .source-row { color: var(--color-text-secondary); transition: background var(--transition-fast); }
 .source-row:hover { background: var(--color-surface-raised); }
+.source-action-menu { justify-self: end; }
 .source-row time { color: var(--color-text-muted); font-size: 12px; }
 .source-name { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .status { font-size: 12px; font-weight: 650; }
