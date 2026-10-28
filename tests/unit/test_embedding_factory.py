@@ -76,7 +76,6 @@ async def test_managed_local_embedder_applies_document_and_query_prefixes() -> N
     "model_id",
     (
         "embedding_001",
-        "embedding_gemma_300m",
         "embedding_nomic_v2_moe",
         "embedding_bge_m3",
     ),

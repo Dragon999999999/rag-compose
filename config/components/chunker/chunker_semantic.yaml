@@ -4,7 +4,7 @@ implementation: semantic
 description: Detect semantic boundaries with registered embedding model vectors.
 config:
   version: '1'
-  model_id: embedding_gemma_300m
+  model_id: embedding_bge_m3
   target_tokens: 256
   max_tokens: 384
   minimum_chunk_tokens: 32

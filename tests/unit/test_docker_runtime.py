@@ -58,6 +58,11 @@ class _FakeContainer:
     def reload(self) -> None:
         """Match the Docker SDK reload operation without external I/O."""
 
+    def logs(self, tail: int = 100) -> bytes:
+        """Return representative model-server startup output."""
+        del tail
+        return b"model server startup diagnostics"
+
 
 class _FakeContainers:
     """Track named container lookup and creation calls."""
@@ -155,3 +160,27 @@ async def test_concurrent_starts_pull_one_shared_image_once() -> None:
 
     assert images.pull_calls == 1
     assert client.containers.create_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_readiness_timeout_includes_container_startup_logs() -> None:
+    """A crashed or unready server exposes bounded container diagnostics."""
+    images = _FakeImages(available=True)
+    client = _FakeDockerClient(images)
+    definition = _docker_definition()
+    assert definition.runtime is not None
+    definition = definition.model_copy(
+        update={
+            "runtime": definition.runtime.model_copy(
+                update={"readiness_timeout_seconds": 0.01}
+            )
+        }
+    )
+
+    async def never_ready(_url: str) -> bool:
+        """Keep the readiness probe unsuccessful for the timeout test."""
+        return False
+
+    runtime = DockerModelRuntime(client=client, probe=never_ready)
+    with pytest.raises(TimeoutError, match="model server startup diagnostics"):
+        await runtime.start_and_wait(definition, Path("/tmp/model"))

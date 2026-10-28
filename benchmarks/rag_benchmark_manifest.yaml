@@ -358,30 +358,6 @@ experiments:
   compatibility_constraints:
   - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
     settings across the family.
-- id: EMB-03
-  name: benchmark_emb_03
-  family: embeddings
-  status: supported
-  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_03.yaml
-  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_03.yaml
-  components:
-    embedding: embedding_local_gemma
-  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
-    reranker + noop assessor + always-accept
-  hypothesis: Changing the embedding model changes semantic recall and resource usage.
-  required_models_and_services:
-  - Registered local or configured remote model resources used by the selected components.
-  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
-    according to the ingestion preset.
-  expected_metrics:
-  - recall@K
-  - nDCG@K
-  - context relevance
-  - embedding inference time
-  - estimated cost
-  compatibility_constraints:
-  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
-    settings across the family.
 - id: EMB-04
   name: benchmark_emb_04
   family: embeddings

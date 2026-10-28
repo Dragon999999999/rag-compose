@@ -10,8 +10,8 @@ storage:
   relative_path: embedding/nomic-embed-text-v2-moe
 runtime:
   type: docker
-  image: ghcr.io/huggingface/text-embeddings-inference:1.8
-  command: ["--model-id", "/models/model", "--trust-remote-code"]
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+  command: ["--model-id", "/models/model", "--port", "8000"]
   container_path: /models/model
   port: 8000
   readiness_path: /health

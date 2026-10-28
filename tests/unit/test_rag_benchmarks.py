@@ -23,14 +23,14 @@ def _manifest() -> list[dict[str, object]]:
     return experiments
 
 
-def test_manifest_contains_all_76_experiments_and_stable_ids() -> None:
+def test_manifest_contains_all_75_experiments_and_stable_ids() -> None:
     """Every requested benchmark ID appears exactly once in the manifest."""
     experiments = _manifest()
-    assert len(experiments) == 76
+    assert len(experiments) == 75
     ids = [experiment["id"] for experiment in experiments]
-    assert len(set(ids)) == 76
+    assert len(set(ids)) == 75
     assert (
-        sum(experiment["status"] == "supported" for experiment in experiments) == 75
+        sum(experiment["status"] == "supported" for experiment in experiments) == 74
     )
     unsupported = next(
         experiment for experiment in experiments if experiment["id"] == "CHUNK-08"

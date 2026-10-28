@@ -1,6 +1,6 @@
 # RAG benchmark suite
 
-The repository contains a reproducible matrix of 76 benchmark entries covering
+The repository contains a reproducible matrix of 75 benchmark entries covering
 15 families. The source pipeline files live below
 `config/pipelines/benchmarks/`, grouped by family. Query and ingestion
 pipelines are separate files; the manifest joins them for each experiment.
@@ -11,7 +11,7 @@ pipelines are separate files; the manifest joins them for each experiment.
 | --- | --- |
 | 01 baselines | MiniLM, BGE-M3, and a stronger hybrid baseline |
 | 02 chunking | Fixed, recursive, sentence, structural, block-aware, semantic, hierarchical, late, and LLM-guided chunking |
-| 03 embeddings | MiniLM, BGE-M3, Gemma, Nomic, and Aqueduct Qwen |
+| 03 embeddings | MiniLM, BGE-M3, Nomic, and Aqueduct Qwen |
 | 04 vector databases | Qdrant, pgvector, and FAISS |
 | 05 retrieval | Dense, summary, BM25, PostgreSQL FTS, learned sparse, hybrid, multivector, and full-context retrieval |
 | 06 reranking | Identity, top-k, cross-encoder, BGE, Jina, mxbai, and Qwen reranking |

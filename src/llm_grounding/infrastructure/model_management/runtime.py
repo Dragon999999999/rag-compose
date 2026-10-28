@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,7 @@ from llm_grounding.infrastructure.model_management.models import (
 )
 
 ReadinessProbe = Callable[[str], Awaitable[bool]]
+logger = logging.getLogger(__name__)
 
 
 class DockerModelRuntime:
@@ -113,12 +115,51 @@ class DockerModelRuntime:
             container, "attrs", {}
         ).get("State", {}).get("Status")
         if status != "running":
-            container.start()
+            try:
+                container.start()
+            except Exception as exc:
+                diagnostics = self._container_diagnostics(client, name, container)
+                logger.error(
+                    "Model container %s failed to start: %s; %s",
+                    name,
+                    exc,
+                    diagnostics,
+                )
+                raise RuntimeError(
+                    f"Model container {name} failed to start: {diagnostics}"
+                ) from exc
         reload_method = getattr(container, "reload", None)
         if callable(reload_method):
             reload_method()
         base_url = self._endpoint_url(container, runtime.host_port, runtime.port)
         return ModelEndpoint(definition.id, base_url, name)
+
+    @staticmethod
+    def _container_diagnostics(
+        client: Any, name: str, container: Any | None = None
+    ) -> str:
+        """Return bounded startup state and logs for a failed model container."""
+        try:
+            current = container or client.containers.get(name)
+            attrs = getattr(current, "attrs", {}) or {}
+            state = attrs.get("State", {}) or {}
+            status = getattr(current, "status", None) or state.get("Status", "unknown")
+            exit_code = state.get("ExitCode")
+            logs_method = getattr(current, "logs", None)
+            raw_logs = logs_method(tail=100) if callable(logs_method) else b""
+            if isinstance(raw_logs, bytes):
+                logs = raw_logs.decode("utf-8", errors="replace")
+            else:
+                logs = str(raw_logs)
+            logs = " ".join(logs.split())[-4000:]
+            detail = f"status={status}"
+            if exit_code is not None:
+                detail += f", exit_code={exit_code}"
+            if logs:
+                detail += f", logs={logs}"
+            return detail
+        except Exception as exc:
+            return f"container diagnostics unavailable: {type(exc).__name__}: {exc}"
 
     @staticmethod
     def _ensure_image(client: Any, image: str | None) -> None:
@@ -210,8 +251,17 @@ class DockerModelRuntime:
             if ready:
                 return
             if asyncio.get_running_loop().time() >= deadline:
+                diagnostics = self._container_diagnostics(
+                    self._docker(), endpoint.container_name
+                )
+                logger.error(
+                    "Model container %s did not become ready: %s",
+                    endpoint.container_name,
+                    diagnostics,
+                )
                 raise TimeoutError(
-                    f"Local model runtime did not become ready: {definition.id}"
+                    f"Local model runtime did not become ready: {definition.id}; "
+                    f"{diagnostics}"
                 )
             await asyncio.sleep(0.5)
 

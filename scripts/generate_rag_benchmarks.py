@@ -272,7 +272,7 @@ def build_suite(output_root: Path = DEFAULT_OUTPUT, manifest_path: Path = MANIFE
         ingestion = add_ingestion(f"benchmark_ingest_{experiment_id.lower().replace('-', '_')}", "02_chunking", chunker=chunker)
         add_query(experiment_id, "02_chunking", ingestion, components={"chunker": chunker}, hypothesis=f"The {chunker} strategy changes boundary quality and retrieval context efficiency.", constraints=["Embedding, vector backend, query pipeline, and generation settings remain fixed.", "Specialized chunkers retain their registered model and parameter requirements."])
 
-    for experiment_id, embedding in [("EMB-01", "embedding_local_minilm"), ("EMB-02", "embedding_local_bge_m3"), ("EMB-03", "embedding_local_gemma"), ("EMB-04", "embedding_local_nomic_v2"), ("EMB-05", "embedding_aqueduct_qwen")]:
+    for experiment_id, embedding in [("EMB-01", "embedding_local_minilm"), ("EMB-02", "embedding_local_bge_m3"), ("EMB-04", "embedding_local_nomic_v2"), ("EMB-05", "embedding_aqueduct_qwen")]:
         ingestion = add_ingestion(f"benchmark_ingest_{experiment_id.lower().replace('-', '_')}", "03_embeddings", embedding=embedding)
         add_query(experiment_id, "03_embeddings", ingestion, components={"embedding": embedding}, hypothesis="Changing the embedding model changes semantic recall and resource usage.", metrics=["recall@K", "nDCG@K", "context relevance", "embedding inference time", "estimated cost"])
 

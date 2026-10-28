@@ -96,7 +96,7 @@ async def test_semantic_chunker_uses_embedding_distance_as_boundary() -> None:
     """Semantic chunking keeps nearby sentences and splits the topic transition."""
     config = ChunkerConfig(
         implementation="semantic",
-        model_id="embedding_gemma_300m",
+        model_id="embedding_bge_m3",
         target_tokens=20,
         max_tokens=20,
         overlap_tokens=0,

@@ -56,10 +56,6 @@ def test_local_embedding_catalog_preserves_model_specific_contracts() -> None:
     catalog = load_model_catalog()
 
     assert catalog.embedding("embedding_001").dimension == 384
-    assert catalog.embedding("embedding_gemma_300m").dimension == 768
-    gemma = catalog.embedding("embedding_gemma_300m")
-    assert gemma.query_prefix == "task: search result | query: "
-    assert gemma.document_prefix == "title: none | text: "
     nomic = catalog.embedding("embedding_nomic_v2_moe")
     assert nomic.dimension == 768
     assert nomic.query_prefix == "search_query: "
@@ -142,7 +138,6 @@ def test_default_query_pipeline_resolves_from_component_ids() -> None:
     ("component_id", "model_id"),
     (
         ("embedding_local_minilm", "embedding_001"),
-        ("embedding_local_gemma", "embedding_gemma_300m"),
         ("embedding_local_nomic_v2", "embedding_nomic_v2_moe"),
         ("embedding_local_bge_m3", "embedding_bge_m3"),
     ),

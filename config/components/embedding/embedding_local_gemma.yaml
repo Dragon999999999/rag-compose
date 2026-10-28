@@ -1,6 +1,0 @@
-id: embedding_local_gemma
-type: embedding
-implementation: sentence_transformers
-description: Local EmbeddingGemma retrieval embedding provider.
-config:
-  model_id: embedding_gemma_300m
