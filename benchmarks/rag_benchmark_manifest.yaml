@@ -1,0 +1,1955 @@
+schema_version: 1
+suite: rag-benchmark-76
+seed: 0
+evaluation_conditions:
+  dataset: Use the same fixed evaluation corpus and query set for every family.
+  prompts: Use the selected registered prompt unchanged across comparisons.
+  stochasticity: Record model/provider stochasticity separately from deterministic
+    pipeline metrics.
+experiments:
+- id: BASE-01
+  name: benchmark_base_01
+  family: baselines
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_minilm_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_base_01.yaml
+  components:
+    embedding: embedding_local_minilm
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: MiniLM provides a lightweight quality/latency reference.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: BASE-02
+  name: benchmark_base_02
+  family: baselines
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_base_02.yaml
+  components:
+    embedding: embedding_local_bge_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: BGE-M3 improves retrieval quality over MiniLM at additional resource
+    cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: BASE-03
+  name: benchmark_base_03
+  family: baselines
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_base_03.yaml
+  components:
+    retriever: retriever_hybrid_rrf_default
+    reranker: reranker_bge_v2_m3
+    assessor: assessor_evidence_sufficiency
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A stronger hybrid and reranking stack improves grounded answer quality.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: CHUNK-01
+  name: benchmark_chunk_01
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_01.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_01.yaml
+  components:
+    chunker: chunker_fixed_window
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_fixed_window strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-02
+  name: benchmark_chunk_02
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_02.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_02.yaml
+  components:
+    chunker: chunker_recursive_tokens
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_recursive_tokens strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-03
+  name: benchmark_chunk_03
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_03.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_03.yaml
+  components:
+    chunker: chunker_sentence_window
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_sentence_window strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-04
+  name: benchmark_chunk_04
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_04.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_04.yaml
+  components:
+    chunker: chunker_structural
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_structural strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-05
+  name: benchmark_chunk_05
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_05.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_05.yaml
+  components:
+    chunker: chunker_block_aware
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_block_aware strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-06
+  name: benchmark_chunk_06
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_06.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_06.yaml
+  components:
+    chunker: chunker_semantic
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_semantic strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-07
+  name: benchmark_chunk_07
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_07.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_07.yaml
+  components:
+    chunker: chunker_hierarchical
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_hierarchical strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: CHUNK-08
+  name: benchmark_chunk_08
+  family: chunking
+  status: unsupported
+  ingestion_pipeline: null
+  query_pipeline: null
+  components:
+    chunker: chunker_late
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing this stage should alter the selected quality or cost metric
+    while other stages remain fixed.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+  reason: The registered late chunker requires embedding_jina_v2_base_en, but the
+    repository has no composition component for that embedding model. Adding an unregistered
+    alias would violate the benchmark constraint.
+- id: CHUNK-09
+  name: benchmark_chunk_09
+  family: chunking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_ingest_chunk_09.yaml
+  query_pipeline: config/pipelines/benchmarks/02_chunking/benchmark_chunk_09.yaml
+  components:
+    chunker: chunker_llm_guided
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The chunker_llm_guided strategy changes boundary quality and retrieval
+    context efficiency.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Embedding, vector backend, query pipeline, and generation settings remain fixed.
+  - Specialized chunkers retain their registered model and parameter requirements.
+- id: EMB-01
+  name: benchmark_emb_01
+  family: embeddings
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_01.yaml
+  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_01.yaml
+  components:
+    embedding: embedding_local_minilm
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing the embedding model changes semantic recall and resource usage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - nDCG@K
+  - context relevance
+  - embedding inference time
+  - estimated cost
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: EMB-02
+  name: benchmark_emb_02
+  family: embeddings
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_02.yaml
+  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_02.yaml
+  components:
+    embedding: embedding_local_bge_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing the embedding model changes semantic recall and resource usage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - nDCG@K
+  - context relevance
+  - embedding inference time
+  - estimated cost
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: EMB-03
+  name: benchmark_emb_03
+  family: embeddings
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_03.yaml
+  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_03.yaml
+  components:
+    embedding: embedding_local_gemma
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing the embedding model changes semantic recall and resource usage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - nDCG@K
+  - context relevance
+  - embedding inference time
+  - estimated cost
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: EMB-04
+  name: benchmark_emb_04
+  family: embeddings
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_04.yaml
+  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_04.yaml
+  components:
+    embedding: embedding_local_nomic_v2
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing the embedding model changes semantic recall and resource usage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - nDCG@K
+  - context relevance
+  - embedding inference time
+  - estimated cost
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: EMB-05
+  name: benchmark_emb_05
+  family: embeddings
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_ingest_emb_05.yaml
+  query_pipeline: config/pipelines/benchmarks/03_embeddings/benchmark_emb_05.yaml
+  components:
+    embedding: embedding_aqueduct_qwen
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Changing the embedding model changes semantic recall and resource usage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - nDCG@K
+  - context relevance
+  - embedding inference time
+  - estimated cost
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: VDB-01
+  name: benchmark_vdb_01
+  family: vector databases
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_ingest_vdb_01.yaml
+  query_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_vdb_01.yaml
+  components:
+    vector_backend: vector_backend_qdrant
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The vector_backend_qdrant backend changes retrieval latency, indexing
+    throughput, and resource consumption.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - retrieval latency
+  - indexing throughput
+  - storage
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: VDB-02
+  name: benchmark_vdb_02
+  family: vector databases
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_ingest_vdb_02.yaml
+  query_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_vdb_02.yaml
+  components:
+    vector_backend: vector_backend_pgvector
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The vector_backend_pgvector backend changes retrieval latency, indexing
+    throughput, and resource consumption.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - retrieval latency
+  - indexing throughput
+  - storage
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: VDB-03
+  name: benchmark_vdb_03
+  family: vector databases
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_ingest_vdb_03.yaml
+  query_pipeline: config/pipelines/benchmarks/04_vector_databases/benchmark_vdb_03.yaml
+  components:
+    vector_backend: vector_backend_faiss
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The vector_backend_faiss backend changes retrieval latency, indexing
+    throughput, and resource consumption.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - retrieval latency
+  - indexing throughput
+  - storage
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RET-01
+  name: benchmark_ret_01
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_01.yaml
+  components:
+    retriever: retriever_dense_vector_default
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The dense vector strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - dense vector retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-02
+  name: benchmark_ret_02
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_02.yaml
+  components:
+    retriever: retriever_dense_vector_summary
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The dense summary strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - dense summary retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-03
+  name: benchmark_ret_03
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_03.yaml
+  components:
+    retriever: retriever_sparse_bm25
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The BM25 strategy changes evidence recall, ranking quality, and query
+    cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - BM25 retrieval requires the resources declared by its registered retriever contract.
+- id: RET-04
+  name: benchmark_ret_04
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_04.yaml
+  components:
+    retriever: retriever_sparse_postgres_fts
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The PostgreSQL FTS strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - PostgreSQL FTS retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-05
+  name: benchmark_ret_05
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_05.yaml
+  components:
+    retriever: retriever_sparse_bge_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The BGE-M3 sparse strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - BGE-M3 sparse retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-06
+  name: benchmark_ret_06
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_06.yaml
+  components:
+    retriever: retriever_sparse_splade_v3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The SPLADE-v3 strategy changes evidence recall, ranking quality, and
+    query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - SPLADE-v3 retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-07
+  name: benchmark_ret_07
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_07.yaml
+  components:
+    retriever: retriever_hybrid_rrf_default
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The hybrid RRF strategy changes evidence recall, ranking quality, and
+    query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - hybrid RRF retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-08
+  name: benchmark_ret_08
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_08.yaml
+  components:
+    retriever: retriever_hybrid_weighted
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The weighted hybrid strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - weighted hybrid retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RET-09
+  name: benchmark_ret_09
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_09.yaml
+  components:
+    retriever: retriever_multivector_colbert
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The ColBERT multivector strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - ColBERT multivector retrieval requires the resources declared by its registered
+    retriever contract.
+- id: RET-10
+  name: benchmark_ret_10
+  family: retrieval
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_10.yaml
+  components:
+    retriever: retriever_full_context_postgres
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The full context strategy changes evidence recall, ranking quality,
+    and query cost.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - precision@K
+  - MRR
+  - nDCG@K
+  - retrieval latency
+  compatibility_constraints:
+  - Use the same BGE-M3 recursive ingestion representation where compatible.
+  - full context retrieval requires the resources declared by its registered retriever
+    contract.
+- id: RANK-01
+  name: benchmark_rank_01
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_01.yaml
+  components:
+    reranker: reranker_identity
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_identity changes ranking relevance and inference cost while
+    preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-02
+  name: benchmark_rank_02
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_02.yaml
+  components:
+    reranker: reranker_top_k
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_top_k changes ranking relevance and inference cost while
+    preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-03
+  name: benchmark_rank_03
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_03.yaml
+  components:
+    reranker: reranker_cross_encoder
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_cross_encoder changes ranking relevance and inference cost
+    while preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-04
+  name: benchmark_rank_04
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_04.yaml
+  components:
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_bge_v2_m3 changes ranking relevance and inference cost
+    while preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-05
+  name: benchmark_rank_05
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_05.yaml
+  components:
+    reranker: reranker_jina_v2_multilingual
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_jina_v2_multilingual changes ranking relevance and inference
+    cost while preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-06
+  name: benchmark_rank_06
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_06.yaml
+  components:
+    reranker: reranker_mxbai_base_v2
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_mxbai_base_v2 changes ranking relevance and inference cost
+    while preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RANK-07
+  name: benchmark_rank_07
+  family: reranking
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/06_reranking/benchmark_rank_07.yaml
+  components:
+    reranker: reranker_qwen3_0_6b
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The reranker_qwen3_0_6b changes ranking relevance and inference cost
+    while preserving the baseline candidate pool.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - MRR
+  - nDCG@K
+  - context relevance
+  - reranker inference time
+  - memory consumption
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: KNOW-01
+  name: benchmark_know_01
+  family: knowledge construction
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_ingest_know_01.yaml
+  query_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_know_01.yaml
+  components:
+    knowledge_builder: knowledge_basic
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The knowledge_basic builder changes provenance and metadata available
+    to retrieval and grounding.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: KNOW-02
+  name: benchmark_know_02
+  family: knowledge construction
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_ingest_know_02.yaml
+  query_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_know_02.yaml
+  components:
+    knowledge_builder: knowledge_structural
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The knowledge_structural builder changes provenance and metadata available
+    to retrieval and grounding.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: KNOW-03
+  name: benchmark_know_03
+  family: knowledge construction
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_ingest_know_03.yaml
+  query_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_know_03.yaml
+  components:
+    knowledge_builder: knowledge_metadata_rules
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The knowledge_metadata_rules builder changes provenance and metadata
+    available to retrieval and grounding.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: KNOW-04
+  name: benchmark_know_04
+  family: knowledge construction
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_ingest_know_04.yaml
+  query_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_know_04.yaml
+  components:
+    knowledge_builder: knowledge_metadata_spacy
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The knowledge_metadata_spacy builder changes provenance and metadata
+    available to retrieval and grounding.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: KNOW-05
+  name: benchmark_know_05
+  family: knowledge construction
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_ingest_know_05.yaml
+  query_pipeline: config/pipelines/benchmarks/07_knowledge/benchmark_know_05.yaml
+  components:
+    knowledge_builder: knowledge_metadata_gliner
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The knowledge_metadata_gliner builder changes provenance and metadata
+    available to retrieval and grounding.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-01
+  name: benchmark_assess_01
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_01.yaml
+  components:
+    assessor: assessor_noop
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_noop changes evidence validation and abstention behavior
+    after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-02
+  name: benchmark_assess_02
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_02.yaml
+  components:
+    assessor: assessor_relevance
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_relevance changes evidence validation and abstention behavior
+    after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-03
+  name: benchmark_assess_03
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_03.yaml
+  components:
+    assessor: assessor_diversity
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_diversity changes evidence validation and abstention behavior
+    after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-04
+  name: benchmark_assess_04
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_04.yaml
+  components:
+    assessor: assessor_evidence_sufficiency
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_evidence_sufficiency changes evidence validation and abstention
+    behavior after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-05
+  name: benchmark_assess_05
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_05.yaml
+  components:
+    assessor: assessor_retrieval_confidence
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_retrieval_confidence changes evidence validation and abstention
+    behavior after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: ASSESS-06
+  name: benchmark_assess_06
+  family: assessors
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/08_assessors/benchmark_assess_06.yaml
+  components:
+    assessor: assessor_source_reference
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The assessor_source_reference changes evidence validation and abstention
+    behavior after generation.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - answer correctness
+  - faithfulness
+  - citation accuracy
+  - evidence sufficiency
+  - abstention accuracy
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: DEC-01
+  name: benchmark_dec_01
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_01.yaml
+  components:
+    decision_policy: decision_always_accept
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_always_accept changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-02
+  name: benchmark_dec_02
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_02.yaml
+  components:
+    decision_policy: decision_basic_grounding
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_basic_grounding changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-03
+  name: benchmark_dec_03
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_03.yaml
+  components:
+    decision_policy: decision_threshold
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_threshold changes acceptance, abstention, selection, or
+    recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-04
+  name: benchmark_dec_04
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_04.yaml
+  components:
+    decision_policy: decision_consensus
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_consensus changes acceptance, abstention, selection, or
+    recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-05
+  name: benchmark_dec_05
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_05.yaml
+  components:
+    decision_policy: decision_top_k
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_top_k changes acceptance, abstention, selection, or recovery
+    behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-06
+  name: benchmark_dec_06
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_06.yaml
+  components:
+    decision_policy: decision_token_budget
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_token_budget changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-07
+  name: benchmark_dec_07
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_07.yaml
+  components:
+    decision_policy: decision_select_branches
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_select_branches changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-08
+  name: benchmark_dec_08
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_08.yaml
+  components:
+    decision_policy: decision_merge_branches
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_merge_branches changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-09
+  name: benchmark_dec_09
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_09.yaml
+  components:
+    decision_policy: decision_adaptive_retrieval
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_adaptive_retrieval changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: DEC-10
+  name: benchmark_dec_10
+  family: decision policies
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/09_decision_policies/benchmark_dec_10.yaml
+  components:
+    decision_policy: decision_fallback_retrieval
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: The decision_fallback_retrieval changes acceptance, abstention, selection,
+    or recovery behavior in its intended context.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - evidence sufficiency
+  - abstention accuracy
+  - answer correctness
+  - retrieval latency
+  compatibility_constraints:
+  - Decision policies are evaluated with assessor outputs appropriate to their semantics.
+  - Recovery policies are bounded by max_attempts and max_stage_calls.
+- id: INT-01
+  name: benchmark_int_01
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_01.yaml
+  components:
+    chunker: chunker_recursive_tokens
+    retriever: retriever_dense_vector_default
+    reranker: reranker_identity
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: INT-02
+  name: benchmark_int_02
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_ingest_int_02_semantic.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_02.yaml
+  components:
+    chunker: chunker_semantic
+    retriever: retriever_dense_vector_default
+    reranker: reranker_identity
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: INT-03
+  name: benchmark_int_03
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_ingest_int_03_semantic.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_03.yaml
+  components:
+    chunker: chunker_semantic
+    retriever: retriever_dense_vector_default
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: INT-04
+  name: benchmark_int_04
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_ingest_int_04_hierarchical.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_04.yaml
+  components:
+    chunker: chunker_hierarchical
+    retriever: retriever_dense_vector_default
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: INT-05
+  name: benchmark_int_05
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_05.yaml
+  components:
+    chunker: chunker_recursive_tokens
+    retriever: retriever_hybrid_rrf_default
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: INT-06
+  name: benchmark_int_06
+  family: component interactions
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/10_interactions/benchmark_int_06.yaml
+  components:
+    chunker: chunker_recursive_tokens
+    retriever: retriever_sparse_bge_m3
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: High-value stage combinations can reveal interaction effects that individual-stage
+    comparisons miss.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Keep all unlisted stages at their BGE-M3 baseline values.
+  - Learned sparse retrieval requires a separately prepared sparse index where the
+    ingestion preset does not produce one automatically.
+- id: BRANCH-01
+  name: benchmark_branch_01
+  family: retrieval branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/11_retrieval_branching/benchmark_branch_01.yaml
+  components:
+    branches:
+    - vector_similarity
+    - bm25
+    decision_policy: decision_merge_branches
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Combining dense and lexical evidence improves recall and coverage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: BRANCH-02
+  name: benchmark_branch_02
+  family: retrieval branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/11_retrieval_branching/benchmark_branch_02.yaml
+  components:
+    branches:
+    - vector_similarity
+    - hybrid_rrf
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A selective join can choose the stronger evidence path with lower context
+    noise.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Both branches use the configured BGE reranker implementation; branch-specific
+    model parameters are inherited by the current execution architecture.
+- id: BRANCH-03
+  name: benchmark_branch_03
+  family: retrieval branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/11_retrieval_branching/benchmark_branch_03.yaml
+  components:
+    branches:
+    - vector_similarity
+    - bm25
+    - hybrid_rrf
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Three complementary retrieval paths improve evidence coverage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: BRANCH-04
+  name: benchmark_branch_04
+  family: reranker branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/12_reranker_branching/benchmark_branch_04.yaml
+  components:
+    branches:
+    - reranker_bge_v2_m3
+    - reranker_jina_v2_multilingual
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Parallel reranking paths expose quality/latency trade-offs before branch
+    selection.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - The current branch schema carries runtime implementation names, so model-specific
+    branch settings are represented in the manifest and require branch-aware runtime
+    configuration for exact BGE/Jina separation.
+- id: BRANCH-05
+  name: benchmark_branch_05
+  family: reranker branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/12_reranker_branching/benchmark_branch_05.yaml
+  components:
+    branches:
+    - reranker_cross_encoder
+    - reranker_qwen3_0_6b
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A discriminative and generative reranker branch can trade latency for
+    ranking quality.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - The current branch schema carries runtime implementation names; exact per-model
+    branch settings require branch-aware runtime configuration.
+- id: BRANCH-06
+  name: benchmark_branch_06
+  family: assessor branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/13_assessor_branching/benchmark_branch_06.yaml
+  components:
+    branches:
+    - assessor_relevance
+    - assessor_evidence_sufficiency
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Independent assessor signals provide a more robust decision input than
+    one signal alone.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: BRANCH-07
+  name: benchmark_branch_07
+  family: assessor branching
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/13_assessor_branching/benchmark_branch_07.yaml
+  components:
+    branches:
+    - assessor_diversity
+    - assessor_retrieval_confidence
+    - assessor_evidence_sufficiency
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Diversity, confidence, and sufficiency together characterize retrieval
+    quality more completely.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Use the same dataset, seed, prompts, retrieval depth, context budget, and generation
+    settings across the family.
+- id: RECUR-01
+  name: benchmark_recur_01
+  family: recursive alternatives
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/14_recursive_alternatives/benchmark_recur_01.yaml
+  components:
+    assessor: assessor_evidence_sufficiency
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A bounded retry should recover from insufficient evidence while reusing
+    earlier outputs at the declared restart stage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Alternatives execute in order and stop on acceptance.
+  - Every retry has an explicit source path, decision policy, acceptance condition,
+    max_attempts, and max_stage_calls.
+- id: RECUR-02
+  name: benchmark_recur_02
+  family: recursive alternatives
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/14_recursive_alternatives/benchmark_recur_02.yaml
+  components:
+    reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A bounded retry should recover from insufficient evidence while reusing
+    earlier outputs at the declared restart stage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Alternatives execute in order and stop on acceptance.
+  - Every retry has an explicit source path, decision policy, acceptance condition,
+    max_attempts, and max_stage_calls.
+- id: RECUR-03
+  name: benchmark_recur_03
+  family: recursive alternatives
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/14_recursive_alternatives/benchmark_recur_03.yaml
+  components:
+    retriever: retriever_hybrid_rrf_default
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A bounded retry should recover from insufficient evidence while reusing
+    earlier outputs at the declared restart stage.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Alternatives execute in order and stop on acceptance.
+  - Every retry has an explicit source path, decision policy, acceptance condition,
+    max_attempts, and max_stage_calls.
+- id: ADV-01
+  name: benchmark_adv_01
+  family: combined branching and recursion
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/15_combined/benchmark_adv_01.yaml
+  components:
+    branches:
+    - vector_similarity
+    - bm25
+    retry_source: primary/dense
+    retry_reranker: reranker_bge_v2_m3
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: A selected branch can be partially retried with stronger reranking without
+    repeating retrieval.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - The retry explicitly reuses primary/dense output and restarts at assessor.
+  - Branch-specific model settings follow the current branch-aware runtime limitation.
+- id: ADV-02
+  name: benchmark_adv_02
+  family: combined branching and recursion
+  status: supported
+  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
+  query_pipeline: config/pipelines/benchmarks/15_combined/benchmark_adv_02.yaml
+  components:
+    alternatives:
+    - dense
+    - hybrid
+    - reranker_branches
+    retriever: retriever_hybrid_rrf_default
+    rerankers:
+    - reranker_bge_v2_m3
+    - reranker_jina_v2_multilingual
+  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
+    reranker + noop assessor + always-accept
+  hypothesis: Sequential retrieval alternatives followed by a final reranker branch
+    maximize recovery coverage under a bounded budget.
+  required_models_and_services:
+  - Registered local or configured remote model resources used by the selected components.
+  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
+    according to the ingestion preset.
+  expected_metrics:
+  - recall@K
+  - MRR
+  - answer correctness
+  - faithfulness
+  - end-to-end latency
+  compatibility_constraints:
+  - Alternatives stop after acceptance and reuse the explicitly named earlier path.
+  - Exact model-specific branch settings require branch-aware runtime configuration.

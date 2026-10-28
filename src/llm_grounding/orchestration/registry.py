@@ -145,6 +145,22 @@ def _chunker_requires_runtime_dependencies(name: str) -> Chunker:
     )
 
 
+def _knowledge_builder_requires_runtime_dependencies(name: str) -> KnowledgeBuilder:
+    """Reserve a model-backed builder for the dependency-aware factory path."""
+    raise ConfigurationError(
+        f"The {name} knowledge builder requires model-scoped runtime dependencies; "
+        "construct it through the application bootstrap."
+    )
+
+
+def _reranker_requires_runtime_dependencies(name: str) -> Reranker:
+    """Reserve a model-backed reranker for the model-aware factory path."""
+    raise ConfigurationError(
+        f"The {name} reranker requires model-scoped runtime dependencies; "
+        "construct it through the application bootstrap."
+    )
+
+
 class ComponentRegistry:
     """Map stage-local names to typed constructors and validate complete composition."""
 
@@ -160,6 +176,11 @@ class ComponentRegistry:
             "structural": lambda config: StructuralKnowledgeBuilder(),
             "metadata_rules": RuleMetadataKnowledgeBuilder,
             "metadata_spacy": SpacyMetadataKnowledgeBuilder,
+            "metadata_gliner": (
+                lambda config: _knowledge_builder_requires_runtime_dependencies(
+                    "metadata_gliner"
+                )
+            ),
         }
         self.retrievers: dict[str, Callable[[], Retriever]] = {
             "vector_similarity": _vector_retriever_requires_runtime_dependencies,
@@ -192,6 +213,9 @@ class ComponentRegistry:
                 device=config.device,
                 batch_size=config.batch_size,
                 top_k=config.rerank_top_k,
+            ),
+            "generative": lambda config: _reranker_requires_runtime_dependencies(
+                "generative"
             ),
         }
         self.pipeline_reasoners = frozenset({"basic_grounded"})

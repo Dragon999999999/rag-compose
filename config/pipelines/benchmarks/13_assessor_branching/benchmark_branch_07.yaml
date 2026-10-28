@@ -1,0 +1,41 @@
+schema_version: 2
+kind: query
+name: benchmark_branch_07
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_relevance
+  decision_policy: decision_basic_grounding
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 1
+    max_stage_calls: 100
+    evidence_merge: replace
+    final_failure_policy: last_result
+    alternatives:
+    - id: primary
+      acceptance:
+        strategy: always_accept
+      decision_policy:
+        type: decision_policy
+        implementation: basic_grounding
+      branches:
+      - id: diversity
+        start_at: assessor
+        assessors:
+        - diversity
+      - id: confidence
+        start_at: assessor
+        assessors:
+        - retrieval_confidence
+      - id: sufficiency
+        start_at: assessor
+        assessors:
+        - evidence_sufficiency

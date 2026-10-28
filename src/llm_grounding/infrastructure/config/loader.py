@@ -145,7 +145,7 @@ def discover_pipeline_paths(directory: Path | None = None) -> tuple[Path, ...]:
             root = Path(str(packaged))
     if not root.is_dir():
         return ()
-    return tuple(sorted((*root.glob("*.yaml"), *root.glob("*.yml"))))
+    return tuple(sorted((*root.rglob("*.yaml"), *root.rglob("*.yml"))))
 
 
 def pipeline_source_fingerprint(path: Path) -> str:

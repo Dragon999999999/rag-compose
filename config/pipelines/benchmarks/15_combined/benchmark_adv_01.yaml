@@ -1,0 +1,63 @@
+schema_version: 2
+kind: query
+name: benchmark_adv_01
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_evidence_sufficiency
+  decision_policy: decision_select_branches
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 2
+    max_stage_calls: 100
+    evidence_merge: replace
+    final_failure_policy: last_result
+    alternatives:
+    - id: primary
+      acceptance:
+        strategy: evidence_sufficiency
+      decision_policy:
+        type: decision_policy
+        implementation: select_branches
+      branches:
+      - id: dense
+        start_at: retriever
+        retriever: vector_similarity
+        reranker: cross_encoder
+        assessors:
+        - relevance
+      - id: bm25
+        start_at: retriever
+        retriever: bm25
+        reranker: cross_encoder
+        assessors:
+        - relevance
+    - id: retry
+      acceptance:
+        strategy: always_accept
+      decision_policy:
+        type: decision_policy
+        implementation: basic_grounding
+      source:
+        alternative_id: primary
+        path_id: dense
+        restart_stage: assessor
+      stage_overrides:
+        reranker:
+          type: reranker
+          implementation: cross_encoder
+          model_id: reranker_bge_v2_m3
+          retrieval_top_k: 20
+          rerank_top_k: 5
+          device: cuda
+          batch_size: 2
+        assessors:
+        - type: assessor
+          implementation: evidence_sufficiency

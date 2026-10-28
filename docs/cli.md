@@ -54,6 +54,16 @@ llm-grounding pipeline import [DIRECTORY]
 llm-grounding pipeline delete PIPELINE_ID
 ```
 
+The checked-in benchmark suite can be imported as a directory; discovery is
+recursive across its numbered family folders:
+
+```bash
+llm-grounding pipeline import config/pipelines/benchmarks
+```
+
+See [`rag_benchmarks.md`](rag_benchmarks.md) for the 76-entry manifest,
+validation coverage, and known representation boundaries.
+
 Ingestion pipelines are valid for projects. Query pipelines are valid for
 chats. The pipeline service enforces those scopes and validates configuration
 compatibility before persistence.

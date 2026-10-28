@@ -1,0 +1,39 @@
+schema_version: 2
+kind: query
+name: benchmark_branch_04
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_relevance
+  decision_policy: decision_select_branches
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 1
+    max_stage_calls: 100
+    evidence_merge: replace
+    final_failure_policy: last_result
+    alternatives:
+    - id: primary
+      acceptance:
+        strategy: always_accept
+      decision_policy:
+        type: decision_policy
+        implementation: select_branches
+      branches:
+      - id: bge
+        start_at: retriever
+        reranker: cross_encoder
+        assessors:
+        - relevance
+      - id: jina
+        start_at: retriever
+        reranker: cross_encoder
+        assessors:
+        - relevance

@@ -249,10 +249,6 @@ class PipelineRuntimeResolver:
             raise PipelineResolutionError(
                 "The vector runtime requires the basic_grounded reasoner"
             )
-        if architecture.decision_policy.implementation != "basic_grounding":
-            raise PipelineResolutionError(
-                "The vector runtime requires the basic_grounding decision policy"
-            )
         if architecture.renderer.implementation != "grounded_answer":
             raise PipelineResolutionError(
                 "The vector runtime requires the grounded_answer renderer"
