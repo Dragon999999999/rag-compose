@@ -2,4 +2,6 @@ id: decision_basic_grounding
 type: decision_policy
 implementation: basic_grounding
 description: Apply the configured grounded-answer acceptance policy.
+input_terms: [assessment:source_reference]
+output_terms: [decision:accept, decision:abstain, decision:reject]
 config: {}

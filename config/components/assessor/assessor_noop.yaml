@@ -2,4 +2,6 @@ id: assessor_noop
 type: assessor
 implementation: noop
 description: Preserve the baseline without running an assessment.
+input_terms: []
+output_terms: []
 config: {}

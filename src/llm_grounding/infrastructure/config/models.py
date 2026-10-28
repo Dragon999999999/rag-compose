@@ -18,6 +18,11 @@ from pydantic import (
     model_validator,
 )
 
+from llm_grounding.infrastructure.config.contracts import (
+    assessor_default_output_terms,
+    decision_default_input_terms,
+    decision_default_output_terms,
+)
 from llm_grounding.ingestion.models import (
     ChunkerConfig,
     EmbeddingConfig,
@@ -35,6 +40,8 @@ class ComponentConfig(BaseModel):
     implementation: str | None = Field(
         default=None, min_length=1, description="Registered runtime implementation."
     )
+    input_terms: tuple[str, ...] = ()
+    output_terms: tuple[str, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -114,6 +121,20 @@ class AssessorConfig(ComponentConfig):
     fallback_to_retrieval: bool = False
     requested_aspects: tuple[str, ...] = ()
     max_pairs: int = Field(default=1000, ge=1, le=100000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_contract_defaults(cls, value: object) -> object:
+        """Advertise the measurements produced by this assessor."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if "output_terms" not in normalized:
+            implementation = normalized.get("implementation", "source_reference")
+            normalized["output_terms"] = tuple(
+                sorted(assessor_default_output_terms(str(implementation)))
+            )
+        return normalized
 
 
 class ModelConfig(BaseModel):
@@ -347,6 +368,32 @@ class DecisionPolicyConfig(ComponentConfig):
     min_agreement: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
     parameter_overrides: dict[str, object] = Field(default_factory=dict)
     branch_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_contract_defaults(cls, value: object) -> object:
+        """Advertise policy inputs and outputs when older YAML omits them."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        implementation = str(normalized.get("implementation", "basic_grounding"))
+        assessment_dimension = normalized.get("assessment_dimension")
+        if "input_terms" not in normalized:
+            normalized["input_terms"] = tuple(
+                sorted(
+                    decision_default_input_terms(
+                        implementation,
+                        assessment_dimension
+                        if isinstance(assessment_dimension, str)
+                        else None,
+                    )
+                )
+            )
+        if "output_terms" not in normalized:
+            normalized["output_terms"] = tuple(
+                sorted(decision_default_output_terms(implementation))
+            )
+        return normalized
 
 
 class ExecutionBranchConfig(BaseModel):

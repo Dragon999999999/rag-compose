@@ -9,6 +9,7 @@ query:
   reasoner: reasoner_basic_grounded
   assessors:
   - assessor_relevance
+  - assessor_source_reference
   decision_policy: decision_basic_grounding
   renderer: renderer_grounded_answer
   chat_history:

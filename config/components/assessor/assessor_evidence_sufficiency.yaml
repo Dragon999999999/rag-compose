@@ -2,4 +2,6 @@ id: assessor_evidence_sufficiency
 type: assessor
 implementation: evidence_sufficiency
 description: Estimate query-term, entity, and aspect coverage heuristically.
+input_terms: []
+output_terms: [assessment:evidence_sufficiency, assessment:numeric_score, assessment:label]
 config: {}

@@ -405,6 +405,8 @@ class ComponentDefinition(BaseModel):
     description: str = Field(default="", max_length=4000)
     config: dict[str, object] = Field(default_factory=dict)
     requirements: ComponentRequirements | None = None
+    input_terms: tuple[str, ...] = ()
+    output_terms: tuple[str, ...] = ()
 
     def settings(self) -> dict[str, object]:
         """Return nested implementation settings for typed runtime validation."""

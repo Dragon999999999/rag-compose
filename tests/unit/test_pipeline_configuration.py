@@ -18,7 +18,11 @@ from llm_grounding.infrastructure.config.loader import (
     load_model_catalog,
     load_pipeline_config,
 )
-from llm_grounding.infrastructure.config.models import ModelCatalog, PipelineConfig
+from llm_grounding.infrastructure.config.models import (
+    DecisionPolicyConfig,
+    ModelCatalog,
+    PipelineConfig,
+)
 from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 from llm_grounding.infrastructure.database.models import PipelineRow
 from llm_grounding.ingestion.models import (
@@ -115,6 +119,42 @@ def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
         "ingestion_minimal_v1",
         "query_basic_v1",
     }
+
+
+def test_base03_uses_a_policy_that_consumes_evidence_sufficiency() -> None:
+    """BASE-03 pairs its sufficiency assessor with a numeric-score policy."""
+    config = load_pipeline_config(
+        Path("config/pipelines/benchmarks/01_baselines/benchmark_base_03.yaml")
+    )
+
+    assert config.query is not None
+    assert config.query.decision_policy.implementation == "threshold"
+    assert "assessment:numeric_score" in config.query.decision_policy.input_terms
+    assert config.query.assessors[0].output_terms
+
+
+def test_pipeline_validation_rejects_unmatched_assessor_policy_terms() -> None:
+    """A policy requiring source validation cannot consume sufficiency alone."""
+    catalog = load_model_catalog()
+    config = load_pipeline_config(
+        Path("config/pipelines/benchmarks/01_baselines/benchmark_base_03.yaml"),
+        catalog=catalog,
+    )
+    assert config.query is not None
+    mismatched = config.model_copy(
+        update={
+            "query": config.query.model_copy(
+                update={
+                    "decision_policy": DecisionPolicyConfig(
+                        implementation="basic_grounding"
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ConfigurationError, match="source_reference"):
+        ComponentRegistry().validate_pipeline(mismatched, catalog)
 
 
 def test_aqueduct_embedding_component_resolves_into_ingestion_config(

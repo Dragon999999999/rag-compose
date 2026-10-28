@@ -33,6 +33,7 @@ from llm_grounding.decision.policies import (
 from llm_grounding.decision.protocol import DecisionPolicy
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
+from llm_grounding.infrastructure.config.contracts import missing_contract_terms
 from llm_grounding.infrastructure.config.loader import ConfigurationError
 from llm_grounding.infrastructure.config.models import (
     AssessorConfig,
@@ -591,6 +592,23 @@ class ComponentRegistry:
                 )
                 for item in config.query.assessors
             )
+            assessor_terms = {
+                term
+                for assessor in config.query.assessors
+                for term in assessor.output_terms
+            }
+            available_terms = assessor_terms | {"context:token_count"}
+            missing_terms = missing_contract_terms(
+                config.query.decision_policy.input_terms,
+                available_terms,
+            )
+            if missing_terms:
+                raise ConfigurationError(
+                    "Decision policy "
+                    f"{config.query.decision_policy.implementation!r} requires "
+                    "unavailable assessor terms: "
+                    + ", ".join(sorted(missing_terms))
+                )
         for stage, name, factories in selections:
             if name not in factories:
                 raise ConfigurationError(

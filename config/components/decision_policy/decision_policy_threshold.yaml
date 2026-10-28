@@ -2,5 +2,7 @@ id: decision_threshold
 type: decision_policy
 implementation: threshold
 description: Accept when configured assessor scores meet a threshold.
+input_terms: [assessment:numeric_score]
+output_terms: [decision:accept, decision:abstain]
 config:
   threshold: 0.5

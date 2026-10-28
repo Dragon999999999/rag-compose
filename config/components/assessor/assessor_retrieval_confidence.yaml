@@ -2,4 +2,6 @@ id: assessor_retrieval_confidence
 type: assessor
 implementation: retrieval_confidence
 description: Summarize native retrieval scores without treating them as probabilities.
+input_terms: []
+output_terms: [assessment:retrieval_confidence, assessment:numeric_score, assessment:label]
 config: {}

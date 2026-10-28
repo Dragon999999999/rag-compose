@@ -2,4 +2,6 @@ id: assessor_relevance
 type: assessor
 implementation: relevance
 description: Assess existing reranking scores without additional inference.
+input_terms: []
+output_terms: [assessment:relevance, assessment:numeric_score, assessment:label]
 config: {}

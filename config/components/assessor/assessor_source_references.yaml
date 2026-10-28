@@ -2,4 +2,6 @@ id: assessor_source_references
 type: assessor
 implementation: source_reference
 description: Validate grounded claims against cited source references.
+input_terms: []
+output_terms: [assessment:source_reference, assessment:label]
 config: {}

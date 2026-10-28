@@ -2,5 +2,7 @@ id: decision_token_budget
 type: decision_policy
 implementation: token_budget
 description: Abstain when assessor-reported context tokens exceed a budget.
+input_terms: [context:token_count]
+output_terms: [decision:accept, decision:abstain]
 config:
   token_budget: 16000

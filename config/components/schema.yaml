@@ -39,4 +39,14 @@ properties:
         items:
           type: string
     x-override-scopes: []
+  input_terms:
+    type: array
+    uniqueItems: true
+    items: {type: string, minLength: 1}
+    x-override-scopes: []
+  output_terms:
+    type: array
+    uniqueItems: true
+    items: {type: string, minLength: 1}
+    x-override-scopes: []
 additionalProperties: false

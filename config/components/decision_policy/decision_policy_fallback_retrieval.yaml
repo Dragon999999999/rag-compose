@@ -2,6 +2,8 @@ id: decision_fallback_retrieval
 type: decision_policy
 implementation: fallback_retrieval
 description: Request bounded fallback retrieval when evidence is weak.
+input_terms: [assessment:numeric_score]
+output_terms: [decision:accept, decision:retrieve_again]
 config:
   threshold: 0.5
   parameter_overrides: {}

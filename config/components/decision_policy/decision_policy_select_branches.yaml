@@ -2,5 +2,7 @@ id: decision_select_branches
 type: decision_policy
 implementation: select_branches
 description: Select configured branches at the decision-policy join.
+input_terms: []
+output_terms: [decision:select_branches]
 config:
   branch_ids: []

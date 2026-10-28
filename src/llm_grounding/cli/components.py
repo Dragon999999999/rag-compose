@@ -111,6 +111,8 @@ def _definition_payload(
         "type": definition.type,
         "implementation": definition.implementation,
         "description": definition.description,
+        "input_terms": list(definition.input_terms),
+        "output_terms": list(definition.output_terms),
         "configured": definition.config,
         "requirements": (
             definition.requirements.model_dump(mode="json")

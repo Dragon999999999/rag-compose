@@ -277,6 +277,9 @@ class ConfigurationRegistry:
             "implementation": definition.implementation,
             **definition.settings(),
         }
+        if category in {"assessor", "decision_policy"}:
+            values["input_terms"] = definition.input_terms
+            values["output_terms"] = definition.output_terms
         if definition.requirements is not None:
             values["requirements"] = definition.requirements.model_dump(mode="json")
         try:
