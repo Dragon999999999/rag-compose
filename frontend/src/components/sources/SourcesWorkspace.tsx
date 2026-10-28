@@ -12,7 +12,6 @@ type SourcesWorkspaceProps = {
   uploadError?: Error | null;
   onUpload: (file: File) => Promise<unknown>;
   onRemove: (id: string) => void;
-  onOpen: (source: Source) => void;
 };
 
 type PendingUpload = {
@@ -29,7 +28,6 @@ export function SourcesWorkspace({
   uploadError,
   onUpload,
   onRemove,
-  onOpen,
 }: SourcesWorkspaceProps) {
   const [file, setFile] = useState<File | null>(null);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
@@ -75,7 +73,6 @@ export function SourcesWorkspace({
           error: null,
           created_at: pendingUpload.createdAt,
         },
-        summary: null,
       }
     : null;
   const visibleSources = pendingSource
@@ -125,14 +122,10 @@ export function SourcesWorkspace({
             <span />
           </div>
           {visibleSources.map((source) => (
-            <div className="source-row source-row-openable" key={source.document.id}>
-              <button
-                className="source-name"
-                disabled={source.document.id === pendingUpload?.id}
-                onClick={() => onOpen(source)}
-              >
+            <div className="source-row" key={source.document.id}>
+              <span className="source-name">
                 {source.document.name}
-              </button>
+              </span>
               <StatusBadge status={source.ingestion?.status ?? "pending"} />
               <time>{new Date(source.document.created_at).toLocaleDateString()}</time>
               {source.document.id === pendingUpload?.id ? (

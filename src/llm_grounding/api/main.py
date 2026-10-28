@@ -35,13 +35,10 @@ from llm_grounding.domain.corpus import (
     Chat,
     Document,
     DocumentIngestion,
-    DocumentSummary,
-    IngestionStatus,
     Message,
     Pipeline,
     Project,
     RetrievalUnit,
-    SummaryStatus,
     TaskType,
 )
 from llm_grounding.domain.evidence import EvidenceUnit
@@ -110,16 +107,15 @@ class ChatUpdateRequest(BaseModel):
 
 
 class AskRequest(BaseModel):
-    """Submit one persisted question or dedicated summary request."""
+    """Submit one persisted question to a chat."""
 
     message: str = Field(min_length=1, max_length=20_000)
-    summary: bool = False
     pipeline_id: str | None = Field(default=None, min_length=1, max_length=36)
     stage_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 def _item(
-    value: Project | Chat | Document | DocumentIngestion | DocumentSummary | Pipeline,
+    value: Project | Chat | Document | DocumentIngestion | Pipeline,
 ) -> dict[str, object]:
     """Serialize a small immutable domain record without framework leakage."""
     item = cast(dict[str, object], asdict(value))
@@ -149,39 +145,11 @@ async def _source_dto(
     document: Document,
     ingestion: DocumentIngestion | None,
 ) -> dict[str, object]:
-    """Serialize lightweight source-management data without loading its summary."""
-    summary = (
-        await application.repository.document_summary(document.id, ingestion.id)
-        if ingestion is not None
-        else None
-    )
+    """Serialize lightweight source-management data."""
     return {
         "document": _item(document),
         "ingestion": _item(ingestion) if ingestion else None,
-        "summary": _item(summary) if summary else None,
     }
-
-
-async def _document_summary_dto(
-    application: PhaseOneApplication,
-    document_id: str,
-    ingestion_id: str,
-) -> dict[str, object]:
-    """Return summary lifecycle state and its existing grounded provenance payload."""
-    summary = await application.repository.document_summary(document_id, ingestion_id)
-    if summary is None:
-        return {
-            "document_id": document_id,
-            "ingestion_id": ingestion_id,
-            "status": SummaryStatus.PENDING,
-            "rag_run_id": None,
-            "error": None,
-            "page_count": None,
-        }
-    result = _item(summary)
-    if summary.status == SummaryStatus.READY and summary.rag_run_id is not None:
-        result["answer"] = await _structured_run(application, summary.rag_run_id)
-    return result
 
 
 def _message_dto(message: Message) -> dict[str, object]:
@@ -648,7 +616,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             answer = await application.chats.ask(
                 chat_id,
                 request.message,
-                TaskType.SUMMARY if request.summary else TaskType.QA,
+                TaskType.QA,
                 request.pipeline_id,
                 request.stage_overrides,
             )
@@ -684,62 +652,6 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
                 project_id, temporary_path, load_ingestion_config(None)
             )
             return await _source_dto(application, document, ingestion)
-
-    @app.get("/api/projects/{project_id}/documents/{document_id}/summary")
-    async def document_summary(project_id: str, document_id: str) -> dict[str, object]:
-        """Load one project's existing grounded overview for an attached PDF."""
-        source = next(
-            (
-                item
-                for item in await application.projects.list_documents(project_id)
-                if item[0].id == document_id and item[1] is not None
-            ),
-            None,
-        )
-        if source is None:
-            raise HTTPException(404, "Document is not available in this project.")
-        document, ingestion = source
-        assert ingestion is not None
-        if ingestion.status == IngestionStatus.READY:
-            if application.summaries is None:
-                raise HTTPException(
-                    409,
-                    "Document summaries require a dense vector index for this "
-                    "ingestion.",
-                )
-            await application.summaries.schedule_summary(
-                project_id, document, ingestion
-            )
-        return await _document_summary_dto(application, document.id, ingestion.id)
-
-    @app.post("/api/projects/{project_id}/documents/{document_id}/summary/regenerate")
-    async def regenerate_document_summary(
-        project_id: str, document_id: str
-    ) -> dict[str, object]:
-        """Explicitly regenerate a ready PDF's grounded document overview."""
-        source = next(
-            (
-                item
-                for item in await application.projects.list_documents(project_id)
-                if item[0].id == document_id and item[1] is not None
-            ),
-            None,
-        )
-        if source is None:
-            raise HTTPException(404, "Document is not available in this project.")
-        document, ingestion = source
-        assert ingestion is not None
-        if ingestion.status != IngestionStatus.READY:
-            raise HTTPException(
-                409, "Document ingestion is not ready for summarization."
-            )
-        if application.summaries is None:
-            raise HTTPException(
-                409,
-                "Document summaries require a dense vector index for this ingestion.",
-            )
-        await application.summaries.regenerate_summary(project_id, document, ingestion)
-        return await _document_summary_dto(application, document.id, ingestion.id)
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
     async def remove_document(project_id: str, document_id: str) -> None:

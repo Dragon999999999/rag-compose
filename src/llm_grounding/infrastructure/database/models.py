@@ -384,37 +384,6 @@ class RagRunObservationRow(Base):
     )
 
 
-class DocumentSummaryRow(Base):
-    """Persist a grounded document overview and its validated RAG run."""
-
-    __tablename__ = "document_summaries"
-    __table_args__ = (
-        UniqueConstraint(
-            "document_id", "ingestion_id", name="uq_document_summary_ingestion"
-        ),
-    )
-    document_id: Mapped[str] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
-    )
-    ingestion_id: Mapped[str] = mapped_column(
-        ForeignKey("document_ingestions.id", ondelete="CASCADE"), primary_key=True
-    )
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    rag_run_id: Mapped[str | None] = mapped_column(
-        ForeignKey("rag_runs.id", ondelete="SET NULL")
-    )
-    error: Mapped[str | None] = mapped_column(Text)
-    page_count: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
 class MessageRow(Base):
     """Persist chat messages and optional link to their RAG run."""
 

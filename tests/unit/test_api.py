@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 
 from llm_grounding.api.main import (
     _claim_source_chunk_ids,
-    _document_summary_dto,
     _evidence_dto,
     _item,
     _message_dto,
@@ -14,11 +13,9 @@ from llm_grounding.api.main import (
 from llm_grounding.domain.answers import Answer
 from llm_grounding.domain.corpus import (
     Chat,
-    DocumentSummary,
     EvidenceReference,
     Message,
     RetrievalUnit,
-    SummaryStatus,
 )
 from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
@@ -196,7 +193,6 @@ async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() 
     assert dto["evidence"][additional.chunk_id]["reference_label"] == "Smith_16"
     assert dto["evidence"][additional.chunk_id]["used"] is False
 
-
 def test_claim_source_chunk_ids_are_unique_in_first_citation_order() -> None:
     """The browser used subset follows canonical claims without duplicate IDs."""
     payload = GroundedResponsePayload(
@@ -257,79 +253,3 @@ async def test_structured_run_derives_used_chunks_from_canonical_claims() -> Non
     assert dto["claims"][0]["citations"] == [{"chunk_id": cited.chunk_id}]
     assert dto["evidence"][cited.chunk_id]["used"] is True
     assert dto["evidence"][additional.chunk_id]["used"] is False
-
-
-class DocumentSummaryRepository(RunEvidenceRepository):
-    """Expose one persisted document summary beside its RAG run metadata."""
-
-    def __init__(
-        self,
-        chunks: tuple[RetrievalUnit, ...],
-        metadata: dict[str, object],
-        summary: DocumentSummary,
-    ) -> None:
-        """Retain the expected summary record."""
-        super().__init__(chunks, metadata)
-        self._summary = summary
-
-    async def document_summary(
-        self, document_id: str, ingestion_id: str
-    ) -> DocumentSummary:
-        """Return the persisted summary only for its canonical document version."""
-        assert (document_id, ingestion_id) == (
-            self._summary.document_id,
-            self._summary.ingestion_id,
-        )
-        return self._summary
-
-
-async def test_document_summary_dto_reuses_grounded_run_evidence() -> None:
-    """The overview returns normal citations and PDF provenance, not a new format."""
-    chunk = RetrievalUnit(
-        "canonical-cited",
-        "document",
-        "ingestion",
-        "Smith.pdf",
-        "Supported text.",
-        14,
-        3,
-        3,
-        (),
-    )
-    payload = GroundedResponsePayload(
-        turn_title="Document overview",
-        answer_text="Supported text.",
-        claims=[{"text": "Supported text.", "source_chunk_ids": [chunk.chunk_id]}],
-        insufficient_evidence=False,
-    )
-    now = datetime.now(UTC)
-    summary = DocumentSummary(
-        "document",
-        "ingestion",
-        SummaryStatus.READY,
-        "run",
-        None,
-        24,
-        now,
-        now,
-    )
-    repository = DocumentSummaryRepository(
-        (chunk,),
-        {
-            "answer_payload": payload.model_dump(mode="json"),
-            "retrieved_chunk_ids": [chunk.chunk_id],
-        },
-        summary,
-    )
-    application = EvidenceApplication((chunk,))
-    application.repository = repository
-
-    dto = await _document_summary_dto(
-        application, "document", "ingestion"  # type: ignore[arg-type]
-    )
-
-    assert dto["status"] == SummaryStatus.READY
-    assert dto["page_count"] == 24
-    answer = dto["answer"]
-    assert answer["claims"][0]["citations"] == [{"chunk_id": chunk.chunk_id}]
-    assert answer["evidence"][chunk.chunk_id]["document_name"] == "Smith.pdf"

@@ -82,15 +82,6 @@ class IngestionStatus(StrEnum):
     FAILED = "failed"
 
 
-class SummaryStatus(StrEnum):
-    """Expose the persisted lifecycle of a grounded document summary."""
-
-    PENDING = "pending"
-    GENERATING = "generating"
-    READY = "ready"
-    FAILED = "failed"
-
-
 @dataclass(frozen=True)
 class DocumentIngestion:
     """Identify a document representation and its effective configuration."""
@@ -104,20 +95,6 @@ class DocumentIngestion:
     status: IngestionStatus
     created_at: datetime
     error: str | None = None
-
-
-@dataclass(frozen=True)
-class DocumentSummary:
-    """Persist one grounded overview for a document ingestion representation."""
-
-    document_id: str
-    ingestion_id: str
-    status: SummaryStatus
-    rag_run_id: str | None
-    error: str | None
-    page_count: int | None
-    created_at: datetime
-    updated_at: datetime
 
 
 @dataclass(frozen=True)

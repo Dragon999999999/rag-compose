@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { DocumentSummary, Source } from "./types";
+import type { Source } from "./types";
 
 export const documentsApi = {
   list: (projectId: string) => request<Source[]>(`/projects/${projectId}/documents`),
@@ -10,11 +10,4 @@ export const documentsApi = {
   },
   remove: (projectId: string, documentId: string) =>
     request<void>(`/projects/${projectId}/documents/${documentId}`, { method: "DELETE" }),
-  summary: (projectId: string, documentId: string) =>
-    request<DocumentSummary>(`/projects/${projectId}/documents/${documentId}/summary`),
-  regenerateSummary: (projectId: string, documentId: string) =>
-    request<DocumentSummary>(
-      `/projects/${projectId}/documents/${documentId}/summary/regenerate`,
-      { method: "POST" },
-    ),
 };

@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_grounding.application.chat_service import ChatService
 from llm_grounding.application.component_sync import ComponentSynchronizer
-from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.application.pipeline_service import PipelineService
@@ -58,7 +57,6 @@ class PhaseOneApplication:
         vectors: VectorStore | None,
         repository: PostgresRepository,
         artifacts: ArtifactStore,
-        summaries: DocumentSummaryService | None,
         runner: BasicRagRunner | None = None,
         architecture: ArchitectureConfig | None = None,
         ingestion_config: IngestionConfig | None = None,
@@ -74,11 +72,7 @@ class PhaseOneApplication:
             engine,
             vectors,
         )
-        self.repository, self.artifacts, self.summaries = (
-            repository,
-            artifacts,
-            summaries,
-        )
+        self.repository, self.artifacts = repository, artifacts
         self.evaluation = EvalApplication(EvalCorpusService(repository), vectors)
         self.runner = runner
         self.architecture = architecture
@@ -117,8 +111,6 @@ class PhaseOneApplication:
         """Dispose database and Qdrant client resources after application shutdown."""
         if self.pipeline_runtime is not None:
             await self.pipeline_runtime.close()
-        if self.summaries is not None:
-            await self.summaries.close()
         if self._vectors is not None and hasattr(self._vectors, "close"):
             await self._vectors.close()
         if self._local_model_manager is not None:
@@ -233,7 +225,6 @@ def create_phase_one_application(
         local_model_manager=local_model_manager,
     )
     runner = None
-    summaries = None
     if (
         architecture.retriever.type == "dense"
         and ingestion_config.embedding is not None
@@ -271,7 +262,6 @@ def create_phase_one_application(
             ),
             execution=architecture.execution,
         )
-        summaries = DocumentSummaryService(repository, runner)
     max_history = (
         architecture.chat_history.max_messages if architecture.chat_history else 10
     )
@@ -280,7 +270,6 @@ def create_phase_one_application(
             repository,
             ingestion,
             vectors,
-            summaries,
             pipeline_service,
         ),
         ChatService(
@@ -296,7 +285,6 @@ def create_phase_one_application(
         vectors,
         repository,
         artifacts,
-        summaries,
         runner,
         architecture,
         ingestion_config,

@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-from llm_grounding.application.document_summary_service import DocumentSummaryService
 from llm_grounding.application.pipeline_compatibility import (
     IndexCapabilities,
     validate_query_compatibility,
+)
+from llm_grounding.application.pipeline_readiness import (
+    log_ingestion_pipeline_ready,
 )
 from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.domain.corpus import Document, DocumentIngestion, Project
@@ -24,7 +26,6 @@ class ProjectService:
         repository: PostgresRepository,
         ingestion: DocumentIngestionService,
         vectors: VectorStore | None,
-        summaries: DocumentSummaryService | None = None,
         pipeline_service: PipelineService | None = None,
     ) -> None:
         """Inject canonical persistence and the separate ingestion workflow."""
@@ -33,7 +34,6 @@ class ProjectService:
             ingestion,
             vectors,
         )
-        self._summaries = summaries
         self._pipeline_service = pipeline_service
 
     async def create_project(
@@ -43,7 +43,8 @@ class ProjectService:
         if self._pipeline_service is None:
             return await self._repository.create_project(name)
         pipeline = await self._pipeline_service.select_ingestion(ingestion_pipeline_id)
-        await self._pipeline_service.resolve_ingestion(pipeline.id)
+        config = await self._pipeline_service.resolve_ingestion(pipeline.id)
+        log_ingestion_pipeline_ready(pipeline, config)
         return await self._repository.create_project(
             name,
             ingestion_pipeline_id=pipeline.id,
@@ -60,7 +61,8 @@ class ProjectService:
             raise ValueError("Pipeline management is unavailable")
         project = await self._repository.get_project(project_id)
         pipeline = await self._pipeline_service.select_ingestion(ingestion_pipeline_id)
-        await self._pipeline_service.resolve_ingestion(pipeline.id)
+        config = await self._pipeline_service.resolve_ingestion(pipeline.id)
+        log_ingestion_pipeline_ready(pipeline, config)
         if (
             project.index_capabilities
             and project.ingestion_representation_hash is not None
@@ -98,7 +100,8 @@ class ProjectService:
         if self._pipeline_service is None:
             raise ValueError("Pipeline management is unavailable")
         pipeline = await self._pipeline_service.select_ingestion(ingestion_pipeline_id)
-        await self._pipeline_service.resolve_ingestion(pipeline.id)
+        config = await self._pipeline_service.resolve_ingestion(pipeline.id)
+        log_ingestion_pipeline_ready(pipeline, config)
         return await self._repository.set_project_ingestion_pipeline(
             project_id,
             pipeline.id,
@@ -148,7 +151,7 @@ class ProjectService:
     async def add_document(
         self, project_id: str, file: Path, config: IngestionConfig
     ) -> tuple[Document, DocumentIngestion]:
-        """Attach/index a PDF, then persist its grounded document overview."""
+        """Attach and index a PDF using the project's selected pipeline."""
         selected_pipeline = None
         if self._pipeline_service is not None:
             project = await self._repository.get_project(project_id)
@@ -177,8 +180,6 @@ class ProjectService:
                 representation_hash=selected_pipeline.representation_hash,
                 index_capabilities=capabilities.as_dict(),
             )
-        if self._summaries is not None and ingestion.embedding_hash is not None:
-            await self._summaries.schedule_summary(project_id, document, ingestion)
         return document, ingestion
 
     async def compatible_query_pipelines(

@@ -178,16 +178,6 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .source-skeleton { color: var(--color-text-muted); padding: 24px; }
 .toast { background: var(--color-surface-raised); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); bottom: 24px; box-shadow: var(--shadow-md); color: var(--color-text); left: 50%; padding: 10px 14px; position: fixed; transform: translateX(-50%); z-index: 30; }
 
-.document-overview { height: 100%; overflow: auto; padding: 40px clamp(24px, 8vw, 96px); }
-.document-overview > header { border-bottom: 1px solid var(--color-border); margin-bottom: 24px; padding-bottom: 16px; }
-.document-overview h2 { font-size: 24px; letter-spacing: -.03em; margin: 12px 0 4px; }
-.document-overview header p, .document-summary-state { color: var(--color-text-muted); margin: 0; }
-.document-overview-content { max-width: 760px; }
-.document-summary-heading { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin: 0 0 16px; }
-.document-summary-heading h3 { font-size: 16px; margin: 0; }
-.document-summary-claims, .document-summary-insufficient { color: var(--color-text-secondary); font-family: ui-serif, Georgia, serif; font-size: 17px; line-height: 1.75; }
-.document-summary-claims p { margin: 0 0 16px; }
-
 .citation-group { display: inline-flex; flex-wrap: wrap; gap: 5px; margin-left: 3px; vertical-align: middle; }
 .citation-group .citation { align-items: center; display: inline-flex; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 700; line-height: 1.2; min-height: 26px; padding: 5px 9px; }
 .citation-document { min-width: 0; }
@@ -218,7 +208,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
   .source-row time, .source-row .button { display: none; }
   .chat-thread { padding: 24px 16px; }
   .composer { padding: 10px 12px 12px; }
-  .sources-workspace, .document-overview { padding: 24px 16px; }
+  .sources-workspace { padding: 24px 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

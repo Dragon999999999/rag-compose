@@ -8,6 +8,7 @@ from llm_grounding.application.pipeline_compatibility import (
     IndexCapabilities,
     validate_query_compatibility,
 )
+from llm_grounding.application.pipeline_readiness import log_query_pipeline_ready
 from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.domain.answers import Answer
@@ -128,6 +129,7 @@ class ChatService:
             project_id, selected, stage_overrides=stage_overrides or {}
         )
         self._validate_chat_overrides(selected, stage_overrides or {})
+        log_query_pipeline_ready(selected)
         if stage_overrides:
             return await self._repository.create_chat(
                 project_id,

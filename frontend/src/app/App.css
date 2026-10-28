@@ -15,7 +15,7 @@
 .app-shell .chat-workspace,
 .app-shell .chat-thread,
 .workspace-view,
-.document-overview { min-height: 0; }
+.sources-workspace { min-height: 0; }
 .workspace-view { height: 100%; }
 .workspace-view.hidden { display: none; }
 .app-shell .chat-thread { overscroll-behavior: contain; }
@@ -52,10 +52,8 @@
 .active-pipeline-compatibility { background: rgb(229 184 110 / 8%); border: 1px solid rgb(229 184 110 / 28%); border-radius: var(--radius-sm); color: var(--color-warning); display: grid; font-size: 12px; gap: 3px; line-height: 1.4; margin: 0; padding: 9px 11px; }
 .active-pipeline-compatibility strong { font-weight: 750; }
 
-.sources-workspace .source-name { background: transparent; border: 0; color: var(--color-text-secondary); cursor: pointer; font: inherit; font-weight: 650; padding: 0; }
-.sources-workspace .source-name:hover, .sources-workspace .source-name:focus-visible { color: var(--color-primary); text-decoration: underline; }
+.sources-workspace .source-name { color: var(--color-text-secondary); font-weight: 650; }
 
-.document-summary-heading { align-items: center; }
 .evidence-heading { align-items: center; display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
 
 @media (max-width: 760px) {

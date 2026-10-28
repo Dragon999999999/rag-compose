@@ -6,7 +6,6 @@ import { ChatWorkspace } from "../components/chats/ChatWorkspace";
 import { ChatCreateDialog, Dialog, ProjectCreateDialog } from "../components/common/Dialog";
 import { Button, EmptyState, ErrorState } from "../components/common/ui";
 import { EvidenceWorkspace } from "../components/evidence/EvidenceWorkspace";
-import { DocumentOverview } from "../components/documents/DocumentOverview";
 import { AppShell } from "../components/layout/AppShell";
 import { ProjectHeader } from "../components/layout/ProjectHeader";
 import { ProjectSidebar } from "../components/layout/ProjectSidebar";
@@ -18,8 +17,6 @@ import {
   useChatMutations,
   useChats,
   useCompatibleQueryPipelines,
-  useDocumentSummaryMutation,
-  useDocumentSummary,
   useEvidence,
   useMessages,
   useProjectMutations,
@@ -70,16 +67,8 @@ export function App() {
           element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} sources />}
         />
         <Route
-          path="/projects/:projectId/documents/:documentId"
-          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
-        />
-        <Route
           path="/projects/:projectId/chats/:chatId/sources"
           element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} sources />}
-        />
-        <Route
-          path="/projects/:projectId/chats/:chatId/documents/:documentId"
-          element={<ProjectWorkspace onInvalidRoute={showInvalidUrlToast} />}
         />
         <Route
           path="*"
@@ -223,32 +212,22 @@ function ProjectWorkspace({
   onInvalidRoute: () => void;
   sources?: boolean;
 }) {
-  const { projectId, chatId, documentId } = useParams();
+  const { projectId, chatId } = useParams();
   const navigate = useNavigate();
   const projects = useProjects();
   const chats = useChats(projectId);
   const ingestionPipelines = usePipelines(false, "ingestion");
   const compatibleQueryPipelines = useCompatibleQueryPipelines(projectId);
   const sources = useSources(projectId);
-  const documentSummary = useDocumentSummary(projectId, documentId);
-  const documentSummaryMutation = useDocumentSummaryMutation(projectId, documentId);
   const messages = useMessages(chatId);
   const project = projects.data?.find((item) => item.id === projectId);
   const chat = chats.data?.find((item) => item.id === chatId);
   const projectMutations = useProjectMutations();
   const chatMutations = useChatMutations(projectId, chatId);
   const sourceMutations = useSourceMutations(projectId);
-  const selectedSource = sources.data?.find(
-    (source) => source.document.id === documentId,
-  );
   const invalidRoute =
     (!projects.isLoading && !projects.error && !project) ||
-    (Boolean(chatId) && !chats.isLoading && !chats.error && !chat) ||
-    (Boolean(documentId) &&
-      !sources.isLoading &&
-      !sources.error &&
-      !selectedSource);
-  const documentRoute = Boolean(documentId);
+    (Boolean(chatId) && !chats.isLoading && !chats.error && !chat);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(true);
   const [createProject, setCreateProject] = useState(false);
@@ -258,8 +237,7 @@ function ProjectWorkspace({
   const [latest, setLatest] = useState<GroundedAnswer | null>(null);
   const [evidenceTurnTitle, setEvidenceTurnTitle] = useState<string | null>(null);
   const evidence = useEvidence(selectedRun);
-  const documentAnswer = documentSummary.data?.answer ?? null;
-  const answer = documentRoute ? documentAnswer : latest ?? evidence.data ?? null;
+  const answer = latest ?? evidence.data ?? null;
   const [activeChunk, setActiveChunk] = useState<string | null>(null);
   const [directPdf, setDirectPdf] = useState<Evidence | null>(null);
   const [mode, setMode] = useState<"evidence" | "pdf">("evidence");
@@ -387,17 +365,7 @@ function ProjectWorkspace({
   }, [lastVisitedChats]);
 
   useEffect(() => {
-    if (!documentAnswer) {
-      return;
-    }
-    setActiveChunk(Object.keys(documentAnswer.evidence)[0] ?? null);
-    setDirectPdf(null);
-    setEvidenceOpen(true);
-    setMode("evidence");
-  }, [documentAnswer]);
-
-  useEffect(() => {
-    if (sourcesRoute || documentRoute || latest || selectedRun || messages.isLoading) {
+    if (sourcesRoute || latest || selectedRun || messages.isLoading) {
       return;
     }
     const firstAnswer = messages.data?.find(
@@ -416,7 +384,6 @@ function ProjectWorkspace({
     messages.isLoading,
     selectedRun,
     sourcesRoute,
-    documentRoute,
   ]);
 
   const openPdf = (item: Evidence): void => {
@@ -430,11 +397,7 @@ function ProjectWorkspace({
     ? `/projects/${projectId}/chats/${chatId}`
     : `/projects/${projectId}/sources`;
   const sourcesPath = chatId ? `${chatPath}/sources` : chatPath;
-  const documentPath = (sourceId: string): string =>
-    chatId
-      ? `${chatPath}/documents/${sourceId}`
-      : `/projects/${projectId}/documents/${sourceId}`;
-  const sourceView = sourcesRoute || documentRoute;
+  const sourceView = sourcesRoute;
   const selectedChat = selectChatForWorkspace(
     chats.data ?? [],
     projectId ? lastVisitedChats[projectId] : undefined,
@@ -499,11 +462,7 @@ function ProjectWorkspace({
       answer={answer}
       documentEvidence={directPdf}
       mode={mode}
-      turnTitle={
-        documentRoute
-          ? selectedSource?.document.name
-          : evidenceTurnTitle ?? answer?.turn_title
-      }
+      turnTitle={evidenceTurnTitle ?? answer?.turn_title}
       onBack={() => {
         setDirectPdf(null);
         setMode("evidence");
@@ -564,12 +523,12 @@ function ProjectWorkspace({
         {chatId && (
           <div
             className={
-              sourcesRoute || documentRoute ? "workspace-view hidden" : "workspace-view"
+              sourcesRoute ? "workspace-view hidden" : "workspace-view"
             }
           >
             <ChatWorkspace
               activeChunk={activeChunk}
-              answer={documentRoute ? null : answer}
+              answer={answer}
               chatId={chatId}
               error={chatMutations.ask.error ?? messages.error}
               key={chatId}
@@ -590,33 +549,11 @@ function ProjectWorkspace({
           <SourcesWorkspace
             error={sources.error}
             loading={sources.isLoading}
-            onOpen={(source) => navigate(documentPath(source.document.id))}
             onRemove={(id) => sourceMutations.remove.mutate(id)}
             onUpload={(file) => sourceMutations.upload.mutateAsync(file)}
             sources={sources.data}
             uploadError={sourceMutations.upload.error}
             uploading={sourceMutations.upload.isPending}
-          />
-        ) : documentRoute ? (
-          <DocumentOverview
-            activeChunk={activeChunk}
-            error={documentSummary.error ?? documentSummaryMutation.error}
-            loading={documentSummary.isLoading}
-            onBack={() => navigate(chatId ? chatPath : sourcesPath)}
-            onRegenerate={() => documentSummaryMutation.mutate()}
-            onSelectCitation={(id) => {
-              setDirectPdf(null);
-              setActiveChunk(id);
-              setEvidenceOpen(true);
-              setMode("evidence");
-            }}
-            regenerating={
-              documentSummaryMutation.isPending ||
-              documentSummary.data?.status === "generating"
-            }
-            regenerationAvailable={selectedSource?.ingestion?.status === "ready"}
-            source={selectedSource}
-            summary={documentSummary.data}
           />
         ) : null}
       </AppShell>
