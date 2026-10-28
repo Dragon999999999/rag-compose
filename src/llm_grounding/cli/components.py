@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from llm_grounding.cli.formatting import print_json
+from llm_grounding.cli.formatting import print_json, print_table
 from llm_grounding.infrastructure.config.declarative import ComponentDefinition
 from llm_grounding.infrastructure.config.loader import load_configuration_registry
 from llm_grounding.orchestration.registry import ComponentRegistry
@@ -126,15 +126,21 @@ def execute(args: argparse.Namespace) -> int:
     registry = load_configuration_registry()
     if args.component_command == "list":
         category = _STAGE_ALIASES.get(args.stage) if args.stage else None
+        rows: list[list[object]] = []
         for component_id, (actual_category, definition) in sorted(
             registry.components.items()
         ):
             if category is not None and actual_category != category:
                 continue
-            print(
-                f"{component_id}\t{actual_category}\t{definition.implementation}\t"
-                f"{definition.description}"
+            rows.append(
+                [
+                    component_id,
+                    actual_category,
+                    definition.implementation,
+                    definition.description,
+                ]
             )
+        print_table(["ID", "STAGE", "IMPLEMENTATION", "DESCRIPTION"], rows)
         return 0
     if args.component_command == "inspect":
         try:

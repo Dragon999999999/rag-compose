@@ -6,7 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
-from llm_grounding.cli.formatting import print_json
+from llm_grounding.cli.formatting import print_json, print_table
 from llm_grounding.infrastructure.config.declarative import ComponentDefinition
 from llm_grounding.infrastructure.config.loader import load_configuration_registry
 from llm_grounding.infrastructure.config.settings import FaissSettings, QdrantSettings
@@ -88,7 +88,7 @@ def _payload(
     }
 
 
-async def _test_qdrant() -> str:
+async def _test_qdrant() -> tuple[str, str, str]:
     """Check Qdrant collection access without changing collection state."""
     from qdrant_client import AsyncQdrantClient
 
@@ -98,10 +98,10 @@ async def _test_qdrant() -> str:
         await client.get_collections()
     finally:
         await client.close()
-    return f"connected\tqdrant\t{settings.collection}"
+    return "connected", "qdrant", settings.collection
 
 
-async def _test_pgvector() -> str:
+async def _test_pgvector() -> tuple[str, str, str]:
     """Check PostgreSQL connectivity without creating vector tables."""
     from sqlalchemy import text
 
@@ -113,20 +113,25 @@ async def _test_pgvector() -> str:
             await session.execute(text("SELECT 1"))
     finally:
         await engine.dispose()
-    return "connected\tpgvector\tpostgresql"
+    return "connected", "pgvector", "postgresql"
 
 
 async def execute(args: argparse.Namespace) -> int:
     """Execute vector backend discovery or a non-mutating connectivity test."""
     if args.vector_db_command == "list":
+        rows: list[list[object]] = []
         for component_id, definition in sorted(
             ((key, value[1]) for key, value in _definitions().items())
         ):
             availability = _availability(definition.implementation, definition.config)
-            print(
-                f"{component_id}\t{definition.implementation}\t"
-                f"{availability['configured']}"
+            rows.append(
+                [
+                    component_id,
+                    definition.implementation,
+                    availability["configured"],
+                ]
             )
+        print_table(["ID", "IMPLEMENTATION", "CONFIGURED"], rows)
         return 0
     component_id, definition = _resolve(args.vector_db)
     if args.vector_db_command == "inspect":
@@ -135,19 +140,20 @@ async def execute(args: argparse.Namespace) -> int:
     if args.vector_db_command == "test":
         implementation = definition.implementation
         if implementation == "qdrant":
-            print(await _test_qdrant())
+            result = await _test_qdrant()
         elif implementation == "pgvector":
-            print(await _test_pgvector())
+            result = await _test_pgvector()
         elif implementation == "faiss":
             root = Path(FaissSettings.from_environment().root).expanduser()
             if root.exists() and root.is_dir():
-                print(f"available\tfaiss\t{root}")
+                result = ("available", "faiss", str(root))
             else:
-                print(f"ready\tfaiss\t{root}")
+                result = ("ready", "faiss", str(root))
         else:
             raise ValueError(
                 "Unsupported vector database implementation: "
                 f"{implementation}"
             )
+        print_table(["STATUS", "IMPLEMENTATION", "DETAIL"], [result])
         return 0
     raise ValueError(f"Unsupported vector database command: {args.vector_db_command}")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from llm_grounding.application.bootstrap import PhaseOneApplication
-from llm_grounding.cli.formatting import parse_json_value, print_json
+from llm_grounding.cli.formatting import parse_json_value, print_json, print_table
 from llm_grounding.domain.corpus import TaskType
 
 
@@ -84,11 +84,13 @@ async def execute(
             if args.project_id
             else await application.chats.list_all_chats()
         )
-        for chat in chats:
-            print(
-                f"{chat.id}\t{chat.project_id}\t{chat.name}\t"
-                f"{chat.pipeline_id or '-'}"
-            )
+        print_table(
+            ["ID", "PROJECT_ID", "NAME", "PIPELINE_ID"],
+            [
+                [chat.id, chat.project_id, chat.name, chat.pipeline_id or "-"]
+                for chat in chats
+            ],
+        )
     elif command == "inspect":
         print_json(await application.chats.get_chat(args.chat_id))
     elif command == "set-pipeline":

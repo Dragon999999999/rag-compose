@@ -8,6 +8,7 @@ import pytest
 from llm_grounding.application.project_service import ProjectService
 from llm_grounding.cli.chats import execute as execute_chats
 from llm_grounding.cli.components import execute as execute_components
+from llm_grounding.cli.formatting import print_table
 from llm_grounding.cli.main import create_phase_one_parser
 from llm_grounding.domain.corpus import Chat, Pipeline, Project
 
@@ -50,8 +51,25 @@ def test_component_list_filters_configured_stage(
     assert execute_components(args) == 0
     output = capsys.readouterr().out
 
-    assert "retriever_dense_vector_default\tretriever" in output
+    assert "retriever_dense_vector_default" in output
+    assert "retriever" in output
     assert "parser_pymupdf" not in output
+
+
+def test_print_table_aligns_columns_to_longest_value(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Table columns remain aligned when cells have different lengths."""
+    print_table(
+        ["ID", "NAME", "STATUS"],
+        [["a", "short", "ready"], ["long-id", "longer name", "-"]],
+    )
+
+    assert capsys.readouterr().out == (
+        "ID       NAME         STATUS\n"
+        "a        short        ready\n"
+        "long-id  longer name  -\n"
+    )
 
 
 @pytest.mark.asyncio

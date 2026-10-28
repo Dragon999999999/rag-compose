@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from llm_grounding.cli.formatting import print_json
+from llm_grounding.cli.formatting import print_json, print_table
 from llm_grounding.infrastructure.config.declarative import ModelDefinition
 from llm_grounding.infrastructure.config.loader import load_model_registry
 from llm_grounding.infrastructure.model_management.manager import LocalModelManager
@@ -83,13 +83,22 @@ async def execute(args: argparse.Namespace) -> int:
     manager = LocalModelManager(registry)
     try:
         if args.model_command == "list":
+            rows: list[list[object]] = []
             for definition in registry.list():
                 if _matches(definition, args.model_type):
                     status = await _status(manager, definition)
-                    print(
-                        f"{definition.id}\t{definition.stage}\t{definition.location}\t"
-                        f"{definition.backend}\t{status['availability']}"
+                    rows.append(
+                        [
+                            definition.id,
+                            definition.stage,
+                            definition.location,
+                            definition.backend,
+                            status["availability"],
+                        ]
                     )
+            print_table(
+                ["ID", "STAGE", "LOCATION", "BACKEND", "AVAILABILITY"], rows
+            )
             return 0
         if args.model_command == "inspect":
             definition = registry.resolve(args.model)

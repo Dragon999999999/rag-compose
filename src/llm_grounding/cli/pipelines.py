@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from llm_grounding.application.bootstrap import PhaseOneApplication
-from llm_grounding.cli.formatting import print_json
+from llm_grounding.cli.formatting import print_json, print_table
 from llm_grounding.infrastructure.config.loader import load_pipeline_config
 
 
@@ -61,7 +61,10 @@ def register(
 def validate(args: argparse.Namespace) -> int:
     """Validate a pipeline file without starting database-backed services."""
     config = load_pipeline_config(args.config_file)
-    print(f"valid\t{config.kind}\t{config.name}\t{config.config_hash}")
+    print_table(
+        ["STATUS", "TYPE", "NAME", "CONFIG_HASH"],
+        [["valid", config.kind, config.name, config.config_hash]],
+    )
     return 0
 
 
@@ -74,11 +77,20 @@ async def execute(
     command = args.pipeline_command
     if command == "list":
         records = await application.pipeline_service.list(kind=args.pipeline_type)
-        for record in records:
-            print(
-                f"{record.id}\t{record.kind}\t{record.name}\t{record.version}\t"
-                f"{record.source_kind}\t{record.active}"
-            )
+        print_table(
+            ["ID", "TYPE", "NAME", "VERSION", "SOURCE", "ACTIVE"],
+            [
+                [
+                    record.id,
+                    record.kind,
+                    record.name,
+                    record.version,
+                    record.source_kind,
+                    record.active,
+                ]
+                for record in records
+            ],
+        )
     elif command == "inspect":
         print_json(await application.pipeline_service.get(args.pipeline_id))
     elif command == "create":
@@ -87,8 +99,14 @@ async def execute(
         )
         print(f"Created pipeline {record.id}: {record.name}")
     elif command == "import":
-        for record in await application.pipeline_service.list():
-            print(f"{record.id}\t{record.kind}\t{record.name}\t{record.version}")
+        records = await application.pipeline_service.list()
+        print_table(
+            ["ID", "TYPE", "NAME", "VERSION"],
+            [
+                [record.id, record.kind, record.name, record.version]
+                for record in records
+            ],
+        )
     elif command == "delete":
         await application.pipeline_service.deactivate(args.pipeline_id)
         print(f"Deactivated pipeline {args.pipeline_id}")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from llm_grounding.application.bootstrap import PhaseOneApplication
 from llm_grounding.application.files import validate_pdf_path
-from llm_grounding.cli.formatting import print_json
+from llm_grounding.cli.formatting import print_json, print_table
 
 
 def register(
@@ -52,8 +52,13 @@ async def execute(
         )
         print(f"Created project {project.id}: {project.name}")
     elif command == "list":
-        for project in await application.projects.list_projects():
-            print(f"{project.id}\t{project.name}")
+        print_table(
+            ["ID", "NAME"],
+            [
+                [project.id, project.name]
+                for project in await application.projects.list_projects()
+            ],
+        )
     elif command == "inspect":
         print_json(await application.projects.get_project(args.project_id))
     elif command == "delete":
