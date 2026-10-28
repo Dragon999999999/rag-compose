@@ -27,7 +27,6 @@ allOf:
           top_k: {type: integer, minimum: 1}
           token_budget: {type: integer, minimum: 1}
           min_agreement: {type: number, minimum: 0, maximum: 1}
-          max_rounds: {type: integer, minimum: 1}
           parameter_overrides: {type: object}
           branch_ids:
             type: array

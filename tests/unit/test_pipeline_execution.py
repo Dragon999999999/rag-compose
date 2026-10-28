@@ -90,25 +90,26 @@ async def test_retrieval_policies_request_bounded_retries() -> None:
     assert adaptive.metadata["parameter_overrides"] == {"retrieval_top_k": 40}
 
 
-def test_execution_configuration_is_bounded_and_requires_complete_topology() -> None:
-    """Branching and recursive settings reject incomplete or unbounded shapes."""
-    branching = PipelineExecutionConfig.model_validate(
+def test_execution_configuration_requires_alternative_topology() -> None:
+    """Alternatives own branch topology and execution remains bounded."""
+    execution = PipelineExecutionConfig.model_validate(
         {
-            "strategy": "branching",
-            "branches": [{"id": "dense"}, {"id": "lexical"}],
+            "alternatives": [
+                {
+                    "id": "primary",
+                    "branches": [{"id": "dense"}, {"id": "lexical"}],
+                }
+            ],
             "evidence_merge": "rrf",
         }
     )
-    recursive = PipelineExecutionConfig.model_validate(
-        {
-            "strategy": "recursive",
-            "max_rounds": 3,
-            "retry_overrides": [{"retrieval_top_k": 20}],
-        }
-    )
 
-    assert len(branching.branches) == 2
-    assert recursive.max_rounds == 3
+    assert execution.alternatives[0].branches[1].id == "lexical"
+    assert PipelineExecutionConfig().alternatives[0].id == "primary"
+    with pytest.raises(ValueError):
+        PipelineExecutionConfig.model_validate(
+            {"strategy": "branching", "branches": [{"id": "dense"}]}
+        )
 
 
 def test_unified_execution_validates_ordered_alternative_path_dependencies() -> None:
@@ -183,55 +184,6 @@ def test_unified_execution_rejects_forward_or_ambiguous_sources() -> None:
         )
 
 
-def test_legacy_alternative_selection_fields_are_ignored_during_normalization() -> None:
-    """Stored alternatives keep loading without retaining local policies."""
-    execution = PipelineExecutionConfig.model_validate(
-        {
-            "alternatives": [
-                {
-                    "id": "primary",
-                    "decision_policy": {
-                        "implementation": "always_accept",
-                    },
-                    "acceptance": {"strategy": "minimum_score", "threshold": 0.9},
-                }
-            ]
-        }
-    )
-
-    alternative = execution.alternatives[0].model_dump()
-    assert "decision_policy" not in alternative
-    assert "acceptance" not in alternative
-    assert execution.final_failure_policy == "best_result"
-
-
-class _StubRunner(BasicRagRunner):
-    """Replace the linear pass so orchestration control flow can be tested."""
-
-    def __init__(self, execution: PipelineExecutionConfig) -> None:
-        self._execution = execution
-        self.calls: list[dict[str, object]] = []
-
-    async def _run_once(self, request, history=(), **kwargs):  # type: ignore[no-untyped-def]
-        """Return a retry once, then terminate with a deterministic answer."""
-        del request, history
-        values = dict(kwargs.get("runtime_config") or {})
-        self.calls.append(values)
-        retry = len(self.calls) == 1
-        metadata = {
-            "decision": (
-                DecisionAction.RETRIEVE_AGAIN
-                if retry
-                else DecisionAction.ACCEPT
-            ),
-            "retrieved_chunk_ids": ["chunk-1"],
-            "retrieval_results": [{"chunk_id": "chunk-1", "rank": 1}],
-            "trace": [{"round": len(self.calls)}],
-            "parameter_overrides": {"retrieval_top_k": 30} if retry else {},
-        }
-        return "result", Answer("answer"), metadata
-
-
 class _AlternativeStubRunner(BasicRagRunner):
     """Return controlled decisions to exercise ordered alternative selection."""
 
@@ -269,24 +221,6 @@ class _AlternativeStubRunner(BasicRagRunner):
                 "usage": {},
             },
         )
-
-
-async def test_recursive_runner_retries_and_persists_each_round() -> None:
-    """Recursive execution stops on a policy action and retains all attempts."""
-    runner = _StubRunner(
-        PipelineExecutionConfig(
-            strategy="recursive",
-            max_rounds=3,
-            retry_overrides=({"retrieval_top_k": 20},),
-        )
-    )
-
-    _, _, metadata = await runner.run(CorpusRequest("project", "question"))
-
-    assert len(runner.calls) == 2
-    assert runner.calls[1]["retrieval_top_k"] == 20
-    assert metadata["execution_strategy"] == "recursive"
-    assert len(metadata["execution_attempts"]) == 2
 
 
 async def test_alternatives_use_one_shared_policy_and_stop_on_accept() -> None:

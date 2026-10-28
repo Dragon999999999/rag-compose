@@ -1,5 +1,4 @@
 export type PipelineKind = "ingestion" | "query";
-export type ExecutionStrategy = "linear" | "branching" | "recursive";
 export type BranchStart = "retriever" | "reranker" | "assessor";
 export type PipelineExecutionBranch = {
   id: string;
@@ -21,17 +20,11 @@ export type PipelineAlternative = {
   stage_overrides?: Record<string, unknown>;
 };
 export type PipelineExecution = {
-  strategy?: ExecutionStrategy;
-  branches?: PipelineExecutionBranch[];
-  join_at?: "decision_policy";
   evidence_merge?: "replace" | "union" | "rrf";
-  max_rounds?: number;
   max_stage_calls?: number;
-  retry_overrides?: Record<string, unknown>[];
-  retry_on?: string[];
   alternatives?: PipelineAlternative[];
   max_attempts?: number;
-  final_failure_policy?: "best_result" | "last_result" | "reject" | "abstain";
+  final_failure_policy?: "best_result" | "reject" | "abstain";
 };
 export type Project = {
   id: string;

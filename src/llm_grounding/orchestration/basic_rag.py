@@ -187,34 +187,13 @@ class BasicRagRunner:
         generate_chat_name: bool = False,
         runtime_config: dict[str, Any] | None = None,
     ) -> tuple[str, Answer, dict[str, object]]:
-        """Execute the configured topology with bounded branch or retry control."""
-        if self._execution.alternatives:
-            return await self._run_alternatives(
-                request,
-                history,
-                generate_chat_name=generate_chat_name,
-                runtime_config=runtime_config,
-            )
-        if self._execution.strategy == "linear":
-            return self._public_result(await self._run_once(
-                request,
-                history,
-                generate_chat_name=generate_chat_name,
-                runtime_config=runtime_config,
-            ))
-        if self._execution.strategy == "branching":
-            return self._public_result(await self._run_branching(
-                request,
-                history,
-                generate_chat_name=generate_chat_name,
-                runtime_config=runtime_config,
-            ))
-        return self._public_result(await self._run_recursive(
+        """Execute ordered alternatives until the shared policy accepts one."""
+        return await self._run_alternatives(
             request,
             history,
             generate_chat_name=generate_chat_name,
             runtime_config=runtime_config,
-        ))
+        )
 
     async def _run_once(
         self,
@@ -522,24 +501,6 @@ class BasicRagRunner:
             },
         )
 
-    async def _run_branching(
-        self,
-        request: CorpusRequest,
-        history: tuple[Message, ...],
-        *,
-        generate_chat_name: bool,
-        runtime_config: dict[str, Any] | None,
-    ) -> tuple[str, Answer, dict[str, object]]:
-        """Execute configured branches sequentially and join their outcomes."""
-        return await self._run_branch_group(
-            self._execution.branches,
-            request,
-            history,
-            generate_chat_name=generate_chat_name,
-            runtime_config=runtime_config,
-            evidence_merge=self._execution.evidence_merge,
-        )
-
     async def _run_branch_group(
         self,
         branches: Sequence[ExecutionBranchConfig],
@@ -742,7 +703,7 @@ class BasicRagRunner:
         if not results:
             raise RuntimeError("Unified execution requires at least one alternative")
         selected_index = len(results) - 1
-        if not accepted and self._execution.final_failure_policy != "last_result":
+        if not accepted:
             selected_index = max(
                 range(len(results)),
                 key=lambda index: (_alternative_quality(results[index][2]), index),
@@ -868,93 +829,6 @@ class BasicRagRunner:
             if merge == "rrf":
                 merged_metadata["retrieval_results"] = self._fused_branch_results(
                     outcomes
-                )
-        return result_id, answer, merged_metadata
-
-    async def _run_recursive(
-        self,
-        request: CorpusRequest,
-        history: tuple[Message, ...],
-        *,
-        generate_chat_name: bool,
-        runtime_config: dict[str, Any] | None,
-    ) -> tuple[str, Answer, dict[str, object]]:
-        """Execute bounded retrieval rounds until a policy terminates the run."""
-        values = dict(runtime_config or {})
-        attempts: list[dict[str, object]] = []
-        results: list[tuple[str, Answer, dict[str, object]]] = []
-        for round_number in range(self._execution.max_rounds):
-            if (
-                round_number > 0
-                and round_number - 1 < len(self._execution.retry_overrides)
-            ):
-                values.update(self._execution.retry_overrides[round_number - 1])
-            result = await self._run_once(
-                request,
-                history,
-                generate_chat_name=generate_chat_name,
-                runtime_config=values,
-            )
-            result_metadata = result[2]
-            results.append(result)
-            attempts.append(
-                {
-                    "round": round_number + 1,
-                    "decision": self._action_value(result_metadata.get("decision")),
-                    "retrieved_chunk_ids": result_metadata.get(
-                        "retrieved_chunk_ids", []
-                    ),
-                    "retrieval_results": result_metadata.get("retrieval_results", []),
-                    "trace": result_metadata.get("trace", []),
-                    "retrieval_stages": result_metadata.get("retrieval_stages", []),
-                    "stage_graph": result_metadata.get("stage_graph", []),
-                    "assessments": result_metadata.get("assessments", []),
-                    "usage": result_metadata.get("usage", {}),
-                    "parameter_overrides": dict(values),
-                }
-            )
-            action = self._action_value(result_metadata.get("decision"))
-            if action not in self._execution.retry_on:
-                break
-            policy_overrides = result_metadata.get("parameter_overrides")
-            if isinstance(policy_overrides, dict):
-                values.update(policy_overrides)
-        if not results:
-            raise RuntimeError("Recursive execution did not produce an outcome")
-        selected_index = len(results) - 1
-        final_action = self._action_value(results[-1][2].get("decision"))
-        if (
-            final_action != DecisionAction.ACCEPT.value
-            and self._execution.final_failure_policy != "last_result"
-        ):
-            selected_index = max(
-                range(len(results)),
-                key=lambda index: (_alternative_quality(results[index][2]), index),
-            )
-        result = results[selected_index]
-        result_id, answer, metadata = result
-        merged_metadata = dict(metadata)
-        merged_metadata.update(
-            {
-                "execution_strategy": "recursive",
-                "execution_round": len(attempts),
-                "execution_attempts": attempts,
-                "termination_reason": (
-                    "max_rounds_reached"
-                    if self._action_value(metadata.get("decision"))
-                    in self._execution.retry_on
-                    else "decision_policy_terminated"
-                ),
-            }
-        )
-        merged_metadata.update(self._combined_attempt_observation_metadata(attempts))
-        if self._execution.evidence_merge in {"union", "rrf"}:
-            merged_metadata["retrieved_chunk_ids"] = self._merged_attempt_chunk_ids(
-                attempts
-            )
-            if self._execution.evidence_merge == "rrf":
-                merged_metadata["retrieval_results"] = self._fused_attempt_results(
-                    attempts
                 )
         return result_id, answer, merged_metadata
 
@@ -1110,36 +984,6 @@ class BasicRagRunner:
                 str(item["chunk_id"]),
             ),
         )
-
-    @staticmethod
-    def _merged_attempt_chunk_ids(attempts: list[dict[str, object]]) -> list[str]:
-        """Deduplicate evidence across recursive rounds in execution order."""
-        merged: list[str] = []
-        for attempt in attempts:
-            for value in attempt.get("retrieved_chunk_ids", []):
-                if isinstance(value, str) and value not in merged:
-                    merged.append(value)
-        return merged
-
-    @staticmethod
-    def _fused_attempt_results(
-        attempts: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
-        """Fuse recursive-round ranks without replacing each native score."""
-        outcomes = [
-            (
-                str(attempt.get("round", "")),
-                (
-                    "",
-                    Answer(""),
-                    {
-                        "retrieval_results": attempt.get("retrieval_results", [])
-                    },
-                ),
-            )
-            for attempt in attempts
-        ]
-        return BasicRagRunner._fused_branch_results(outcomes)
 
     async def retrieve(
         self,

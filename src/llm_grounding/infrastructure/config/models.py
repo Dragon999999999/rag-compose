@@ -345,7 +345,6 @@ class DecisionPolicyConfig(ComponentConfig):
     top_k: int | None = Field(default=None, ge=1, le=1000)
     token_budget: int | None = Field(default=None, ge=1, le=10_000_000)
     min_agreement: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
-    max_rounds: int = Field(default=2, ge=1, le=100)
     parameter_overrides: dict[str, object] = Field(default_factory=dict)
     branch_ids: tuple[str, ...] = ()
 
@@ -392,17 +391,6 @@ class PipelineAlternativeConfig(BaseModel):
     branches: tuple[ExecutionBranchConfig, ...] = ()
     stage_overrides: dict[str, object] = Field(default_factory=dict)
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_selection_fields(cls, value: object) -> object:
-        """Read old alternatives while migrating selection to the query policy."""
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        normalized.pop("decision_policy", None)
-        normalized.pop("acceptance", None)
-        return normalized
-
     @model_validator(mode="after")
     def validate_branches(self) -> "PipelineAlternativeConfig":
         """Reject duplicate path identifiers inside one alternative."""
@@ -425,95 +413,57 @@ class PipelineAlternativeConfig(BaseModel):
 
 
 class PipelineExecutionConfig(BaseModel):
-    """Define unified alternatives and bounded legacy query control flow.
-
-    ``alternatives`` is the canonical hierarchy. ``strategy``, ``branches``,
-    and recursive-round fields remain accepted so stored schema-version-one
-    pipelines can be read and executed without migration at load time.
-    """
+    """Define the bounded alternatives and branch topology of a query pipeline."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    strategy: Literal["linear", "branching", "recursive"] = "linear"
-    branches: tuple[ExecutionBranchConfig, ...] = ()
-    join_at: Literal["decision_policy"] = "decision_policy"
     evidence_merge: Literal["replace", "union", "rrf"] = "replace"
-    max_rounds: int = Field(default=1, ge=1, le=100)
     max_stage_calls: int = Field(default=100, ge=1, le=1000)
-    retry_overrides: tuple[dict[str, object], ...] = ()
-    retry_on: tuple[
-        Literal["retrieve_again", "select_branches", "merge_branches"], ...
-    ] = (
-        "retrieve_again",
+    alternatives: tuple[PipelineAlternativeConfig, ...] = Field(
+        default_factory=lambda: (PipelineAlternativeConfig(id="primary"),),
+        min_length=1,
     )
-    alternatives: tuple[PipelineAlternativeConfig, ...] = ()
     max_attempts: int = Field(default=3, ge=1, le=100)
-    final_failure_policy: Literal["best_result", "last_result", "reject", "abstain"] = (
+    final_failure_policy: Literal["best_result", "reject", "abstain"] = (
         "best_result"
     )
 
     @model_validator(mode="after")
     def validate_execution_shape(self) -> "PipelineExecutionConfig":
-        """Reject ambiguous or unbounded topology settings."""
-        branch_ids = [branch.id for branch in self.branches]
-        if len(set(branch_ids)) != len(branch_ids):
-            raise ValueError("Execution branch IDs must be unique")
-        if self.strategy == "branching" and len(self.branches) < 2:
-            raise ValueError("Branching execution requires at least two branches")
-        if self.strategy == "recursive" and self.max_rounds < 2:
-            raise ValueError("Recursive execution requires max_rounds of at least 2")
-        if self.max_rounds > self.max_stage_calls:
-            raise ValueError("max_rounds cannot exceed max_stage_calls")
-        if len(self.retry_overrides) > self.max_rounds - 1:
-            raise ValueError("retry_overrides cannot exceed the configured max_rounds")
-        if self.alternatives:
-            alternative_ids = [alternative.id for alternative in self.alternatives]
-            if len(set(alternative_ids)) != len(alternative_ids):
-                raise ValueError("Alternative IDs must be unique")
-            if self.max_attempts < len(self.alternatives):
-                raise ValueError(
-                    "max_attempts must cover every configured alternative"
-                )
-            known_ids: set[str] = set()
-            for index, alternative in enumerate(self.alternatives):
-                if index == 0 and alternative.source is not None:
-                    raise ValueError("The primary alternative must not have a source")
-                if alternative.source is not None:
-                    if alternative.source.alternative_id not in known_ids:
-                        raise ValueError(
-                            "Alternative sources must reference an earlier alternative"
-                        )
-                    if alternative.source.path_id == "primary" and any(
-                        source.id == alternative.source.alternative_id
-                        and source.branches
-                        for source in self.alternatives
-                    ):
-                        raise ValueError(
-                            "Branched alternatives require an explicit source path"
-                        )
-                    if alternative.source.path_id != "primary" and not any(
-                        branch.id == alternative.source.path_id
-                        for source in self.alternatives
-                        if source.id == alternative.source.alternative_id
-                        for branch in source.branches
-                    ):
-                        raise ValueError(
-                            "Alternative source path must exist on the "
-                            "referenced alternative"
-                        )
-                known_ids.add(alternative.id)
+        """Reject ambiguous or unbounded alternative topology settings."""
+        alternative_ids = [alternative.id for alternative in self.alternatives]
+        if len(set(alternative_ids)) != len(alternative_ids):
+            raise ValueError("Alternative IDs must be unique")
+        if self.max_attempts < len(self.alternatives):
+            raise ValueError("max_attempts must cover every configured alternative")
+        known_ids: set[str] = set()
+        for index, alternative in enumerate(self.alternatives):
+            if index == 0 and alternative.source is not None:
+                raise ValueError("The primary alternative must not have a source")
+            if alternative.source is not None:
+                if alternative.source.alternative_id not in known_ids:
+                    raise ValueError(
+                        "Alternative sources must reference an earlier alternative"
+                    )
+                if alternative.source.path_id == "primary" and any(
+                    source.id == alternative.source.alternative_id and source.branches
+                    for source in self.alternatives
+                ):
+                    raise ValueError(
+                        "Branched alternatives require an explicit source path"
+                    )
+                if alternative.source.path_id != "primary" and not any(
+                    branch.id == alternative.source.path_id
+                    for source in self.alternatives
+                    if source.id == alternative.source.alternative_id
+                    for branch in source.branches
+                ):
+                    raise ValueError(
+                        "Alternative source path must exist on the "
+                        "referenced alternative"
+                    )
+            known_ids.add(alternative.id)
         return self
-
-    def effective_alternatives(self) -> tuple[PipelineAlternativeConfig, ...]:
-        """Return the canonical hierarchy, adapting a legacy execution shape."""
-        if self.alternatives:
-            return self.alternatives
-        return (
-            PipelineAlternativeConfig(
-                id="alternative-1",
-                branches=self.branches if self.strategy == "branching" else (),
-            ),
-        )
 
 
 class ChatHistoryConfig(BaseModel):

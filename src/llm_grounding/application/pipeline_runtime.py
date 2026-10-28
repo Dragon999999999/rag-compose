@@ -364,38 +364,6 @@ class PipelineRuntimeResolver:
         branch_retrievers = {}
         branch_rerankers = {}
         branch_assessors = {}
-        for branch in architecture.execution.branches:
-            if (
-                branch.retriever is not None
-                and branch.retriever != architecture.retriever.implementation
-            ):
-                branch_config = architecture.retriever.model_copy(
-                    update={
-                        "type": branch.retriever,
-                        "implementation": branch.retriever,
-                    }
-                )
-                branch_retrievers[branch.retriever] = self._registry.build_retriever(
-                    branch_config, dependencies
-                )
-            if (
-                branch.reranker is not None
-                and branch.reranker != architecture.reranker.implementation
-            ):
-                branch_config = architecture.reranker.model_copy(
-                    update={"implementation": branch.reranker, "type": "reranker"}
-                )
-                branch_rerankers[branch.reranker] = self._registry.build_reranker(
-                    branch_config, self._local_model_manager
-                )
-            if branch.assessors:
-                branch_assessors[branch.id] = tuple(
-                    self._registry.build_assessor(
-                        AssessorConfig(type="assessor", implementation=name),
-                        self._repository,
-                    )
-                    for name in branch.assessors
-                )
         reasoner = self._registry.build_reasoner(architecture.reasoner)
         reranker = self._registry.build_reranker(
             architecture.reranker, self._local_model_manager

@@ -4,7 +4,6 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiRequestError } from "../../api/client";
 import type {
   CatalogStage,
-  ExecutionStrategy,
   JsonSchema,
   ModelCatalog,
   PipelineAlternative,
@@ -119,7 +118,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
   const mutations = usePipelineMutations();
   const [draft, setDraft] = useState<PipelineConfig | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageKey>("parser");
-  const [selectedAlternativeId, setSelectedAlternativeId] = useState("alternative-1");
+  const [selectedAlternativeId, setSelectedAlternativeId] = useState("primary");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [version, setVersion] = useState("1");
@@ -154,7 +153,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate(templateKey);
     setSelectedStage(stagesForKind(initial.kind)[0].key);
-    setSelectedAlternativeId("alternative-1");
+    setSelectedAlternativeId("primary");
   }, [isNew, loadedTemplate, pipelineKind, template, templateKey]);
 
   useEffect(() => {
@@ -168,7 +167,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
     setSavedSnapshot(snapshot(initial));
     setLoadedTemplate("blank");
     setSelectedStage(stagesForKind(initial.kind)[0].key);
-    setSelectedAlternativeId("alternative-1");
+    setSelectedAlternativeId("primary");
   }, [isNew, loadedTemplate, pipelineKind, templateKey]);
 
   const dirty = useMemo(() => {
@@ -403,7 +402,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
         <label>Description<input maxLength={4000} onChange={(event) => setDescription(event.target.value)} value={description} /></label>
         <label>Version<input min="1" onChange={(event) => setVersion(event.target.value)} type="number" value={version} /></label>
         <label className="editor-checkbox"><input checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} type="checkbox" /> Default pipeline</label>
-        {pipelineKind === "query" && <ExecutionSettings catalog={catalog.data} config={draft} onChange={setDraft} />}
+        {pipelineKind === "query" && <ExecutionSettings config={draft} onChange={setDraft} />}
       </section>
 
       {(localError || saveError) && <p className="form-error pipeline-editor-error" role="alert">{localError ?? saveError?.message}</p>}
@@ -419,7 +418,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
                 if (!current) return current;
                 const next = addQueryAlternative(current, alternativeId);
                 const alternatives = readQueryAlternatives(next);
-                setSelectedAlternativeId(alternatives[alternatives.length - 1]?.id ?? "alternative-1");
+                setSelectedAlternativeId(alternatives[alternatives.length - 1]?.id ?? "primary");
                 return next;
               });
             }}
@@ -579,7 +578,7 @@ function AlternativesGraph({
           <header className="alternative-header">
             <div>
               <span className="alternative-kicker">Alternative {index + 1}</span>
-              <h2>{alternative.id === "alternative-1" ? "Primary pipeline" : alternative.id}</h2>
+              <h2>{alternative.id === "primary" ? "Primary pipeline" : alternative.id}</h2>
               {alternative.source && <p>Retries from {alternative.source.alternative_id} / {alternative.source.path_id} at {humanize(alternative.source.restart_stage)}.</p>}
             </div>
             {index > 0 && <div className="alternative-actions">
@@ -712,11 +711,10 @@ function readQueryAlternatives(config: PipelineConfig): PipelineAlternative[] {
   if (Array.isArray(execution.alternatives) && execution.alternatives.length > 0) {
     return execution.alternatives.map((alternative, index) => normalizeAlternative(alternative, index));
   }
-  const legacyBranches = readLegacyBranches(config);
   return [{
-    id: "alternative-1",
+    id: "primary",
     source: null,
-    branches: readExecutionStrategy(config) === "branching" ? legacyBranches : [],
+    branches: [],
     stage_overrides: {},
   }];
 }
@@ -741,13 +739,6 @@ function normalizeAlternative(value: unknown, index: number): PipelineAlternativ
   };
 }
 
-function readLegacyBranches(config: PipelineConfig): QueryBranch[] {
-  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
-  return Array.isArray(execution.branches)
-    ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index))
-    : [];
-}
-
 function sourcePathOptions(config: PipelineConfig, alternative: PipelineAlternative): string[] {
   if (!alternative.source) return ["primary"];
   const parent = readQueryAlternatives(config).find((item) => item.id === alternative.source?.alternative_id);
@@ -756,14 +747,13 @@ function sourcePathOptions(config: PipelineConfig, alternative: PipelineAlternat
 }
 
 function writeQueryAlternatives(config: PipelineConfig, alternatives: PipelineAlternative[]): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const execution = canonicalExecution(config);
   return {
     ...config,
     query: {
       ...(config.query ?? {}),
       execution: {
         ...execution,
-        strategy: "linear",
         alternatives,
         max_attempts: Math.max(typeof execution.max_attempts === "number" ? execution.max_attempts : 1, alternatives.length),
       },
@@ -847,8 +837,9 @@ function nextAlternativeId(alternatives: PipelineAlternative[]): string {
 
 /** Build a centered, column-based DAG layout for query branches. */
 export function buildBranchGraphLayout(config: PipelineConfig, alternative?: PipelineAlternative): BranchGraphLayout {
-  const branching = alternative ? Boolean(alternative.branches?.length) : readExecutionStrategy(config) === "branching";
-  const branches = queryBranches(config, branching, alternative);
+  const selectedAlternative = alternative ?? readQueryAlternatives(config)[0];
+  const branching = Boolean(selectedAlternative?.branches?.length);
+  const branches = queryBranches(selectedAlternative);
   const rowCenters = branches.map((_, index) => GRAPH_TOP_PADDING + GRAPH_NODE_HEIGHT / 2 + index * GRAPH_ROW_GAP);
   const stageColumns = QUERY_STAGES.map((stage, index) => ({ stage, index }));
   const nodeMap = new Map<string, GraphNodeLayout>();
@@ -923,17 +914,9 @@ export function buildBranchGraphLayout(config: PipelineConfig, alternative?: Pip
   };
 }
 
-function queryBranches(config: PipelineConfig, branching: boolean, alternative?: PipelineAlternative): QueryBranch[] {
-  if (alternative) {
-    const branches = (alternative.branches ?? []).map((branch, index) => normalizeBranch(branch as Record<string, unknown>, index));
-    return branches.length > 0 ? branches : [{ id: "primary", start_at: "retriever" }];
-  }
-  if (!branching) return [{ id: "pipeline", start_at: "retriever" }];
-  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
-  const branches = Array.isArray(execution.branches)
-    ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index))
-    : [];
-  return branches.length > 0 ? branches : [{ id: "branch-1", start_at: "retriever" }, { id: "branch-2", start_at: "retriever" }];
+function queryBranches(alternative: PipelineAlternative | undefined): QueryBranch[] {
+  const branches = (alternative?.branches ?? []).map((branch, index) => normalizeBranch(branch as Record<string, unknown>, index));
+  return branches.length > 0 ? branches : [{ id: "primary", start_at: "retriever" }];
 }
 
 function normalizeBranch(branch: Record<string, unknown>, index: number): QueryBranch {
@@ -962,57 +945,27 @@ function average(values: number[]): number {
 
 /** Add a branch at a supported stage while retaining the existing config shape. */
 export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, afterBranchId?: string, alternativeId?: string): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  if (alternativeId || Array.isArray(execution.alternatives)) {
-    const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
-    const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? "alternative-1"));
-    if (!target) return config;
-    const existing = target.branches ?? [];
-    const branchId = nextBranchId(existing.map((branch) => normalizeBranch(branch as Record<string, unknown>, 0)));
-    const newBranch = { id: branchId, start_at: startAt };
-    const insertionIndex = afterBranchId ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1) : existing.length;
-    target.branches = existing.length < 2
-      ? [{ ...(existing[0] ?? { id: "branch-1" }), start_at: startAt }, newBranch]
-      : [...existing.slice(0, insertionIndex), newBranch, ...existing.slice(insertionIndex)];
-    return writeQueryAlternatives(config, alternatives);
-  }
-  const existing = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)) : [];
-  const branchId = nextBranchId(existing.length < 2 ? [...existing, { id: "branch-1", start_at: startAt }] : existing);
-  const newBranch: QueryBranch = { id: branchId, start_at: startAt };
-  const insertionIndex = afterBranchId
-    ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1)
-    : existing.length;
-  const branches = existing.length < 2
+  const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+  const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? alternatives[0]?.id));
+  if (!target) return config;
+  const existing = target.branches ?? [];
+  const normalizedExisting = existing.map((branch) => normalizeBranch(branch as Record<string, unknown>, 0));
+  const branchId = nextBranchId(existing.length < 2 ? [...normalizedExisting, { id: "branch-1", start_at: "retriever" }] : normalizedExisting);
+  const newBranch = { id: branchId, start_at: startAt };
+  const insertionIndex = afterBranchId ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1) : existing.length;
+  target.branches = existing.length < 2
     ? [{ ...(existing[0] ?? { id: "branch-1" }), start_at: startAt }, newBranch]
     : [...existing.slice(0, insertionIndex), newBranch, ...existing.slice(insertionIndex)];
-  return {
-    ...config,
-    query: {
-      ...(config.query ?? {}),
-      execution: { ...execution, strategy: "branching", branches },
-    },
-  };
+  return writeQueryAlternatives(config, alternatives);
 }
 
-/** Remove a branch; a single remaining branch falls back to linear execution. */
+/** Remove a branch from the selected alternative. */
 export function removeQueryBranch(config: PipelineConfig, branchId: string, alternativeId?: string): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  if (alternativeId || Array.isArray(execution.alternatives)) {
-    const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
-    const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? "alternative-1"));
-    if (!target) return config;
-    target.branches = (target.branches ?? []).filter((branch) => branch.id !== branchId);
-    return writeQueryAlternatives(config, alternatives);
-  }
-  const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch, index) => normalizeBranch(branch, index)).filter((branch) => branch.id !== branchId) : [];
-  if (branches.length === 0) return config;
-  return {
-    ...config,
-    query: {
-      ...(config.query ?? {}),
-      execution: { ...execution, strategy: branches.length > 1 ? "branching" : "linear", branches },
-    },
-  };
+  const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+  const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? alternatives[0]?.id));
+  if (!target) return config;
+  target.branches = (target.branches ?? []).filter((branch) => branch.id !== branchId);
+  return writeQueryAlternatives(config, alternatives);
 }
 
 function nextBranchId(branches: QueryBranch[]): string {
@@ -1070,7 +1023,7 @@ function resolveSchema(schema: JsonSchema): JsonSchema {
 }
 
 function readStage(config: PipelineConfig, definition: StageDefinition, alternativeId?: string): Record<string, unknown> | undefined {
-  if (alternativeId && alternativeId !== "alternative-1") {
+  if (alternativeId && alternativeId !== "primary") {
     const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
     const override = alternative?.stage_overrides?.[definition.key];
     if (isRecord(override)) return override;
@@ -1083,7 +1036,7 @@ function readStage(config: PipelineConfig, definition: StageDefinition, alternat
 }
 
 function readAssessors(config: PipelineConfig, alternativeId?: string): Record<string, unknown>[] {
-  if (alternativeId && alternativeId !== "alternative-1") {
+  if (alternativeId && alternativeId !== "primary") {
     const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
     const override = alternative?.stage_overrides?.assessors;
     if (Array.isArray(override)) return override.filter(isRecord);
@@ -1098,7 +1051,7 @@ function readAssessorValue(value: unknown): Record<string, unknown>[] {
 }
 
 function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>, alternativeId?: string): PipelineConfig {
-  if (alternativeId && alternativeId !== "alternative-1" && definition.key !== "decision_policy" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+  if (alternativeId && alternativeId !== "primary" && definition.key !== "decision_policy" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
     const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
       ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), [definition.key]: value } }
       : alternative);
@@ -1111,7 +1064,7 @@ function updateStage(config: PipelineConfig, definition: StageDefinition, value:
 }
 
 function updateAssessors(config: PipelineConfig, values: Record<string, unknown>[], alternativeId?: string): PipelineConfig {
-  if (alternativeId && alternativeId !== "alternative-1" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+  if (alternativeId && alternativeId !== "primary" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
     const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
       ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), assessors: values } }
       : alternative);
@@ -1140,12 +1093,15 @@ function validateDraft(config: PipelineConfig | null, name: string, version: str
   const issues: string[] = [];
   if (!name.trim()) issues.push("Pipeline name is required.");
   if (!/^\d+$/.test(version) || Number(version) < 1) issues.push("Version must be a positive integer.");
-  if (config.kind === "query" && readExecutionStrategy(config) === "branching") {
-    const execution = isRecord(config.query?.execution) ? config.query.execution : {};
-    const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
-    const ids = branches.map((branch) => branch.id).filter((id): id is string => typeof id === "string");
-    if (branches.length < 2) issues.push("Branching execution requires at least two branches.");
-    if (new Set(ids).size !== ids.length) issues.push("Execution branch IDs must be unique.");
+  if (config.kind === "query") {
+    const alternatives = readQueryAlternatives(config);
+    if (alternatives.length === 0) issues.push("At least one query alternative is required.");
+    const alternativeIds = alternatives.map((alternative) => alternative.id);
+    if (new Set(alternativeIds).size !== alternativeIds.length) issues.push("Alternative IDs must be unique.");
+    for (const alternative of alternatives) {
+      const branchIds = (alternative.branches ?? []).map((branch) => branch.id);
+      if (new Set(branchIds).size !== branchIds.length) issues.push(`Branch IDs must be unique in ${alternative.id}.`);
+    }
   }
   for (const definition of stages) {
     const value = readStage(config, definition);
@@ -1178,7 +1134,7 @@ function emptyConfig(kind: PipelineKind): PipelineConfig {
     ...(kind !== "ingestion" ? {
       query: {
         execution: {
-          alternatives: [{ id: "alternative-1", source: null, branches: [], stage_overrides: {} }],
+          alternatives: [{ id: "primary", source: null, branches: [], stage_overrides: {} }],
           max_attempts: 3,
         },
       },
@@ -1242,86 +1198,28 @@ function humanize(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function ExecutionSettings({ catalog, config, onChange }: { catalog: PipelineCatalog; config: PipelineConfig; onChange: (config: PipelineConfig) => void }) {
-  const strategy = readExecutionStrategy(config);
+function ExecutionSettings({ config, onChange }: { config: PipelineConfig; onChange: (config: PipelineConfig) => void }) {
   const execution = isRecord(config.query?.execution) ? config.query.execution : {};
-  const unified = Array.isArray(execution.alternatives);
-  const branches = Array.isArray(execution.branches)
-    ? execution.branches.filter(isRecord)
-    : [];
   return (
     <div className="execution-settings">
       <label>Maximum attempts<input min="1" max="100" type="number" value={typeof execution.max_attempts === "number" ? execution.max_attempts : 3} onChange={(event) => onChange(updateExecutionValue(config, "max_attempts", Math.max(1, Number(event.target.value) || 1)))} /></label>
-      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" || execution.final_failure_policy === "last_result" ? execution.final_failure_policy : "best_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="best_result">Return best result</option><option value="last_result">Return last result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
+      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" ? execution.final_failure_policy : "best_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="best_result">Return best result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
       <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Selected path only</option><option value="union">Union path evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
-      {!unified && strategy === "recursive" && <label>Legacy retry rounds<input min="2" max="100" type="number" value={typeof execution.max_rounds === "number" ? execution.max_rounds : 2} onChange={(event) => onChange(updateExecutionValue(config, "max_rounds", Math.max(2, Number(event.target.value) || 2)))} /></label>}
-      {!unified && strategy === "branching" && <>
-        <label>Branches<input value={branches.map((branch, index) => typeof branch.id === "string" ? branch.id : `branch-${index + 1}`).join(", ")} onChange={(event) => onChange(updateBranchIds(config, event.target.value))} /></label>
-        <div className="execution-branches">{branches.map((branch, index) => <div className="execution-branch" key={typeof branch.id === "string" ? branch.id : index}>
-          <strong>{typeof branch.id === "string" ? branch.id : `Branch ${index + 1}`}</strong>
-          <label>Start at<select value={branch.start_at === "reranker" || branch.start_at === "assessor" ? branch.start_at : "retriever"} onChange={(event) => onChange(updateBranchField(config, index, "start_at", event.target.value))}><option value="retriever">Retriever</option><option value="reranker">Reranker</option><option value="assessor">Assessor</option></select></label>
-          <label>Retriever<select value={typeof branch.retriever === "string" ? branch.retriever : ""} onChange={(event) => onChange(updateBranchField(config, index, "retriever", event.target.value))}><option value="">Use pipeline retriever</option>{catalog.stages.retriever?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
-          <label>Reranker<select value={typeof branch.reranker === "string" ? branch.reranker : ""} onChange={(event) => onChange(updateBranchField(config, index, "reranker", event.target.value))}><option value="">Use pipeline reranker</option>{catalog.stages.reranker?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
-          <label>Assessor<select value={Array.isArray(branch.assessors) && typeof branch.assessors[0] === "string" ? branch.assessors[0] : ""} onChange={(event) => onChange(updateBranchField(config, index, "assessor", event.target.value))}><option value="">Use pipeline assessors</option>{catalog.stages.assessor?.implementations.map((implementation) => <option key={implementation} value={implementation}>{implementation}</option>)}</select></label>
-        </div>)}</div>
-      </>}
     </div>
   );
 }
 
-export function readExecutionStrategy(config: PipelineConfig): ExecutionStrategy {
-  const execution = config.query?.execution;
-  if (isRecord(execution) && (execution.strategy === "branching" || execution.strategy === "recursive")) {
-    return execution.strategy;
-  }
-  return "linear";
-}
-
-export function updateExecutionStrategy(config: PipelineConfig, strategy: ExecutionStrategy): PipelineConfig {
-  const execution = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  if (strategy === "branching" && (!Array.isArray(execution.branches) || execution.branches.length < 2)) {
-    const existing = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
-    execution.branches = [
-      { ...(existing[0] ?? {}), id: typeof existing[0]?.id === "string" ? existing[0].id : "branch-1" },
-      { ...(existing[1] ?? {}), id: typeof existing[1]?.id === "string" ? existing[1].id : "branch-2" },
-    ];
-  }
-  if (strategy === "recursive" && typeof execution.max_rounds !== "number") {
-    execution.max_rounds = 2;
-  }
-  execution.strategy = strategy;
-  return { ...config, query: { ...(config.query ?? {}), execution } };
-}
-
 function updateExecutionValue(config: PipelineConfig, key: string, value: unknown): PipelineConfig {
-  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
+  const execution = canonicalExecution(config);
   execution[key] = value;
   return { ...config, query: { ...(config.query ?? {}), execution } };
 }
 
-function updateBranchIds(config: PipelineConfig, value: string): PipelineConfig {
-  const ids = value.split(",").map((item) => item.trim()).filter(Boolean);
-  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  const previous = Array.isArray(execution.branches) ? execution.branches.filter(isRecord) : [];
-  execution.branches = ids.map((id, index) => ({
-    ...(previous[index] ?? {}),
-    id,
-  }));
-  return { ...config, query: { ...(config.query ?? {}), execution } };
-}
-
-function updateBranchField(config: PipelineConfig, index: number, key: "start_at" | "retriever" | "reranker" | "assessor", value: string): PipelineConfig {
-  const execution: Record<string, unknown> = isRecord(config.query?.execution) ? { ...config.query.execution } : {};
-  const branches = Array.isArray(execution.branches) ? execution.branches.filter(isRecord).map((branch) => ({ ...branch })) : [];
-  if (!branches[index]) return config;
-  if (key === "assessor") {
-    if (value) branches[index].assessors = [value];
-    else delete branches[index].assessors;
-  } else if (value) {
-    branches[index][key] = key === "start_at" && (value === "retriever" || value === "reranker" || value === "assessor") ? value : value;
-  } else {
-    delete branches[index][key];
+function canonicalExecution(config: PipelineConfig): Record<string, unknown> {
+  const source = isRecord(config.query?.execution) ? config.query.execution as Record<string, unknown> : {};
+  const execution: Record<string, unknown> = {};
+  for (const key of ["evidence_merge", "max_stage_calls", "alternatives", "max_attempts", "final_failure_policy"]) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) execution[key] = source[key];
   }
-  execution.branches = branches;
-  return { ...config, query: { ...(config.query ?? {}), execution } };
+  return execution;
 }

@@ -72,15 +72,9 @@ output to reuse.
 
 When all alternatives are exhausted, `final_failure_policy: best_result`
 returns the strongest candidate according to the assessments already produced
-by the pipeline. `last_result`, `reject`, and `abstain` remain available for
-explicit compatibility or failure behavior. The legacy per-alternative
-`decision_policy` and `acceptance` fields are accepted while loading older
-stored configurations but are ignored and omitted from the canonical model.
-
-The legacy `strategy`, `branches`, and recursive execution fields remain
-supported for existing schema-version-one configurations. New configurations
-should use `alternatives`; ingestion execution remains project-scoped, while
-query execution is selected by the chat.
+by the pipeline. `reject` and `abstain` remain available for explicit failure
+behavior. Ingestion execution remains project-scoped, while query execution is
+selected by the chat.
 
 For example:
 

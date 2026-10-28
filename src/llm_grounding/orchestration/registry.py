@@ -559,29 +559,6 @@ class ComponentRegistry:
                     ),
                 )
             )
-            for branch in config.query.execution.branches:
-                if (
-                    branch.retriever is not None
-                    and branch.retriever not in self.retrievers
-                ):
-                    raise ConfigurationError(
-                        "Unknown branching retriever implementation "
-                        f"{branch.retriever!r}"
-                    )
-                if (
-                    branch.reranker is not None
-                    and branch.reranker not in self.rerankers
-                ):
-                    raise ConfigurationError(
-                        "Unknown branching reranker implementation "
-                        f"{branch.reranker!r}"
-                    )
-                unknown_assessors = set(branch.assessors) - self.pipeline_assessors
-                if unknown_assessors:
-                    raise ConfigurationError(
-                        "Unknown branching assessor implementation(s): "
-                        + ", ".join(sorted(unknown_assessors))
-                    )
             for alternative in config.query.execution.alternatives:
                 for branch in alternative.branches:
                     if (
