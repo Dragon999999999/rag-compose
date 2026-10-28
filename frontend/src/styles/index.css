@@ -132,6 +132,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .generation-failure p { margin: 1px 0 0; }
 .generation-failure-retry { margin-left: auto; min-height: 27px; padding: 5px 8px; }
 .insufficient { color: var(--color-warning); }
+.rejected { color: var(--color-warning); }
 .composer { align-items: flex-end; display: flex; gap: var(--spacing-2); padding: 12px 20px 16px; background: linear-gradient(180deg, rgb(9 11 16 / 0%), var(--color-background) 28%); }
 .composer textarea { flex: 1; min-height: 52px; max-height: 180px; padding: 13px 14px; resize: vertical; }
 

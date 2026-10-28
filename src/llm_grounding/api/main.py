@@ -253,6 +253,34 @@ async def _evidence_dtos(
     }
 
 
+def _answer_status(
+    metadata: dict[str, object],
+    *,
+    insufficient_evidence: bool = False,
+) -> str:
+    """Return the stable browser-facing outcome for an assistant response."""
+    if metadata.get("grounding_rejected") is True:
+        return "rejected"
+    for key in ("observation_status", "status"):
+        value = metadata.get(key)
+        if value in {"completed", "rejected", "abstained"}:
+            return str(value)
+    return "abstained" if insufficient_evidence else "completed"
+
+
+def _answer_reason(metadata: dict[str, object]) -> str | None:
+    """Extract a safe, persisted decision reason for browser diagnostics."""
+    reason = metadata.get("reason")
+    if isinstance(reason, str):
+        return reason
+    decision_metadata = metadata.get("decision_metadata")
+    if isinstance(decision_metadata, dict):
+        reason = decision_metadata.get("reason")
+        if isinstance(reason, str):
+            return reason
+    return None
+
+
 async def _structured_answer(
     application: PhaseOneApplication,
     answer: Answer,
@@ -270,16 +298,21 @@ async def _structured_answer(
     retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
     visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
     evidence = await _evidence_dtos(application, visible_chunk_ids, used_chunk_ids)
+    insufficient_evidence = (
+        payload.insufficient_evidence
+        if payload
+        else bool(answer.metadata.get("insufficient_evidence", False))
+    )
     return {
         "message_id": metadata["message_id"],
         "rag_run_id": metadata["rag_run_id"],
         "turn_title": metadata.get("turn_title"),
         "answer_text": payload.answer_text if payload else answer.text,
-        "insufficient_evidence": (
-            payload.insufficient_evidence
-            if payload
-            else bool(answer.metadata.get("insufficient_evidence", False))
+        "status": _answer_status(
+            metadata, insufficient_evidence=insufficient_evidence
         ),
+        "reason": _answer_reason(metadata),
+        "insufficient_evidence": insufficient_evidence,
         "claims": [
             {
                 "id": f"claim_{index}",
@@ -314,6 +347,11 @@ async def _structured_run(
             or metadata.get("observation_status") == "rejected"
             or answer_metadata.get("grounding_rejected") is True
         )
+        outcome_metadata = {
+            **metadata,
+            **answer_metadata,
+            "status": "rejected" if rejected else "abstained",
+        }
         evidence = await _evidence_dtos(
             application,
             retrieved_chunk_ids,
@@ -329,6 +367,8 @@ async def _structured_run(
                 else "Insufficient evidence: no indexed project chunks matched "
                 "this request."
             ),
+            "status": "rejected" if rejected else "abstained",
+            "reason": _answer_reason(outcome_metadata),
             "insufficient_evidence": not rejected,
             "claims": [],
             "evidence": {chunk_id: item for chunk_id, item in evidence.items()},
@@ -342,11 +382,16 @@ async def _structured_run(
         visible_chunk_ids,
         used_chunk_ids,
     )
+    insufficient_evidence = payload.insufficient_evidence
     return {
         "rag_run_id": run_id,
         "turn_title": payload.turn_title,
         "answer_text": payload.answer_text,
-        "insufficient_evidence": payload.insufficient_evidence,
+        "status": _answer_status(
+            metadata, insufficient_evidence=insufficient_evidence
+        ),
+        "reason": _answer_reason(metadata),
+        "insufficient_evidence": insufficient_evidence,
         "claims": [
             {
                 "id": f"claim_{index}",

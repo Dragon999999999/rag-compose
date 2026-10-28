@@ -198,6 +198,27 @@ async def test_structured_answer_exposes_all_retrieved_chunks_with_used_state() 
     assert dto["evidence"][additional.chunk_id]["reference_label"] == "Smith_16"
     assert dto["evidence"][additional.chunk_id]["used"] is False
 
+
+async def test_structured_answer_exposes_grounding_rejection() -> None:
+    """A rejected answer remains visible with its decision reason and chunks."""
+    answer = Answer(
+        "Grounding failure: the generated response did not pass source validation.",
+        metadata={
+            "message_id": "message",
+            "rag_run_id": "run",
+            "grounding_rejected": True,
+            "reason": "invalid_or_unvalidated_source_references",
+            "retrieved_chunk_ids": [],
+        },
+    )
+
+    dto = await _structured_answer(EvidenceApplication(()), answer)
+
+    assert dto["status"] == "rejected"
+    assert dto["reason"] == "invalid_or_unvalidated_source_references"
+    assert dto["insufficient_evidence"] is False
+
+
 def test_claim_source_chunk_ids_are_unique_in_first_citation_order() -> None:
     """The browser used subset follows canonical claims without duplicate IDs."""
     payload = GroundedResponsePayload(
@@ -276,9 +297,33 @@ async def test_structured_run_returns_abstention_for_empty_answer_payload() -> N
     dto = await _structured_run(application, "run")  # type: ignore[arg-type]
 
     assert dto["answer_text"].startswith("Insufficient evidence:")
+    assert dto["status"] == "abstained"
     assert dto["insufficient_evidence"] is True
     assert dto["claims"] == []
     assert dto["evidence"] == {}
+
+
+async def test_structured_run_exposes_persisted_grounding_rejection() -> None:
+    """Restored rejected runs retain the rejection state for the chat UI."""
+    application = EvidenceApplication(())
+    application.repository = RunEvidenceRepository(
+        (),
+        {
+            "answer_payload": {},
+            "answer_metadata": {
+                "grounding_rejected": True,
+                "reason": "invalid_or_unvalidated_source_references",
+            },
+            "observation_status": "rejected",
+            "retrieved_chunk_ids": [],
+        },
+    )
+
+    dto = await _structured_run(application, "run")  # type: ignore[arg-type]
+
+    assert dto["status"] == "rejected"
+    assert dto["reason"] == "invalid_or_unvalidated_source_references"
+    assert dto["insufficient_evidence"] is False
 
 
 @pytest.mark.asyncio

@@ -504,6 +504,22 @@ function AssistantAnswer({
   onSelectCitation: (chunkId: string) => void;
 }) {
   // Render the current answer with evidence-backed citation controls.
+  if (answer.status === "rejected") {
+    return (
+      <article
+        className="message message-assistant rejected"
+        onClick={() => onSelectAnswer(answer.rag_run_id, answer.turn_title ?? undefined)}
+      >
+        <div className="message-heading">
+          <span className="message-role">Assistant</span>
+          <CopyButton label="Copy answer" text={answer.answer_text} />
+        </div>
+        <strong>Response withheld by grounding validation</strong>
+        <p>{formatGroundingReason(answer.reason)}</p>
+        <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
+      </article>
+    );
+  }
   if (answer.insufficient_evidence) {
     return (
       <article
@@ -573,6 +589,17 @@ function AssistantAnswer({
       <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
     </article>
   );
+}
+
+function formatGroundingReason(reason: string | null | undefined): string {
+  switch (reason) {
+    case "invalid_or_unvalidated_source_references":
+      return "The generated answer did not pass source-reference validation.";
+    case "response_has_no_grounded_claims":
+      return "The generated answer did not contain a grounded claim.";
+    default:
+      return "The generated answer did not pass the configured grounding checks.";
+  }
 }
 
 function RetryButton({
