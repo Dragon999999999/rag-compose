@@ -156,7 +156,7 @@ export function SourcesWorkspace({
       {file && (
         <Dialog title="Upload PDF" onClose={() => !uploading && setFile(null)}>
           <div className="upload-summary">
-            <strong>{file.name}</strong>
+            <strong className="upload-file-name">{file.name}</strong>
             <span>{(file.size / 1_000_000).toFixed(1)} MB</span>
             <p>
               Upload begins only after confirmation. The source will then progress

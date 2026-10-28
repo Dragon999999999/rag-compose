@@ -169,6 +169,7 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 .dialog-form input, .dialog-form select { min-height: 36px; padding: 8px 10px; }
 .form-error { color: var(--color-danger); font-size: 13px; }
 .upload-summary { display: grid; gap: var(--spacing-3); padding-top: var(--spacing-3); }
+.upload-file-name { min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 
 .empty-state, .error-state, .home-state, .not-found { align-items: center; color: var(--color-text-muted); display: grid; min-height: 240px; padding: 32px; place-items: center; text-align: center; }
 .empty-state h2, .error-state strong { color: var(--color-text); font-size: 16px; margin: 0; }
