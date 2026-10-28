@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import urlopen
@@ -729,7 +729,11 @@ class _TransformersModel:
                 "input_ids": input_ids,
                 "attention_mask": torch.ones_like(input_ids),
             }
-        if not isinstance(encoded, dict):
+        if isinstance(encoded, Mapping):
+            encoded = dict(encoded)
+            if "attention_mask" not in encoded:
+                encoded["attention_mask"] = torch.ones_like(encoded["input_ids"])
+        else:
             encoded = {
                 "input_ids": encoded,
                 "attention_mask": torch.ones_like(encoded),

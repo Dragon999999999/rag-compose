@@ -19,6 +19,8 @@ type ChatWorkspaceProps = {
   answer: GroundedAnswer | null;
   loading: boolean;
   error?: Error | null;
+  generationError?: Error | null;
+  failedPrompt?: string | null;
   activeChunk: string | null;
   onSelectAnswer: (runId: string, turnTitle?: string) => void;
   onSelectCitation: (chunkId: string) => void;
@@ -40,6 +42,8 @@ export function ChatWorkspace({
   answer,
   loading,
   error,
+  generationError,
+  failedPrompt,
   activeChunk,
   onSelectAnswer,
   onSelectCitation,
@@ -57,6 +61,12 @@ export function ChatWorkspace({
   const completedTurns = turns.filter(
     (turn) => turn.response !== undefined || turn.liveAnswer !== undefined,
   );
+  const failedTurn = failedPrompt
+    ? [...turns]
+        .reverse()
+        .find((turn) => turn.prompt.content === failedPrompt && !turn.response)
+    : undefined;
+  const hasInlineGenerationFailure = Boolean(generationError && failedPrompt);
   const showTurnNavigation = completedTurns.length > 1;
 
   useEffect(() => {
@@ -182,7 +192,7 @@ export function ChatWorkspace({
           </nav>
         )}
         <div className="conversation-content">
-          {error && <ErrorState error={error} />}
+          {error && !hasInlineGenerationFailure && <ErrorState error={error} />}
           {!loading && !turns.length && (
             <EmptyState title="No chats yet">
               Start a new conversation to ask grounded questions about this project.
@@ -202,7 +212,17 @@ export function ChatWorkspace({
               }}
             >
               <div className="conversation-turn-content">
-                <MessageArticle message={turn.prompt} />
+                <MessageArticle
+                  message={turn.prompt}
+                  onRetry={() => onAsk(turn.prompt.content)}
+                  retryDisabled={loading}
+                />
+                {failedTurn?.id === turn.id && generationError && (
+                  <GenerationFailure
+                    error={generationError}
+                    onRetry={() => onAsk(turn.prompt.content)}
+                  />
+                )}
                 {turn.liveAnswer ? (
                   <AssistantAnswer
                     activeChunk={activeChunk}
@@ -221,6 +241,21 @@ export function ChatWorkspace({
               </div>
             </section>
           ))}
+          {failedPrompt && !failedTurn && generationError && (
+            <section className="conversation-turn failed-conversation-turn">
+              <div className="conversation-turn-content">
+                <MessageArticle
+                  message={createPendingMessage(chatId, failedPrompt)}
+                  onRetry={() => onAsk(failedPrompt)}
+                  retryDisabled={loading}
+                />
+                <GenerationFailure
+                  error={generationError}
+                  onRetry={() => onAsk(failedPrompt)}
+                />
+              </div>
+            </section>
+          )}
           {loading && (
             <article className="message message-assistant generation">
               <span className="message-role">Assistant</span>
@@ -315,6 +350,18 @@ function fallbackTurnTitle(prompt: string): string {
     : `${normalized.slice(0, 77).trimEnd()}…`;
 }
 
+function createPendingMessage(chatId: string, content: string): Message {
+  return {
+    id: `failed-${chatId}`,
+    chat_id: chatId,
+    role: "user",
+    content,
+    created_at: new Date().toISOString(),
+    rag_run_id: null,
+    turn_title: null,
+  };
+}
+
 function isCurrentAnswer(
   message: Message,
   answer: GroundedAnswer | null,
@@ -328,15 +375,61 @@ function isCurrentAnswer(
 
 function MessageArticle({
   message,
+  onRetry,
+  retryDisabled = false,
 }: {
   message: Message;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
 }) {
   // Render a user prompt without treating conversation history as evidence.
   return (
     <article className={`message message-${message.role}`}>
-      <span className="message-role">You</span>
-      <div>{message.content}</div>
+      <div className="message-heading">
+        <span className="message-role">You</span>
+        <div className="message-actions">
+          {onRetry && (
+            <RetryButton
+              disabled={retryDisabled}
+              onRetry={onRetry}
+              prompt={message.content}
+            />
+          )}
+          <CopyButton label="Copy prompt" text={message.content} />
+        </div>
+      </div>
+      <div className="message-body">{message.content}</div>
     </article>
+  );
+}
+
+function GenerationFailure({
+  error,
+  onRetry,
+}: {
+  error: Error;
+  onRetry: () => void;
+}) {
+  return (
+    <aside className="generation-failure" role="alert">
+      <span className="generation-failure-flag" aria-hidden="true">
+        !
+      </span>
+      <div>
+        <strong>Response generation failed</strong>
+        <p>There was an issue generating a response for this prompt.</p>
+      </div>
+      <Button
+        className="generation-failure-retry"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRetry();
+        }}
+      >
+        Retry
+      </Button>
+      <span className="sr-only">{error.message}</span>
+    </aside>
   );
 }
 
@@ -356,7 +449,10 @@ function PersistedAssistantAnswer({
   if (!message.rag_run_id) {
     return (
       <article className="message message-assistant structured-unavailable">
-        <span className="message-role">Assistant</span>
+        <div className="message-heading">
+          <span className="message-role">Assistant</span>
+          <CopyButton label="Copy answer" text={message.content} />
+        </div>
         <p>Structured evidence is unavailable for this older response.</p>
       </article>
     );
@@ -372,7 +468,10 @@ function PersistedAssistantAnswer({
   if (structuredAnswer.error || !structuredAnswer.data) {
     return (
       <article className="message message-assistant structured-unavailable">
-        <span className="message-role">Assistant</span>
+        <div className="message-heading">
+          <span className="message-role">Assistant</span>
+          <CopyButton label="Copy answer" text={message.content} />
+        </div>
         <p>Structured evidence could not be loaded for this response.</p>
         <Button onClick={() => structuredAnswer.refetch()}>Retry</Button>
       </article>
@@ -406,7 +505,10 @@ function AssistantAnswer({
         className="message message-assistant insufficient"
         onClick={() => onSelectAnswer(answer.rag_run_id, answer.turn_title ?? undefined)}
       >
-        <span className="message-role">Assistant</span>
+        <div className="message-heading">
+          <span className="message-role">Assistant</span>
+          <CopyButton label="Copy answer" text={answer.answer_text} />
+        </div>
         <strong>Insufficient evidence in this project</strong>
         <p>{answer.answer_text}</p>
         <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
@@ -419,7 +521,10 @@ function AssistantAnswer({
       className="message message-assistant structured-answer"
       onClick={() => onSelectAnswer(answer.rag_run_id, answer.turn_title ?? undefined)}
     >
-      <span className="message-role">Assistant</span>
+      <div className="message-heading">
+        <span className="message-role">Assistant</span>
+        <CopyButton label="Copy answer" text={answer.answer_text} />
+      </div>
       {answer.claims.map((claim) => (
         <p
           className={
@@ -462,6 +567,73 @@ function AssistantAnswer({
       ))}
       <RetrievedChunkList answer={answer} onSelectCitation={onSelectCitation} />
     </article>
+  );
+}
+
+function RetryButton({
+  disabled,
+  onRetry,
+  prompt,
+}: {
+  disabled: boolean;
+  onRetry: () => void;
+  prompt: string;
+}) {
+  return (
+    <button
+      aria-label="Rerun prompt"
+      className="message-icon-button"
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onRetry();
+      }}
+      title={`Rerun: ${prompt}`}
+      type="button"
+    >
+      <span aria-hidden="true">↻</span>
+    </button>
+  );
+}
+
+function CopyButton({ label, text }: { label: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async (): Promise<void> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      aria-label={label}
+      className="message-icon-button"
+      onClick={(event) => {
+        event.stopPropagation();
+        void copy();
+      }}
+      title={label}
+      type="button"
+    >
+      <span aria-hidden="true">{copied ? "✓" : "⧉"}</span>
+    </button>
   );
 }
 

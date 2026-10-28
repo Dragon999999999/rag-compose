@@ -530,7 +530,9 @@ function ProjectWorkspace({
               activeChunk={activeChunk}
               answer={answer}
               chatId={chatId}
-              error={chatMutations.ask.error ?? messages.error}
+              error={messages.error}
+              failedPrompt={chatMutations.ask.error ? chatMutations.ask.variables?.message : null}
+              generationError={chatMutations.ask.error}
               key={chatId}
               loading={chatMutations.ask.isPending || messages.isLoading}
               messages={messages.data}

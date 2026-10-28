@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -13,6 +14,48 @@ from llm_grounding.infrastructure.model_management.manager import LocalModelMana
 from llm_grounding.infrastructure.model_management.models import ModelEndpoint
 from llm_grounding.infrastructure.model_management.registry import ModelRegistry
 from llm_grounding.infrastructure.model_management.storage import ModelStorageManager
+
+
+def test_qwen_reranker_accepts_batch_encoding_from_chat_template() -> None:
+    """Generative reranking handles Transformers BatchEncoding inputs."""
+    import torch
+    from transformers.tokenization_utils_base import BatchEncoding
+
+    from llm_grounding.infrastructure.model_management.runtime import (
+        _TransformersModel,
+    )
+
+    definition = load_model_registry().resolve("reranker_qwen3_0_6b").model_copy(
+        update={
+            "parameters": {
+                "reranker_type": "generative",
+                "yes_token_id": 1,
+                "no_token_id": 0,
+            }
+        }
+    )
+
+    class _Tokenizer:
+        def apply_chat_template(
+            self, *_args: object, **kwargs: object
+        ) -> BatchEncoding:
+            assert kwargs["return_dict"] is True
+            return BatchEncoding(
+                {
+                    "input_ids": torch.tensor([[4, 5]]),
+                    "attention_mask": torch.tensor([[1, 1]]),
+                }
+            )
+
+    class _Model:
+        def __call__(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(logits=torch.tensor([[[0.0, 2.0]]]))
+
+    model = _TransformersModel(definition, _Tokenizer(), _Model(), "cpu")
+
+    result = model._qwen_score("What is this?", "A document")
+
+    assert result > 0.5
 
 
 def test_model_registry_validates_standard_sources_and_excludes_schema() -> None:
