@@ -6,7 +6,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from time import monotonic
-from typing import TypeVar, cast
+from typing import TypeVar
 
 from llm_grounding.domain.corpus import (
     Document,
@@ -18,7 +18,7 @@ from llm_grounding.domain.corpus import (
 from llm_grounding.domain.documents import DocumentSource, ParsedDocument
 from llm_grounding.domain.evidence import EvidenceUnit
 from llm_grounding.embedding.factory import build_embedder
-from llm_grounding.embedding.protocol import Embedder
+from llm_grounding.embedding.protocol import Embedder, SparseEmbedder, TokenEmbedder
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.model_management.manager import LocalModelManager
 from llm_grounding.infrastructure.storage.protocol import ArtifactStore
@@ -34,6 +34,7 @@ from llm_grounding.observability.trace import TraceRecorder
 from llm_grounding.parsing.protocol import DocumentParser
 
 StageResult = TypeVar("StageResult")
+IngestionEmbedder = Embedder | SparseEmbedder | TokenEmbedder
 
 _TEMPORARY_PDF_NAME = re.compile(r"^tmp[a-z0-9]{6,32}\.pdf$", re.IGNORECASE)
 _UUID_PDF_NAME = re.compile(
@@ -62,10 +63,10 @@ class DocumentIngestionService:
         parser: DocumentParser,
         knowledge_builder: KnowledgeBuilder | None,
         chunker: Chunker,
-        embedder: Embedder | None,
+        embedder: IngestionEmbedder | None,
         vectors: VectorStore | None,
         *,
-        embedder_factory: Callable[[EmbeddingConfig], Embedder] | None = None,
+        embedder_factory: Callable[[EmbeddingConfig], IngestionEmbedder] | None = None,
         local_model_manager: LocalModelManager | None = None,
     ) -> None:
         """Inject persistence, extraction, and indexing dependencies.
@@ -79,13 +80,16 @@ class DocumentIngestionService:
         self._parser = parser
         self._knowledge_builder = knowledge_builder
         self._chunker = chunker
-        self._embedder_factory = (
-            (lambda config: cast(Embedder, build_embedder(config, local_model_manager)))
-            if local_model_manager is not None
-            else embedder_factory
-            or cast(Callable[[EmbeddingConfig], Embedder], build_embedder)
-        )
-        self._embedders = (
+        self._embedder_factory: Callable[[EmbeddingConfig], IngestionEmbedder]
+        if local_model_manager is not None:
+            self._embedder_factory = lambda config: build_embedder(
+                config, local_model_manager
+            )
+        elif embedder_factory is not None:
+            self._embedder_factory = embedder_factory
+        else:
+            self._embedder_factory = build_embedder
+        self._embedders: dict[str, IngestionEmbedder] = (
             {embedder.model_identity: embedder} if embedder is not None else {}
         )
         self._vectors = vectors
@@ -97,7 +101,7 @@ class DocumentIngestionService:
         resolver = getattr(self._vectors, "for_ingestion_config", None)
         return resolver(config) if resolver is not None else self._vectors
 
-    def _embedder_for(self, config: IngestionConfig) -> Embedder:
+    def _embedder_for(self, config: IngestionConfig) -> IngestionEmbedder:
         """Return the cached provider for one exact embedding configuration."""
         if config.embedding is None:
             raise ValueError("No embedder is available for PostgreSQL-only ingestion")
@@ -182,7 +186,7 @@ class DocumentIngestionService:
         ingestion: DocumentIngestion,
         config: IngestionConfig,
         *,
-        embedder: Embedder | None = None,
+        embedder: IngestionEmbedder | None = None,
     ) -> None:
         """Run persisted ingestion stages and leave FAILED state on an error.
 
@@ -243,8 +247,8 @@ class DocumentIngestionService:
                 if callable(late_embeddings):
                     embedding_operation = late_embeddings(chunks)
                 else:
-                    embedding_operation = active_embedder.embed_documents(
-                        [chunk.text for chunk in chunks]
+                    embedding_operation = self._embed_documents(
+                        active_embedder, config.embedding, chunks
                     )
                 vectors = await self._traced(traces, "embed", embedding_operation)
                 if any(
@@ -306,6 +310,29 @@ class DocumentIngestionService:
                 )
             )
             raise
+
+    @staticmethod
+    def _embed_documents(
+        embedder: IngestionEmbedder,
+        config: EmbeddingConfig,
+        chunks: tuple[RetrievalUnit, ...],
+    ) -> Awaitable[tuple[object, ...]]:
+        """Encode chunks using the representation selected by the model."""
+        texts = [chunk.text for chunk in chunks]
+        if config.representation == "dense" and hasattr(embedder, "embed_documents"):
+            return embedder.embed_documents(texts)
+        if config.representation == "sparse" and hasattr(
+            embedder, "embed_sparse_documents"
+        ):
+            return embedder.embed_sparse_documents(texts)
+        if config.representation == "multivector" and hasattr(
+            embedder, "embed_token_documents"
+        ):
+            return embedder.embed_token_documents(texts)
+        raise RuntimeError(
+            f"Embedder does not provide the configured {config.representation} "
+            "document representation"
+        )
 
     async def _knowledge(
         self, parsed: ParsedDocument, traces: TraceRecorder

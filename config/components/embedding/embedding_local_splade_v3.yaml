@@ -1,0 +1,6 @@
+id: embedding_local_splade_v3
+type: embedding
+implementation: sentence_transformers
+description: Local SPLADE-v3 learned sparse embedding provider.
+config:
+  model_id: embedding_splade_v3

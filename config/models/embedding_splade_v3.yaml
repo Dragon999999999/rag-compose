@@ -17,6 +17,7 @@ parameters:
   representation: sparse
   dimension: 30522
   normalize: false
+  similarity_metric: dot
   batch_size: 1
   sparse_endpoint: /v1/sparse_embeddings
   trust_remote_code: true

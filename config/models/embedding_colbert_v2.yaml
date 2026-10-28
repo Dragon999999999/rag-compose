@@ -17,6 +17,7 @@ parameters:
   representation: multivector
   dimension: 128
   normalize: true
+  similarity_metric: dot
   batch_size: 1
   token_endpoint: /v1/token_embeddings
   trust_remote_code: true

@@ -148,6 +148,12 @@ class ConfigurationRegistry:
                 vector_backend = self._component(
                     "vector_backend", vector_backend_id, VectorBackendConfig
                 )
+                vector_backend = vector_backend.model_copy(
+                    update={
+                        "representation": embedding_config.representation,
+                        "similarity_metric": embedding_config.similarity_metric,
+                    }
+                )
                 self._validate_backend_compatibility(embedding_config, vector_backend)
             chunker = self._chunker(source.representation.chunker)
             knowledge_builder = (
@@ -236,6 +242,11 @@ class ConfigurationRegistry:
         embedding: EmbeddingConfig, backend: VectorBackendConfig
     ) -> None:
         """Reject embedding representations unsupported by the selected backend."""
+        if embedding.representation != "dense" and backend.implementation != "qdrant":
+            raise ValueError(
+                f"Vector backend {backend.implementation!r} does not support "
+                f"{embedding.representation} embeddings"
+            )
         if embedding.representation != backend.representation:
             raise ValueError(
                 f"Vector backend {backend.implementation!r} does not support "

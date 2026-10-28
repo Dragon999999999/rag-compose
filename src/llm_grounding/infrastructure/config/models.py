@@ -562,7 +562,7 @@ class VectorBackendConfig(ComponentConfig):
     type: str = Field(default="vector_backend", min_length=1)
     implementation: str = Field(default="qdrant", min_length=1)
     index_version: str = Field(default="1", min_length=1, max_length=32)
-    representation: Literal["dense"] = "dense"
+    representation: Literal["dense", "sparse", "multivector"] = "dense"
     similarity_metric: Literal["cosine", "dot", "euclidean"] = "cosine"
     index_type: Literal["flat", "hnsw", "ivf"] = "flat"
     hnsw_m: int = Field(default=16, ge=4, le=256)

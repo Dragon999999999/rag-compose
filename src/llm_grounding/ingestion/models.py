@@ -299,7 +299,7 @@ class IngestionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_dense_index_pair(self) -> "IngestionConfig":
-        """Require embeddings and vector indexes to be enabled together."""
+        """Require embeddings and compatible vector indexes together."""
         if self.embedding is None and self.vector_backend is not None:
             raise ValueError(
                 "vector_backend requires an embedding configuration; set both to null "
@@ -310,15 +310,32 @@ class IngestionConfig(BaseModel):
                 "An embedding configuration requires a resolved vector_backend"
             )
         if self.vector_backend == "qdrant" and self.embedding is not None:
-            if self.embedding.representation != "dense":
-                raise ValueError("Qdrant supports dense embeddings only")
+            if self.embedding.representation not in {"dense", "sparse", "multivector"}:
+                raise ValueError(
+                    "Qdrant does not support this embedding representation"
+                )
             if self.embedding.similarity_metric != "cosine":
-                raise ValueError("Qdrant requires cosine similarity")
-            if self.vector_backend_config.get("index_type", "flat") != "flat":
+                if self.embedding.representation == "dense":
+                    raise ValueError("Qdrant requires cosine similarity")
+            if (
+                self.embedding.representation in {"sparse", "multivector"}
+                and self.embedding.similarity_metric != "dot"
+            ):
+                raise ValueError(
+                    "Qdrant learned indexes require dot similarity"
+                )
+            if (
+                self.embedding.representation == "dense"
+                and self.vector_backend_config.get("index_type", "flat") != "flat"
+            ):
                 raise ValueError("Qdrant does not support configurable index types")
-        if self.embedding is not None and self.embedding.representation != "dense":
+        if (
+            self.embedding is not None
+            and self.embedding.representation != "dense"
+            and self.vector_backend != "qdrant"
+        ):
             raise ValueError(
-                "Configured vector backends currently support dense embeddings only"
+                "Sparse and multivector embeddings require the qdrant backend"
             )
         return self
 

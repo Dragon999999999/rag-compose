@@ -1,0 +1,11 @@
+schema_version: 2
+kind: ingestion
+name: benchmark_ingest_emb_splade_v3
+version: 1
+description: SPLADE-v3 learned sparse ingestion pipeline.
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: knowledge_basic
+  chunker: chunker_recursive_tokens
+  embedding: embedding_local_splade_v3
+  vector_backend: vector_backend_qdrant

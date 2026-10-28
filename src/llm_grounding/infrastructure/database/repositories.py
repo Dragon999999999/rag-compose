@@ -1585,7 +1585,16 @@ class PostgresRepository:
                 config = configs[0]
                 capability_names = ["full_text", "metadata_filtering", "postgres_fts"]
                 if config.embedding is not None and config.vector_backend == "qdrant":
-                    capability_names.extend(("chunk_vectors", "dense_vector_index"))
+                    if config.embedding.representation == "dense":
+                        capability_names.extend(("chunk_vectors", "dense_vector_index"))
+                    elif config.embedding.representation == "sparse":
+                        capability_names.extend(
+                            ("sparse_vector_index", "sparse_query_embedder")
+                        )
+                    elif config.embedding.representation == "multivector":
+                        capability_names.extend(
+                            ("multivector_index", "late_interaction_model")
+                        )
                 capabilities = {
                     "capabilities": capability_names,
                     "embedding_identity": (

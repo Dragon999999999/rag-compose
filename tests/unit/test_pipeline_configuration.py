@@ -279,8 +279,35 @@ def test_vector_backend_without_embedding_is_rejected(tmp_path: Path) -> None:
         load_pipeline_config(path)
 
 
-def test_incompatible_embedding_representation_is_rejected() -> None:
-    """The configured backend must support the selected embedding representation."""
+def test_qdrant_accepts_learned_embedding_representations() -> None:
+    """The Qdrant learned-index adapters accept sparse representations."""
+    catalog = load_model_catalog().model_copy(
+        update={
+            "embedding_models": {
+                "embedding_001": EmbeddingConfig(representation="sparse")
+            }
+        }
+    )
+
+    config = load_pipeline_config(
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    )
+    assert config.representation is not None
+    assert config.representation.vector_backend is not None
+    assert config.representation.vector_backend.representation == "sparse"
+
+
+def test_non_qdrant_backend_rejects_learned_embedding_representations(
+    tmp_path: Path,
+) -> None:
+    """PostgreSQL and FAISS remain dense-only vector backends."""
+    source = Path("config/pipelines/ingestion_default_v1.yaml").read_text(
+        encoding="utf-8"
+    ).replace(
+        "vector_backend: vector_backend_qdrant", "vector_backend: vector_backend_faiss"
+    )
+    path = tmp_path / "sparse-ingestion.yaml"
+    path.write_text(source, encoding="utf-8")
     catalog = load_model_catalog().model_copy(
         update={
             "embedding_models": {
@@ -290,9 +317,7 @@ def test_incompatible_embedding_representation_is_rejected() -> None:
     )
 
     with pytest.raises(ConfigurationError, match="does not support sparse embeddings"):
-        load_pipeline_config(
-            Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
-        )
+        load_pipeline_config(path, catalog=catalog)
 
 
 def test_postgresql_only_capabilities_do_not_advertise_vectors() -> None:
@@ -315,6 +340,49 @@ def test_supported_dense_backends_advertise_vector_capabilities(backend: str) ->
 
     assert "chunk_vectors" in capabilities.capabilities
     assert "dense_vector_index" in capabilities.capabilities
+
+
+@pytest.mark.parametrize(
+    ("ingestion_name", "query_name", "representation", "retriever"),
+    [
+        (
+            "benchmark_ingest_emb_colbert_v2.yaml",
+            "benchmark_emb_colbert_v2.yaml",
+            "multivector",
+            "colbert_v2",
+        ),
+        (
+            "benchmark_ingest_emb_splade_v3.yaml",
+            "benchmark_emb_splade_v3.yaml",
+            "sparse",
+            "splade_v3",
+        ),
+    ],
+)
+def test_learned_embedding_pipeline_presets_are_runnable(
+    ingestion_name: str,
+    query_name: str,
+    representation: str,
+    retriever: str,
+) -> None:
+    """ColBERT-v2 and SPLADE-v3 presets resolve through learned Qdrant indexes."""
+    root = Path("config/pipelines/benchmarks/03_embeddings")
+    catalog = load_model_catalog()
+    ingestion_pipeline = load_pipeline_config(root / ingestion_name, catalog=catalog)
+    query_pipeline = load_pipeline_config(root / query_name, catalog=catalog)
+    ingestion = ingestion_pipeline.resolve_ingestion(catalog)
+
+    assert ingestion.embedding is not None
+    assert ingestion.embedding.representation == representation
+    assert ingestion.vector_backend == "qdrant"
+    assert query_pipeline.query is not None
+    assert query_pipeline.query.retriever.implementation == retriever
+    capabilities = IndexCapabilities.from_ingestion(ingestion)
+    capability = {
+        "sparse": "sparse_vector_index",
+        "multivector": "multivector_index",
+    }[representation]
+    assert capability in capabilities.capabilities
 
 
 def test_retriever_requirements_are_loaded_from_component_yaml() -> None:

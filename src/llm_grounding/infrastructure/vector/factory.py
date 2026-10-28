@@ -11,6 +11,10 @@ from llm_grounding.infrastructure.config.models import VectorBackendConfig
 from llm_grounding.infrastructure.config.settings import FaissSettings, QdrantSettings
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.infrastructure.vector.faiss import FaissVectorStore
+from llm_grounding.infrastructure.vector.learned import (
+    QdrantMultiVectorStore,
+    QdrantSparseVectorStore,
+)
 from llm_grounding.infrastructure.vector.pgvector import PgVectorStore
 from llm_grounding.infrastructure.vector.protocol import VectorStore
 from llm_grounding.infrastructure.vector.qdrant import QdrantVectorStore
@@ -137,7 +141,28 @@ class VectorStoreRouter:
         cache_key = repr(backend.model_dump(mode="json"))
         store = self._stores.get(cache_key)
         if store is None:
-            store = self._factory.create(backend, self._repository)
+            if (
+                config.embedding is not None
+                and backend.implementation == "qdrant"
+                and config.embedding.representation in {"sparse", "multivector"}
+            ):
+                settings = QdrantSettings.from_environment()
+                model_identity = config.embedding.vector_identity()
+                store = cast(
+                    VectorStore,
+                    (
+                        QdrantSparseVectorStore(
+                            settings, self._repository, model_identity
+                        )
+                        if config.embedding.representation == "sparse"
+                        else QdrantMultiVectorStore(
+                            settings, self._repository, model_identity
+                        )
+                    ),
+                )
+            else:
+                store = self._factory.create(backend, self._repository)
+            assert store is not None
             self._stores[cache_key] = store
         return store
 

@@ -48,7 +48,15 @@ class IndexCapabilities:
             "pgvector",
             "faiss",
         }:
-            capabilities.update({"chunk_vectors", "dense_vector_index"})
+            representation = config.embedding.representation
+            if representation == "dense":
+                capabilities.update({"chunk_vectors", "dense_vector_index"})
+            elif representation == "sparse":
+                capabilities.update({"sparse_vector_index", "sparse_query_embedder"})
+            elif representation == "multivector":
+                capabilities.update(
+                    {"multivector_index", "late_interaction_model"}
+                )
         return cls(
             frozenset(capabilities),
             (
