@@ -21,6 +21,27 @@ _INGESTION_ID = "ingestion_id"
 _CHUNK_ID = "retrieval_unit_id"
 _MODEL_IDENTITY = "model_identity"
 _DIMENSION = "dimension"
+_MAX_POINTS_PER_UPSERT = 8
+
+
+async def _upsert_in_batches(
+    client: AsyncQdrantClient,
+    collection: str,
+    points: list[models.PointStruct],
+) -> None:
+    """Upload derived vectors in requests small enough for Qdrant's HTTP limit.
+
+    Token-level vectors have a variable payload size and can make a single
+    document produce a very large request.  Qdrant's default request limit is
+    32 MiB, so a conservative point-count limit prevents large multivector
+    indexes from being rejected while retaining wait-for-completion semantics.
+    """
+    for offset in range(0, len(points), _MAX_POINTS_PER_UPSERT):
+        await client.upsert(
+            collection,
+            points[offset : offset + _MAX_POINTS_PER_UPSERT],
+            wait=True,
+        )
 
 
 class QdrantSparseVectorStore:
@@ -145,7 +166,7 @@ class QdrantSparseVectorStore:
             )
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
-        await self._client.upsert(self._collection, points, wait=True)
+        await _upsert_in_batches(self._client, self._collection, points)
 
     async def search(
         self,
@@ -384,7 +405,7 @@ class QdrantMultiVectorStore:
             )
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
-        await self._client.upsert(self._collection, points, wait=True)
+        await _upsert_in_batches(self._client, self._collection, points)
 
     async def search(
         self,
