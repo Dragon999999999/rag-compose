@@ -37,6 +37,18 @@ export function ProjectHeader({
   pipelineChanging,
   onPipelineChange,
 }: ProjectHeaderProps) {
+  const defaultCompatibility = queryCompatibility.find(
+    (item) => item.pipeline.is_default,
+  ) ?? queryCompatibility.find((item) => item.pipeline.name === "query_basic_v1");
+  const selectedPipelineId = chat?.pipeline_id ?? defaultCompatibility?.pipeline.id;
+  const selectedCompatibility = queryCompatibility.find(
+    (item) => item.pipeline.id === selectedPipelineId,
+  );
+  const incompatiblePipelines = queryCompatibility.filter(
+    (item) => !item.compatible,
+  );
+  const indexReady = Boolean(project?.index_capabilities?.capabilities?.length);
+
   return (
     <header className="project-header">
       <div className="header-identity">
@@ -78,7 +90,9 @@ export function ProjectHeader({
               value={chat.pipeline_id ?? ""}
             >
               {!chat.pipeline_id && (
-                <option value="">Application default</option>
+                <option value="">
+                  Application default{defaultCompatibility && (defaultCompatibility.compatible ? " · ✓" : " · ⚠")}
+                </option>
               )}
               {chat.pipeline_id &&
                 !queryCompatibility.some((item) => item.pipeline.id === chat.pipeline_id) && (
@@ -87,20 +101,34 @@ export function ProjectHeader({
                   </option>
                 )}
               {queryCompatibility.filter((item) => item.compatible).map((item) => (
-                <option key={item.pipeline.id} value={item.pipeline.id}>{item.pipeline.name} (v{item.pipeline.version})</option>
+                <option key={item.pipeline.id} value={item.pipeline.id}>✓ {item.pipeline.name} (v{item.pipeline.version})</option>
               ))}
               {queryCompatibility.filter((item) => !item.compatible).map((item) => (
-                <option disabled key={item.pipeline.id} value={item.pipeline.id}>{item.pipeline.name} — unavailable</option>
+                <option disabled key={item.pipeline.id} value={item.pipeline.id}>⚠ {item.pipeline.name} — incompatible</option>
               ))}
             </select>
+            {incompatiblePipelines.length > 0 && (
+              <details className="pipeline-compatibility-details">
+                <summary>Inspect compatibility</summary>
+                <div className="pipeline-compatibility-options">
+                  {incompatiblePipelines.map((item) => (
+                    <details key={item.pipeline.id}>
+                      <summary>
+                        <span aria-hidden="true" className="pipeline-status-indicator incompatible">⚠</span>
+                        {item.pipeline.name}
+                      </summary>
+                      <p>
+                        Missing capabilities: {item.missing_capabilities.length > 0
+                          ? item.missing_capabilities.join(", ")
+                          : "not reported"}.
+                      </p>
+                      {item.reason && <p>{item.reason}</p>}
+                    </details>
+                  ))}
+                </div>
+              </details>
+            )}
           </label>
-        )}
-        {chat && queryCompatibility.some((item) => !item.compatible) && (
-          <div className="pipeline-compatibility-list" aria-label="Unavailable query pipelines">
-            {queryCompatibility.filter((item) => !item.compatible).map((item) => (
-              <span key={item.pipeline.id}>Unavailable: {item.pipeline.name} — {item.reason ?? item.missing_capabilities.join(", ")}</span>
-            ))}
-          </div>
         )}
         <Button
           onClick={onWorkspaceToggle}
@@ -112,9 +140,17 @@ export function ProjectHeader({
           New chat
         </Button>
       </div>
-      {project && <p className="index-status">Index: {project.index_capabilities?.capabilities?.length ? "Ready" : "Not indexed"}{project.ingestion_pipeline_id ? ` · ${project.ingestion_pipeline_id}` : ""}</p>}
+      {project && <p className="index-status">Index: {indexReady ? "Ready" : "Not indexed"}{project.ingestion_pipeline_id ? ` · ${project.ingestion_pipeline_id}` : ""}</p>}
       {(pipelineError || compatibilityError || ingestionError) && <p className="pipeline-error" role="alert">{pipelineError?.message ?? compatibilityError?.message ?? ingestionError?.message}</p>}
-      {chat && queryCompatibility.some((item) => item.pipeline.id === chat.pipeline_id && !item.compatible) && <p className="pipeline-error" role="alert">{queryCompatibility.find((item) => item.pipeline.id === chat.pipeline_id)?.reason}</p>}
+      {chat && selectedCompatibility && !selectedCompatibility.compatible && (
+        <div className="active-pipeline-compatibility" role="alert">
+          <strong>Selected query pipeline is incompatible with this index.</strong>
+          <span>
+            {indexReady ? "The index is ready, but it does not provide what this pipeline requires." : "The project is not indexed yet, so this pipeline cannot be verified as compatible."}
+          </span>
+          <span>Missing capabilities: {selectedCompatibility.missing_capabilities.length > 0 ? selectedCompatibility.missing_capabilities.join(", ") : "not reported"}.</span>
+        </div>
+      )}
     </header>
   );
 }
