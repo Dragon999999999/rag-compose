@@ -60,7 +60,7 @@ export function ProjectHeader({
         </div>
       </div>
       <div className="header-actions">
-        {project && !rightSidebarOpen && (
+        {project && view === "sources" && !rightSidebarOpen && (
           <label className="pipeline-selector">
             <span>Indexing</span>
             <select
@@ -82,7 +82,7 @@ export function ProjectHeader({
             </select>
           </label>
         )}
-        {chat && (
+        {chat && view === "chat" && (
           <label className="pipeline-selector">
             <span>Pipeline</span>
             <select
@@ -144,7 +144,7 @@ export function ProjectHeader({
       </div>
       {project && !rightSidebarOpen && <p className="index-status">Index: {indexReady ? "Ready" : "Not indexed"}{project.ingestion_pipeline_id ? ` · ${project.ingestion_pipeline_id}` : ""}</p>}
       {(pipelineError || compatibilityError || ingestionError) && <p className="pipeline-error" role="alert">{pipelineError?.message ?? compatibilityError?.message ?? ingestionError?.message}</p>}
-      {chat && selectedCompatibility && !selectedCompatibility.compatible && (
+      {chat && view === "chat" && selectedCompatibility && !selectedCompatibility.compatible && (
         <div className="active-pipeline-compatibility" role="alert">
           <strong>Selected query pipeline is incompatible with this index.</strong>
           <span>
