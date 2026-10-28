@@ -500,6 +500,18 @@ class RecordingPipelineRepository:
         """Start with an empty persisted pipeline collection."""
         self.records: dict[str, Pipeline] = {}
         self.versions: dict[tuple[str, int], str] = {}
+        self.upsert_count = 0
+
+    async def list_pipelines(
+        self, *, active_only: bool = False, kind: str | None = None
+    ) -> tuple[Pipeline, ...]:
+        """Return persisted records for the synchronizer preflight check."""
+        records = tuple(self.records.values())
+        if active_only:
+            records = tuple(record for record in records if record.active)
+        if kind is not None:
+            records = tuple(record for record in records if record.kind == kind)
+        return records
 
     async def get_pipeline_by_name(self, name: str) -> Pipeline | None:
         """Return the current record for a stable pipeline name."""
@@ -514,6 +526,7 @@ class RecordingPipelineRepository:
         representation_hash: str,
     ) -> Pipeline:
         """Apply the synchronizer's YAML-owned upsert contract."""
+        self.upsert_count += 1
         previous = self.records.get(config.name)
         if previous is not None and previous.source_kind == "api":
             return previous
@@ -567,6 +580,7 @@ async def test_startup_synchronizer_discovers_and_fingerprints_yaml(
     assert first.pipelines[0].source_fingerprint
     assert second.imported == 0
     assert second.updated == 0
+    assert repository.upsert_count == 1
 
 
 async def test_startup_sync_rejects_changed_yaml_without_version_bump(

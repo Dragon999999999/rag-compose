@@ -46,6 +46,12 @@ class PipelineSynchronizer:
         """Import all pipeline files and return the current persisted records."""
         catalog = self._catalog or load_model_catalog()
         paths = discover_pipeline_paths(self._directory)
+        source_fingerprints = {
+            str(path): pipeline_source_fingerprint(path) for path in paths
+        }
+        persisted = await self._repository.list_pipelines(active_only=False)
+        if self._sources_unchanged(paths, source_fingerprints, persisted):
+            return PipelineSyncResult(persisted, 0, 0, ())
         imported = 0
         updated = 0
         skipped: list[str] = []
@@ -58,7 +64,7 @@ class PipelineSynchronizer:
             record = await self._repository.upsert_pipeline_from_yaml(
                 config,
                 source_path=str(path),
-                source_fingerprint=pipeline_source_fingerprint(path),
+                source_fingerprint=source_fingerprints[str(path)],
                 representation_hash=config.representation_hash(catalog),
             )
             records.append(record)
@@ -73,6 +79,29 @@ class PipelineSynchronizer:
             ):
                 updated += 1
         return PipelineSyncResult(tuple(records), imported, updated, tuple(skipped))
+
+    @staticmethod
+    def _sources_unchanged(
+        paths: tuple[Path, ...],
+        source_fingerprints: dict[str, str],
+        persisted: tuple[Pipeline, ...],
+    ) -> bool:
+        """Return whether every discovered YAML source matches persisted metadata."""
+        persisted_yaml = tuple(
+            record for record in persisted if record.source_kind == "yaml"
+        )
+        if len(persisted_yaml) != len(paths):
+            return False
+        persisted_by_path = {
+            record.source_path: record.source_fingerprint
+            for record in persisted_yaml
+        }
+        if set(persisted_by_path) != set(source_fingerprints):
+            return False
+        return all(
+            persisted_by_path[path] == fingerprint
+            for path, fingerprint in source_fingerprints.items()
+        )
 
     async def sync(self) -> PipelineSyncResult:
         """Alias for callers that prefer a concise lifecycle method."""
