@@ -10,7 +10,7 @@ storage:
   relative_path: embedding/all-MiniLM-L6-v2
 runtime:
   type: docker
-  image: ghcr.io/huggingface/text-embeddings-inference:1.8
+  image: ghcr.io/huggingface/text-embeddings-inference:turing-1.9
   command: ["--model-id", "/models/model"]
   container_path: /models/model
   port: 8000
