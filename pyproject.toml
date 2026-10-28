@@ -25,6 +25,7 @@ dependencies = [
     "jsonschema>=4.23,<5",
     "docker>=7,<8",
     "huggingface-hub>=0.26,<1",
+    "torch>=2.14,<3",
 ]
 
 [project.optional-dependencies]

@@ -1071,6 +1071,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "qdrant-client" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "torch" },
     { name = "uvicorn" },
 ]
 
@@ -1116,6 +1117,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5,<6" },
     { name = "sentence-transformers", marker = "extra == 'reranking'", specifier = ">=5,<6" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<2.1" },
+    { name = "torch", specifier = ">=2.14,<3" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
 provides-extras = ["embeddings", "reranking"]
