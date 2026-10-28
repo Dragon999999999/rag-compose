@@ -57,8 +57,11 @@ environment or `.env` to mount a persistent application-specific cache.
 
 Query pipelines can define a canonical `execution.alternatives` sequence. The
 first entry is the primary path; each later entry is an ordered fallback
-alternative. Every alternative can contain its own local `branches`, stage
-overrides, decision policy, and acceptance rule.
+alternative. Every alternative contains only its local topology (`branches`),
+reused-output source, and stage overrides. The query pipeline's single
+`decision_policy` evaluates the answer produced by each alternative. An
+accepted answer stops execution; any retry/abstain/reject outcome advances to
+the next alternative.
 
 An alternative may reference an earlier alternative and restart at
 `retriever`, `reranker`, or `assessor`. The runtime passes the referenced
@@ -66,6 +69,13 @@ alternative's in-memory candidates or chunks into that stage, so reuse does not
 perform a second retrieval or depend on persisted intermediate data. When the
 source alternative is branched, `source.path_id` identifies the exact branch
 output to reuse.
+
+When all alternatives are exhausted, `final_failure_policy: best_result`
+returns the strongest candidate according to the assessments already produced
+by the pipeline. `last_result`, `reject`, and `abstain` remain available for
+explicit compatibility or failure behavior. The legacy per-alternative
+`decision_policy` and `acceptance` fields are accepted while loading older
+stored configurations but are ignored and omitted from the canonical model.
 
 The legacy `strategy`, `branches`, and recursive execution fields remain
 supported for existing schema-version-one configurations. New configurations
@@ -78,7 +88,7 @@ For example:
 query:
   execution:
     max_attempts: 2
-    final_failure_policy: last_result
+    final_failure_policy: best_result
     alternatives:
       - id: primary
       - id: evidence-retry
@@ -86,6 +96,4 @@ query:
           alternative_id: primary
           path_id: primary
           restart_stage: assessor
-        acceptance:
-          strategy: evidence_sufficiency
 ```

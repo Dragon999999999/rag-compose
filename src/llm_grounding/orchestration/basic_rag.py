@@ -25,7 +25,6 @@ from llm_grounding.domain.evidence import EvidenceType, EvidenceUnit, RetrievalR
 from llm_grounding.embedding.factory import build_embedder
 from llm_grounding.embedding.protocol import Embedder
 from llm_grounding.infrastructure.config.models import (
-    AlternativeAcceptanceConfig,
     ExecutionBranchConfig,
     PipelineExecutionConfig,
     RerankerConfig,
@@ -69,41 +68,38 @@ def _artifact_tuple(
     return value
 
 
-def _alternative_accepted(
-    metadata: Mapping[str, object], acceptance: AlternativeAcceptanceConfig
-) -> bool:
-    """Evaluate retry conditions without comparing raw scores blindly."""
-    if acceptance.strategy == "always_accept":
-        return True
-    if acceptance.strategy == "validation_success":
-        return metadata.get("status") == "completed"
-    if acceptance.strategy == "evidence_sufficiency":
-        return bool(metadata.get("retrieved_chunk_ids")) and metadata.get(
-            "decision"
-        ) not in {DecisionAction.REJECT, DecisionAction.ABSTAIN, "reject", "abstain"}
-    if acceptance.strategy == "minimum_score":
-        scores = metadata.get("assessment_scores")
-        if not isinstance(scores, list) or acceptance.threshold is None:
-            return False
-        dimensions = metadata.get("assessment_dimensions")
-        candidates = zip(
-            dimensions if isinstance(dimensions, list) else [None] * len(scores),
-            scores,
-            strict=True,
-        )
-        return any(
-            (acceptance.dimension is None or dimension == acceptance.dimension)
-            and isinstance(score, (int, float))
-            and not isinstance(score, bool)
-            and score >= acceptance.threshold
-            for dimension, score in candidates
-        )
-    return metadata.get("decision") in {
-        DecisionAction.ACCEPT,
-        DecisionAction.MERGE_BRANCHES,
-        "accept",
-        "merge_branches",
-    }
+def _alternative_quality(
+    metadata: Mapping[str, object],
+) -> tuple[float, int, int, int]:
+    """Rank unaccepted candidates using measurements already produced by stages."""
+    raw_scores = metadata.get("assessment_scores")
+    scores = (
+        [
+            float(score)
+            for score in raw_scores
+            if isinstance(score, (int, float)) and not isinstance(score, bool)
+        ]
+        if isinstance(raw_scores, list)
+        else []
+    )
+    action = metadata.get("decision")
+    action_value = action.value if isinstance(action, DecisionAction) else action
+    decision_rank = {
+        "accept": 3,
+        "abstain": 2,
+        "retrieve_again": 2,
+        "merge_branches": 2,
+        "select_branches": 1,
+        "reject": 0,
+    }.get(action_value, 0)
+    evidence_ids = metadata.get("retrieved_chunk_ids")
+    evidence_count = len(evidence_ids) if isinstance(evidence_ids, list) else 0
+    return (
+        max(scores, default=-1.0),
+        sum(score >= 0.5 for score in scores),
+        decision_rank,
+        evidence_count,
+    )
 
 
 class BasicRagRunner:
@@ -127,7 +123,6 @@ class BasicRagRunner:
         branch_retrievers: Mapping[str, Retriever] | None = None,
         branch_rerankers: Mapping[str, Reranker] | None = None,
         branch_assessors: Mapping[str, Sequence[Assessor]] | None = None,
-        alternative_policies: Mapping[str, DecisionPolicy] | None = None,
         alternative_retrievers: Mapping[str, Retriever] | None = None,
         alternative_summaries: Mapping[str, Retriever] | None = None,
         alternative_rerankers: Mapping[str, Reranker] | None = None,
@@ -174,7 +169,6 @@ class BasicRagRunner:
         self._branch_assessors = {
             key: tuple(value) for key, value in (branch_assessors or {}).items()
         }
-        self._alternative_policies = dict(alternative_policies or {})
         self._alternative_retrievers = dict(alternative_retrievers or {})
         self._alternative_summaries = dict(alternative_summaries or {})
         self._alternative_rerankers = dict(alternative_rerankers or {})
@@ -640,7 +634,7 @@ class BasicRagRunner:
         alternatives = self._execution.alternatives
         attempts: list[dict[str, object]] = []
         path_outputs: dict[tuple[str, str], dict[str, object]] = {}
-        result: tuple[str, Answer, dict[str, object]] | None = None
+        results: list[tuple[str, Answer, dict[str, object]]] = []
         accepted = False
         for attempt_number, alternative in enumerate(
             alternatives[: self._execution.max_attempts], start=1
@@ -685,7 +679,6 @@ class BasicRagRunner:
                 and alternative.source.restart_stage == "assessor"
                 else None
             )
-            policy = getattr(self, "_alternative_policies", {}).get(alternative.id)
             if alternative.branches:
                 result = await self._run_branch_group(
                     alternative.branches,
@@ -695,7 +688,6 @@ class BasicRagRunner:
                     runtime_config=values,
                     source_candidates=source_candidates,
                     source_chunks=source_chunks,
-                    policy_override=policy,
                     evidence_merge=self._execution.evidence_merge,
                     alternative_id=alternative.id,
                 )
@@ -707,7 +699,6 @@ class BasicRagRunner:
                     runtime_config=values,
                     _candidate_override=source_candidates,
                     _chunk_override=source_chunks,
-                    _policy_override=policy,
                     _retriever_override=self._alternative_retrievers.get(
                         alternative.id
                     ),
@@ -717,6 +708,7 @@ class BasicRagRunner:
                     _reasoner_override=self._alternative_reasoners.get(alternative.id),
                     _renderer_override=self._alternative_renderers.get(alternative.id),
                 )
+            results.append(result)
             metadata = result[2]
             artifacts = metadata.get("_artifacts")
             if isinstance(artifacts, dict):
@@ -726,12 +718,16 @@ class BasicRagRunner:
                 for path_id, path_artifacts in branch_outputs.items():
                     if isinstance(path_id, str) and isinstance(path_artifacts, dict):
                         path_outputs[(alternative.id, path_id)] = path_artifacts
-            accepted = _alternative_accepted(metadata, alternative.acceptance)
+            accepted = (
+                self._action_value(metadata.get("decision"))
+                == DecisionAction.ACCEPT
+            )
             attempts.append(
                 {
                     "alternative_id": alternative.id,
                     "attempt": attempt_number,
                     "accepted": accepted,
+                    "quality": _alternative_quality(metadata),
                     "decision": self._action_value(metadata.get("decision")),
                     "retrieved_chunk_ids": metadata.get("retrieved_chunk_ids", []),
                     "retrieval_stages": metadata.get("retrieval_stages", []),
@@ -743,8 +739,15 @@ class BasicRagRunner:
             )
             if accepted:
                 break
-        if result is None:
+        if not results:
             raise RuntimeError("Unified execution requires at least one alternative")
+        selected_index = len(results) - 1
+        if not accepted and self._execution.final_failure_policy != "last_result":
+            selected_index = max(
+                range(len(results)),
+                key=lambda index: (_alternative_quality(results[index][2]), index),
+            )
+        result = results[selected_index]
         result_id, answer, metadata = result
         if not accepted and self._execution.final_failure_policy in {
             "reject",
@@ -762,8 +765,8 @@ class BasicRagRunner:
         merged_metadata.update(
             {
                 "execution_strategy": "alternatives",
-                "alternative_id": attempts[-1]["alternative_id"],
-                "execution_attempt": len(attempts),
+                "alternative_id": attempts[selected_index]["alternative_id"],
+                "execution_attempt": selected_index + 1,
                 "execution_attempts": attempts,
                 "termination_reason": (
                     "alternative_accepted" if accepted else "max_attempts_reached"
@@ -879,7 +882,7 @@ class BasicRagRunner:
         """Execute bounded retrieval rounds until a policy terminates the run."""
         values = dict(runtime_config or {})
         attempts: list[dict[str, object]] = []
-        result: tuple[str, Answer, dict[str, object]] | None = None
+        results: list[tuple[str, Answer, dict[str, object]]] = []
         for round_number in range(self._execution.max_rounds):
             if (
                 round_number > 0
@@ -893,6 +896,7 @@ class BasicRagRunner:
                 runtime_config=values,
             )
             result_metadata = result[2]
+            results.append(result)
             attempts.append(
                 {
                     "round": round_number + 1,
@@ -915,8 +919,19 @@ class BasicRagRunner:
             policy_overrides = result_metadata.get("parameter_overrides")
             if isinstance(policy_overrides, dict):
                 values.update(policy_overrides)
-        if result is None:
+        if not results:
             raise RuntimeError("Recursive execution did not produce an outcome")
+        selected_index = len(results) - 1
+        final_action = self._action_value(results[-1][2].get("decision"))
+        if (
+            final_action != DecisionAction.ACCEPT.value
+            and self._execution.final_failure_policy != "last_result"
+        ):
+            selected_index = max(
+                range(len(results)),
+                key=lambda index: (_alternative_quality(results[index][2]), index),
+            )
+        result = results[selected_index]
         result_id, answer, metadata = result
         merged_metadata = dict(metadata)
         merged_metadata.update(

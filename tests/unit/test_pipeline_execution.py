@@ -183,6 +183,28 @@ def test_unified_execution_rejects_forward_or_ambiguous_sources() -> None:
         )
 
 
+def test_legacy_alternative_selection_fields_are_ignored_during_normalization() -> None:
+    """Stored alternatives keep loading without retaining local policies."""
+    execution = PipelineExecutionConfig.model_validate(
+        {
+            "alternatives": [
+                {
+                    "id": "primary",
+                    "decision_policy": {
+                        "implementation": "always_accept",
+                    },
+                    "acceptance": {"strategy": "minimum_score", "threshold": 0.9},
+                }
+            ]
+        }
+    )
+
+    alternative = execution.alternatives[0].model_dump()
+    assert "decision_policy" not in alternative
+    assert "acceptance" not in alternative
+    assert execution.final_failure_policy == "best_result"
+
+
 class _StubRunner(BasicRagRunner):
     """Replace the linear pass so orchestration control flow can be tested."""
 
@@ -210,6 +232,45 @@ class _StubRunner(BasicRagRunner):
         return "result", Answer("answer"), metadata
 
 
+class _AlternativeStubRunner(BasicRagRunner):
+    """Return controlled decisions to exercise ordered alternative selection."""
+
+    def __init__(
+        self,
+        execution: PipelineExecutionConfig,
+        outcomes: list[tuple[DecisionAction, float]],
+    ) -> None:
+        self._execution = execution
+        self._outcomes = outcomes
+        self.calls = 0
+        self._alternative_retrievers = {}
+        self._alternative_summaries = {}
+        self._alternative_rerankers = {}
+        self._alternative_assessors = {}
+        self._alternative_reasoners = {}
+        self._alternative_renderers = {}
+
+    async def _run_once(self, request, history=(), **kwargs):  # type: ignore[no-untyped-def]
+        """Return the next configured decision and quality score."""
+        del request, history, kwargs
+        decision, score = self._outcomes[self.calls]
+        self.calls += 1
+        return (
+            f"result-{self.calls}",
+            Answer(f"answer-{self.calls}"),
+            {
+                "decision": decision,
+                "assessment_scores": [score],
+                "retrieved_chunk_ids": [f"chunk-{self.calls}"],
+                "trace": [],
+                "retrieval_stages": [],
+                "stage_graph": [],
+                "assessments": [],
+                "usage": {},
+            },
+        )
+
+
 async def test_recursive_runner_retries_and_persists_each_round() -> None:
     """Recursive execution stops on a policy action and retains all attempts."""
     runner = _StubRunner(
@@ -226,3 +287,54 @@ async def test_recursive_runner_retries_and_persists_each_round() -> None:
     assert runner.calls[1]["retrieval_top_k"] == 20
     assert metadata["execution_strategy"] == "recursive"
     assert len(metadata["execution_attempts"]) == 2
+
+
+async def test_alternatives_use_one_shared_policy_and_stop_on_accept() -> None:
+    """A non-accepted candidate advances, while acceptance stops the sequence."""
+    runner = _AlternativeStubRunner(
+        PipelineExecutionConfig.model_validate(
+            {
+                "alternatives": [{"id": "primary"}, {"id": "retry"}],
+                "max_attempts": 2,
+            }
+        ),
+        [
+            (DecisionAction.RETRIEVE_AGAIN, 0.2),
+            (DecisionAction.ACCEPT, 0.8),
+        ],
+    )
+
+    result_id, answer, metadata = await runner.run(
+        CorpusRequest("project", "question")
+    )
+
+    assert runner.calls == 2
+    assert result_id == "result-2"
+    assert answer.text == "answer-2"
+    assert metadata["alternative_id"] == "retry"
+    assert metadata["termination_reason"] == "alternative_accepted"
+
+
+async def test_alternatives_return_best_candidate_when_all_are_rejected() -> None:
+    """Exhausted alternatives select the highest-quality candidate by default."""
+    runner = _AlternativeStubRunner(
+        PipelineExecutionConfig.model_validate(
+            {
+                "alternatives": [{"id": "primary"}, {"id": "retry"}],
+                "max_attempts": 2,
+            }
+        ),
+        [
+            (DecisionAction.RETRIEVE_AGAIN, 0.9),
+            (DecisionAction.ABSTAIN, 0.2),
+        ],
+    )
+
+    result_id, answer, metadata = await runner.run(
+        CorpusRequest("project", "question")
+    )
+
+    assert result_id == "result-1"
+    assert answer.text == "answer-1"
+    assert metadata["alternative_id"] == "primary"
+    assert metadata["termination_reason"] == "max_attempts_reached"

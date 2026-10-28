@@ -18,20 +18,10 @@ query:
     max_attempts: 3
     max_stage_calls: 100
     evidence_merge: replace
-    final_failure_policy: last_result
+    final_failure_policy: best_result
     alternatives:
     - id: dense
-      acceptance:
-        strategy: evidence_sufficiency
-      decision_policy:
-        type: decision_policy
-        implementation: basic_grounding
     - id: hybrid
-      acceptance:
-        strategy: evidence_sufficiency
-      decision_policy:
-        type: decision_policy
-        implementation: basic_grounding
       source:
         alternative_id: dense
         path_id: primary
@@ -46,11 +36,6 @@ query:
           rrf_k: 60
           query_embedder: null
     - id: reranker_branches
-      acceptance:
-        strategy: always_accept
-      decision_policy:
-        type: decision_policy
-        implementation: merge_branches
       branches:
       - id: bge
         start_at: retriever

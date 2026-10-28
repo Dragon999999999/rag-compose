@@ -400,13 +400,6 @@ class PipelineRuntimeResolver:
         reranker = self._registry.build_reranker(
             architecture.reranker, self._local_model_manager
         )
-        alternative_policies = {
-            alternative.id: self._registry.build_decision_policy(
-                alternative.decision_policy
-            )
-            for alternative in architecture.execution.alternatives
-            if alternative.decision_policy is not None
-        }
         alternative_retrievers = {}
         alternative_summaries = {}
         alternative_rerankers = {}
@@ -527,7 +520,6 @@ class PipelineRuntimeResolver:
             branch_retrievers=branch_retrievers,
             branch_rerankers=branch_rerankers,
             branch_assessors=branch_assessors,
-            alternative_policies=alternative_policies,
             alternative_retrievers=alternative_retrievers,
             alternative_summaries=alternative_summaries,
             alternative_rerankers=alternative_rerankers,

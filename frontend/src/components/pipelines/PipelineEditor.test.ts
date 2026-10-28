@@ -8,7 +8,6 @@ import {
   orderPipelineStages,
   QUERY_STAGES,
   removeQueryBranch,
-  updateAlternativeAcceptance,
   updateAlternativeSource,
   readExecutionStrategy,
   updateExecutionStrategy,
@@ -153,14 +152,11 @@ describe("pipeline query stage order", () => {
     expect(layout.nodes.find((node) => node.definition.key === "assessors")?.reused).toBe(false);
   });
 
-  it("persists an alternative acceptance rule independently from its branch policy", () => {
+  it("keeps alternative topology separate from the shared decision policy", () => {
     const config = addQueryAlternative(queryConfig());
-    const updated = updateAlternativeAcceptance(config, "alternative-2", {
-      strategy: "minimum_score",
-      threshold: 0.75,
-    });
-    const alternatives = (updated.query?.execution as Record<string, unknown>).alternatives as Array<Record<string, unknown>>;
+    const alternatives = (config.query?.execution as Record<string, unknown>).alternatives as Array<Record<string, unknown>>;
 
-    expect(alternatives[1].acceptance).toMatchObject({ strategy: "minimum_score", threshold: 0.75 });
+    expect(alternatives[1]).not.toHaveProperty("acceptance");
+    expect(alternatives[1]).not.toHaveProperty("decision_policy");
   });
 });

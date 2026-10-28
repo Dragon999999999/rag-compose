@@ -4,7 +4,6 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiRequestError } from "../../api/client";
 import type {
   CatalogStage,
-  AlternativeAcceptance,
   ExecutionStrategy,
   JsonSchema,
   ModelCatalog,
@@ -428,7 +427,6 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
             onAddBranch={(alternativeId, stage, branchId) => setDraft((current) => current ? addQueryBranch(current, stage, branchId, alternativeId) : current)}
             onMoveAlternative={(alternativeId, direction) => setDraft((current) => current ? moveQueryAlternative(current, alternativeId, direction) : current)}
             onRemoveAlternative={(alternativeId) => setDraft((current) => current ? removeQueryAlternative(current, alternativeId) : current)}
-            onChangeAcceptance={(alternativeId, acceptance) => setDraft((current) => current ? updateAlternativeAcceptance(current, alternativeId, acceptance) : current)}
             onRemoveBranch={(alternativeId, branchId) => setDraft((current) => current ? removeQueryBranch(current, branchId, alternativeId) : current)}
             onSelect={(stage, alternativeId) => {
               setSelectedStage(stage);
@@ -547,7 +545,6 @@ function AlternativesGraph({
   onDuplicateAlternative,
   onMoveAlternative,
   onRemoveAlternative,
-  onChangeAcceptance,
   selectedAlternativeId,
 }: {
   config: PipelineConfig;
@@ -560,7 +557,6 @@ function AlternativesGraph({
   onDuplicateAlternative: (alternativeId: string) => void;
   onMoveAlternative: (alternativeId: string, direction: -1 | 1) => void;
   onRemoveAlternative: (alternativeId: string) => void;
-  onChangeAcceptance: (alternativeId: string, acceptance: Partial<AlternativeAcceptance>) => void;
   selectedAlternativeId: string;
 }) {
   const alternatives = readQueryAlternatives(config);
@@ -599,16 +595,7 @@ function AlternativesGraph({
               {sourcePathOptions(config, alternative).map((pathId) => <option key={pathId} value={pathId}>{pathId}</option>)}
             </select>
           </div>}
-          <div className="alternative-acceptance">
-            <label>Accept when<select value={alternative.acceptance?.strategy ?? "decision_policy"} onChange={(event) => onChangeAcceptance(alternative.id, { strategy: event.target.value as AlternativeAcceptance["strategy"] })}>
-              <option value="decision_policy">Decision policy succeeds</option>
-              <option value="always_accept">Always accept</option>
-              <option value="evidence_sufficiency">Evidence is sufficient</option>
-              <option value="minimum_score">Minimum assessment score</option>
-              <option value="validation_success">Validation succeeds</option>
-            </select></label>
-            {alternative.acceptance?.strategy === "minimum_score" && <label>Threshold<input max="1" min="0" step="0.01" type="number" value={alternative.acceptance.threshold ?? 0.5} onChange={(event) => onChangeAcceptance(alternative.id, { threshold: Number(event.target.value) })} /></label>}
-          </div>
+          <p className="alternative-policy-note">The pipeline decision policy evaluates this candidate. If it does not accept the result, execution continues to the next alternative.</p>
           <BranchingGraph
             alternative={alternative}
             alternativeId={alternative.id}
@@ -731,8 +718,6 @@ function readQueryAlternatives(config: PipelineConfig): PipelineAlternative[] {
     source: null,
     branches: readExecutionStrategy(config) === "branching" ? legacyBranches : [],
     stage_overrides: {},
-    decision_policy: null,
-    acceptance: { strategy: "decision_policy" },
   }];
 }
 
@@ -753,10 +738,6 @@ function normalizeAlternative(value: unknown, index: number): PipelineAlternativ
     source,
     branches,
     stage_overrides: isRecord(alternative.stage_overrides) ? alternative.stage_overrides : {},
-    decision_policy: isRecord(alternative.decision_policy) ? alternative.decision_policy : null,
-    acceptance: isRecord(alternative.acceptance) && typeof alternative.acceptance.strategy === "string"
-      ? { strategy: alternative.acceptance.strategy as AlternativeAcceptance["strategy"], threshold: typeof alternative.acceptance.threshold === "number" ? alternative.acceptance.threshold : null, dimension: typeof alternative.acceptance.dimension === "string" ? alternative.acceptance.dimension : null }
-      : { strategy: "decision_policy" },
   };
 }
 
@@ -802,8 +783,6 @@ export function addQueryAlternative(config: PipelineConfig, parentId?: string): 
     source: { alternative_id: parent.id, path_id: pathId, restart_stage: "assessor" },
     branches: [{ id: "primary", start_at: "assessor" }],
     stage_overrides: {},
-    decision_policy: null,
-    acceptance: { strategy: "decision_policy" },
   }]);
 }
 
@@ -816,17 +795,6 @@ export function updateAlternativeSource(config: PipelineConfig, alternativeId: s
       branches: (alternative.branches ?? []).map((branch) => ({ ...branch, start_at: restartStage })),
     };
   });
-  return writeQueryAlternatives(config, alternatives);
-}
-
-export function updateAlternativeAcceptance(
-  config: PipelineConfig,
-  alternativeId: string,
-  acceptance: Partial<AlternativeAcceptance>,
-): PipelineConfig {
-  const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
-    ? { ...alternative, acceptance: { ...(alternative.acceptance ?? { strategy: "decision_policy" }), ...acceptance } }
-    : alternative);
   return writeQueryAlternatives(config, alternatives);
 }
 
@@ -848,7 +816,6 @@ export function duplicateQueryAlternative(config: PipelineConfig, alternativeId:
     source: source.source ? { ...source.source } : null,
     branches: source.branches?.map((branch) => ({ ...branch })),
     stage_overrides: source.stage_overrides ? { ...source.stage_overrides } : {},
-    acceptance: source.acceptance ? { ...source.acceptance } : { strategy: "decision_policy" },
   };
   return writeQueryAlternatives(config, [...alternatives.slice(0, index + 1), duplicate, ...alternatives.slice(index + 1)]);
 }
@@ -1105,7 +1072,6 @@ function resolveSchema(schema: JsonSchema): JsonSchema {
 function readStage(config: PipelineConfig, definition: StageDefinition, alternativeId?: string): Record<string, unknown> | undefined {
   if (alternativeId && alternativeId !== "alternative-1") {
     const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
-    if (definition.key === "decision_policy" && isRecord(alternative?.decision_policy)) return alternative.decision_policy;
     const override = alternative?.stage_overrides?.[definition.key];
     if (isRecord(override)) return override;
   }
@@ -1132,11 +1098,9 @@ function readAssessorValue(value: unknown): Record<string, unknown>[] {
 }
 
 function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>, alternativeId?: string): PipelineConfig {
-  if (alternativeId && alternativeId !== "alternative-1" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+  if (alternativeId && alternativeId !== "alternative-1" && definition.key !== "decision_policy" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
     const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
-      ? definition.key === "decision_policy"
-        ? { ...alternative, decision_policy: value }
-        : { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), [definition.key]: value } }
+      ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), [definition.key]: value } }
       : alternative);
     return writeQueryAlternatives(config, alternatives);
   }
@@ -1214,7 +1178,7 @@ function emptyConfig(kind: PipelineKind): PipelineConfig {
     ...(kind !== "ingestion" ? {
       query: {
         execution: {
-          alternatives: [{ id: "alternative-1", source: null, branches: [], stage_overrides: {}, decision_policy: null, acceptance: { strategy: "decision_policy" } }],
+          alternatives: [{ id: "alternative-1", source: null, branches: [], stage_overrides: {} }],
           max_attempts: 3,
         },
       },
@@ -1288,7 +1252,7 @@ function ExecutionSettings({ catalog, config, onChange }: { catalog: PipelineCat
   return (
     <div className="execution-settings">
       <label>Maximum attempts<input min="1" max="100" type="number" value={typeof execution.max_attempts === "number" ? execution.max_attempts : 3} onChange={(event) => onChange(updateExecutionValue(config, "max_attempts", Math.max(1, Number(event.target.value) || 1)))} /></label>
-      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" ? execution.final_failure_policy : "last_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="last_result">Return last result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
+      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" || execution.final_failure_policy === "last_result" ? execution.final_failure_policy : "best_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="best_result">Return best result</option><option value="last_result">Return last result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
       <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Selected path only</option><option value="union">Union path evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
       {!unified && strategy === "recursive" && <label>Legacy retry rounds<input min="2" max="100" type="number" value={typeof execution.max_rounds === "number" ? execution.max_rounds : 2} onChange={(event) => onChange(updateExecutionValue(config, "max_rounds", Math.max(2, Number(event.target.value) || 2)))} /></label>}
       {!unified && strategy === "branching" && <>

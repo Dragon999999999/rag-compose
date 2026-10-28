@@ -18,20 +18,10 @@ query:
     max_attempts: 2
     max_stage_calls: 100
     evidence_merge: replace
-    final_failure_policy: last_result
+    final_failure_policy: best_result
     alternatives:
     - id: primary
-      acceptance:
-        strategy: evidence_sufficiency
-      decision_policy:
-        type: decision_policy
-        implementation: basic_grounding
     - id: retry
-      acceptance:
-        strategy: always_accept
-      decision_policy:
-        type: decision_policy
-        implementation: basic_grounding
       source:
         alternative_id: primary
         path_id: primary

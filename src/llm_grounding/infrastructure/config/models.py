@@ -373,31 +373,13 @@ class AlternativeSourceConfig(BaseModel):
     restart_stage: Literal["retriever", "reranker", "assessor"]
 
 
-class AlternativeAcceptanceConfig(BaseModel):
-    """Define when an alternative succeeds and retry execution may stop."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-
-    strategy: Literal[
-        "decision_policy",
-        "always_accept",
-        "minimum_score",
-        "evidence_sufficiency",
-        "validation_success",
-    ] = "decision_policy"
-    threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
-    dimension: str | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def validate_threshold(self) -> "AlternativeAcceptanceConfig":
-        """Require a threshold for score-based acceptance."""
-        if self.strategy == "minimum_score" and self.threshold is None:
-            raise ValueError("minimum_score acceptance requires threshold")
-        return self
-
-
 class PipelineAlternativeConfig(BaseModel):
-    """Describe one ordered query attempt and its local branch paths."""
+    """Describe one ordered query attempt and its local branch paths.
+
+    Alternative topology belongs to execution configuration. The query-level
+    decision policy evaluates each candidate and controls whether execution
+    stops or advances to the next alternative.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -409,10 +391,17 @@ class PipelineAlternativeConfig(BaseModel):
     source: AlternativeSourceConfig | None = None
     branches: tuple[ExecutionBranchConfig, ...] = ()
     stage_overrides: dict[str, object] = Field(default_factory=dict)
-    decision_policy: DecisionPolicyConfig | None = None
-    acceptance: AlternativeAcceptanceConfig = Field(
-        default_factory=AlternativeAcceptanceConfig
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_selection_fields(cls, value: object) -> object:
+        """Read old alternatives while migrating selection to the query policy."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        normalized.pop("decision_policy", None)
+        normalized.pop("acceptance", None)
+        return normalized
 
     @model_validator(mode="after")
     def validate_branches(self) -> "PipelineAlternativeConfig":
@@ -424,7 +413,6 @@ class PipelineAlternativeConfig(BaseModel):
             "retriever",
             "reranker",
             "assessors",
-            "decision_policy",
             "reasoner",
             "renderer",
         }
@@ -460,7 +448,9 @@ class PipelineExecutionConfig(BaseModel):
     )
     alternatives: tuple[PipelineAlternativeConfig, ...] = ()
     max_attempts: int = Field(default=3, ge=1, le=100)
-    final_failure_policy: Literal["last_result", "reject", "abstain"] = "last_result"
+    final_failure_policy: Literal["best_result", "last_result", "reject", "abstain"] = (
+        "best_result"
+    )
 
     @model_validator(mode="after")
     def validate_execution_shape(self) -> "PipelineExecutionConfig":

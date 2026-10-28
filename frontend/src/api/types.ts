@@ -14,18 +14,11 @@ export type AlternativeSource = {
   path_id: string;
   restart_stage: BranchStart;
 };
-export type AlternativeAcceptance = {
-  strategy: "decision_policy" | "always_accept" | "minimum_score" | "evidence_sufficiency" | "validation_success";
-  threshold?: number | null;
-  dimension?: string | null;
-};
 export type PipelineAlternative = {
   id: string;
   source?: AlternativeSource | null;
   branches?: PipelineExecutionBranch[];
   stage_overrides?: Record<string, unknown>;
-  decision_policy?: Record<string, unknown> | null;
-  acceptance?: AlternativeAcceptance;
 };
 export type PipelineExecution = {
   strategy?: ExecutionStrategy;
@@ -38,7 +31,7 @@ export type PipelineExecution = {
   retry_on?: string[];
   alternatives?: PipelineAlternative[];
   max_attempts?: number;
-  final_failure_policy?: "last_result" | "reject" | "abstain";
+  final_failure_policy?: "best_result" | "last_result" | "reject" | "abstain";
 };
 export type Project = {
   id: string;
