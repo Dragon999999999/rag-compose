@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { Source } from "../../api/types";
 import { Dialog } from "../common/Dialog";
@@ -10,15 +10,70 @@ type SourcesWorkspaceProps = {
   error?: Error | null;
   uploading: boolean;
   uploadError?: Error | null;
-  onUpload: (file: File) => Promise<unknown>;
+  onUpload: (file: File) => Promise<Source>;
   onRemove: (id: string) => void;
 };
 
-type PendingUpload = {
+export type PendingUpload = {
   id: string;
   name: string;
   createdAt: string;
+  source?: Source;
 };
+
+/**
+ * Merge the optimistic upload row with the server's source list.
+ *
+ * The upload endpoint can return before the source query has refreshed. Keep
+ * the server source as the single row when it is available, and suppress a
+ * newly-created duplicate while the optimistic row is still visible.
+ */
+export function mergePendingSource(
+  sources: Source[],
+  pendingUpload: PendingUpload | null,
+): Source[] {
+  if (!pendingUpload) {
+    return sources;
+  }
+
+  const serverSource =
+    pendingUpload.source ??
+    sources.find(
+      (source) =>
+        source.document.name === pendingUpload.name &&
+        source.document.created_at >= pendingUpload.createdAt,
+    );
+  const displayedSource: Source =
+    serverSource ?? {
+      document: {
+        id: pendingUpload.id,
+        name: pendingUpload.name,
+        created_at: pendingUpload.createdAt,
+      },
+      ingestion: {
+        id: pendingUpload.id,
+        status: "uploading",
+        error: null,
+        created_at: pendingUpload.createdAt,
+      },
+    };
+
+  return [
+    displayedSource,
+    ...sources.filter((source) => {
+      if (source.document.id === displayedSource.document.id) {
+        return false;
+      }
+      if (serverSource) {
+        return true;
+      }
+      return !(
+        source.document.name === pendingUpload.name &&
+        source.document.created_at >= pendingUpload.createdAt
+      );
+    }),
+  ];
+}
 
 export function SourcesWorkspace({
   sources,
@@ -33,6 +88,18 @@ export function SourcesWorkspace({
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!pendingUpload?.source) {
+      return;
+    }
+    const sourceId = pendingUpload.source.document.id;
+    if (sources?.some((source) => source.document.id === sourceId)) {
+      setPendingUpload((current) =>
+        current?.id === pendingUpload.id ? null : current,
+      );
+    }
+  }, [pendingUpload, sources]);
+
   const selectFile = (candidate?: File): void => {
     if (!candidate || !candidate.name.toLowerCase().endsWith(".pdf")) {
       setFile(null);
@@ -46,8 +113,9 @@ export function SourcesWorkspace({
     const selectedFile = file;
     const createdAt = new Date().toISOString();
     setFile(null);
+    const pendingId = `uploading-${Date.now()}`;
     setPendingUpload({
-      id: `uploading-${Date.now()}`,
+      id: pendingId,
       name: selectedFile.name,
       createdAt,
     });
@@ -55,29 +123,21 @@ export function SourcesWorkspace({
     // Keep the upload row visible while the server processes the document after
     // the confirmation dialog has closed.
     void onUpload(selectedFile).then(
-      () => setPendingUpload(null),
-      () => setPendingUpload(null),
+      (source) =>
+        setPendingUpload((current) =>
+          current?.id === pendingId ? { ...current, source } : current,
+        ),
+      () =>
+        setPendingUpload((current) =>
+          current?.id === pendingId ? null : current,
+        ),
     );
   };
 
-  const pendingSource: Source | null = pendingUpload
-    ? {
-        document: {
-          id: pendingUpload.id,
-          name: pendingUpload.name,
-          created_at: pendingUpload.createdAt,
-        },
-        ingestion: {
-          id: pendingUpload.id,
-          status: "uploading",
-          error: null,
-          created_at: pendingUpload.createdAt,
-        },
-      }
+  const visibleSources = mergePendingSource(sources ?? [], pendingUpload);
+  const pendingSourceId = pendingUpload
+    ? (pendingUpload.source?.document.id ?? pendingUpload.id)
     : null;
-  const visibleSources = pendingSource
-    ? [pendingSource, ...(sources ?? [])]
-    : (sources ?? []);
 
   return (
     <section className="sources-workspace">
@@ -128,7 +188,7 @@ export function SourcesWorkspace({
               </span>
               <StatusBadge status={source.ingestion?.status ?? "pending"} />
               <time>{new Date(source.document.created_at).toLocaleDateString()}</time>
-              {source.document.id === pendingUpload?.id ? (
+              {source.document.id === pendingSourceId ? (
                 <span />
               ) : (
                 <details className="action-menu">
