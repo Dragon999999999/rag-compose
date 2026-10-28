@@ -17,6 +17,7 @@ type ProjectHeaderProps = {
   pipelineError?: Error | null;
   pipelineChanging?: boolean;
   onPipelineChange: (pipelineId: string) => void;
+  rightSidebarOpen: boolean;
 };
 
 /** Show workspace navigation and actions that do not edit project metadata. */
@@ -36,6 +37,7 @@ export function ProjectHeader({
   pipelineError,
   pipelineChanging,
   onPipelineChange,
+  rightSidebarOpen,
 }: ProjectHeaderProps) {
   const defaultCompatibility = queryCompatibility.find(
     (item) => item.pipeline.is_default,
@@ -58,7 +60,7 @@ export function ProjectHeader({
         </div>
       </div>
       <div className="header-actions">
-        {project && (
+        {project && !rightSidebarOpen && (
           <label className="pipeline-selector">
             <span>Indexing</span>
             <select
@@ -107,7 +109,7 @@ export function ProjectHeader({
                 <option disabled key={item.pipeline.id} value={item.pipeline.id}>⚠ {item.pipeline.name} — incompatible</option>
               ))}
             </select>
-            {incompatiblePipelines.length > 0 && (
+            {!rightSidebarOpen && incompatiblePipelines.length > 0 && (
               <details className="pipeline-compatibility-details">
                 <summary>Inspect compatibility</summary>
                 <div className="pipeline-compatibility-options">
@@ -140,7 +142,7 @@ export function ProjectHeader({
           New chat
         </Button>
       </div>
-      {project && <p className="index-status">Index: {indexReady ? "Ready" : "Not indexed"}{project.ingestion_pipeline_id ? ` · ${project.ingestion_pipeline_id}` : ""}</p>}
+      {project && !rightSidebarOpen && <p className="index-status">Index: {indexReady ? "Ready" : "Not indexed"}{project.ingestion_pipeline_id ? ` · ${project.ingestion_pipeline_id}` : ""}</p>}
       {(pipelineError || compatibilityError || ingestionError) && <p className="pipeline-error" role="alert">{pipelineError?.message ?? compatibilityError?.message ?? ingestionError?.message}</p>}
       {chat && selectedCompatibility && !selectedCompatibility.compatible && (
         <div className="active-pipeline-compatibility" role="alert">

@@ -154,6 +154,7 @@ function ProjectHome() {
       onWorkspaceToggle={() => undefined}
       project={undefined}
       queryCompatibility={[]}
+      rightSidebarOpen={evidenceOpen}
       view="sources"
     />
   );
@@ -487,6 +488,7 @@ function ProjectWorkspace({
       pipelineError={chatMutations.updatePipeline.error}
       onIngestionChange={switchIngestionPipeline}
       onPipelineChange={switchPipeline}
+      rightSidebarOpen={evidenceOpen}
       view={sourceView ? "sources" : "chat"}
     />
   );
