@@ -9,20 +9,23 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     DateTime,
     ForeignKey,
     Integer,
-    String,
-    Text,
     UniqueConstraint,
     false,
     func,
     true,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from llm_grounding.infrastructure.database.sanitization import (
+    JSON,
+    JSONB,
+    String,
+    Text,
+)
 
 
 def _identifier() -> str:
