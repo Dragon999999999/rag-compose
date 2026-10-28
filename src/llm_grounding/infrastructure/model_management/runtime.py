@@ -503,7 +503,6 @@ class _TransformersModel:
             from transformers import (  # type: ignore[import-not-found]
                 AutoModel,
                 AutoModelForCausalLM,
-                AutoModelForMaskedLM,
                 AutoModelForSequenceClassification,
                 AutoTokenizer,
             )
@@ -527,8 +526,6 @@ class _TransformersModel:
             model_loader = AutoModelForCausalLM
         elif definition.stage == "reranker":
             model_loader = AutoModelForSequenceClassification
-        elif "splade" in model_name:
-            model_loader = AutoModelForMaskedLM
         else:
             model_loader = AutoModel
         model = model_loader.from_pretrained(
@@ -925,7 +922,7 @@ class _TransformersModel:
         return {"data": data}
 
     def _sparse(self, texts: list[str]) -> dict[str, object]:
-        """Return SPLADE logits when available, with a safe token-weight fallback."""
+        """Return learned sparse weights with a safe token-weight fallback."""
         import torch
 
         output, mask = self._forward(texts)

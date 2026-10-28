@@ -1,4 +1,4 @@
-"""Verify the five additional retrieval contracts without external services."""
+"""Verify the additional retrieval contracts without external services."""
 
 from dataclasses import dataclass
 
@@ -9,7 +9,7 @@ from llm_grounding.embedding.models import SparseEmbedding, TokenEmbedding
 from llm_grounding.retrieval.bm25 import BM25Retriever
 from llm_grounding.retrieval.colbert import maxsim_score
 from llm_grounding.retrieval.hybrid_weighted import WeightedHybridRetriever
-from llm_grounding.retrieval.learned_sparse import SpladeV3Retriever
+from llm_grounding.retrieval.learned_sparse import BgeM3SparseRetriever
 from llm_grounding.retrieval.models import (
     RetrievalContext,
     RetrievalRequest,
@@ -79,7 +79,7 @@ def test_colbert_maxsim_sums_best_document_token_matches() -> None:
 class _SparseEmbedder:
     """Small learned sparse encoder fixture."""
 
-    model_identity: str = "splade-test"
+    model_identity: str = "bge-m3-test"
 
     async def embed_sparse_documents(self, texts: list[str]):
         return tuple(
@@ -126,18 +126,18 @@ class _SparseIndex:
 
 
 @pytest.mark.asyncio
-async def test_splade_retriever_materializes_a_project_index_once() -> None:
+async def test_bge_sparse_retriever_materializes_a_project_index_once() -> None:
     """Learned sparse retrieval persists document vectors and reuses them."""
     repository = _Repository((_chunk("one", "one", 0), _chunk("two", "two", 1)))
     index = _SparseIndex()
-    retriever = SpladeV3Retriever(repository, _SparseEmbedder(), index)
+    retriever = BgeM3SparseRetriever(repository, _SparseEmbedder(), index)
     context = RetrievalContext(repository=repository)
 
     first = await retriever.retrieve(RetrievalRequest("project", "one"), context)
     second = await retriever.retrieve(RetrievalRequest("project", "one"), context)
 
-    assert first.results[0].retriever_id == "splade_v3"
-    assert second.results[0].retriever_id == "splade_v3"
+    assert first.results[0].retriever_id == "bge_m3_sparse"
+    assert second.results[0].retriever_id == "bge_m3_sparse"
     assert index.upserts == 1
 
 

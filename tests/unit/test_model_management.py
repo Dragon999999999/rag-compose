@@ -110,7 +110,7 @@ def test_model_registry_validates_standard_sources_and_excludes_schema() -> None
     """Canonical model files expose location and nested source/runtime metadata."""
     registry = load_model_registry()
 
-    assert len(registry.list()) == 17
+    assert len(registry.list()) == 16
     embedding = registry.resolve("embedding_001")
     assert embedding.location == "local"
     assert embedding.source is not None

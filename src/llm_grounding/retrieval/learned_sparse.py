@@ -116,11 +116,3 @@ class BgeM3SparseRetriever(LearnedSparseRetriever):
     def __init__(self, *args: object, top_k: int = 20, **kwargs: object) -> None:
         """Set the stable BGE-M3 retriever identifier."""
         super().__init__(*args, retriever_id="bge_m3_sparse", top_k=top_k, **kwargs)  # type: ignore[arg-type]
-
-
-class SpladeV3Retriever(LearnedSparseRetriever):
-    """Learned sparse retrieval using SPLADE-v3 expansion weights."""
-
-    def __init__(self, *args: object, top_k: int = 20, **kwargs: object) -> None:
-        """Set the stable SPLADE-v3 retriever identifier."""
-        super().__init__(*args, retriever_id="splade_v3", top_k=top_k, **kwargs)  # type: ignore[arg-type]

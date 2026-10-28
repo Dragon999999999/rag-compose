@@ -1,6 +1,6 @@
 # RAG benchmark suite
 
-The repository contains a reproducible matrix of 75 benchmark entries covering
+The repository contains a reproducible matrix of 74 benchmark entries covering
 15 families. The source pipeline files live below
 `config/pipelines/benchmarks/`, grouped by family. Query and ingestion
 pipelines are separate files; the manifest joins them for each experiment.

@@ -688,7 +688,6 @@ class PipelineService:
                                     "postgres_all_chunks": "full_context",
                                     "postgres_fts": "sparse",
                                     "bm25": "sparse",
-                                    "splade_v3": "sparse",
                                     "bge_m3_sparse": "sparse",
                                     "colbert_v2": "multivector",
                                     "hybrid_rrf": "hybrid",

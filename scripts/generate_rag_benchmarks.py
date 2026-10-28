@@ -168,7 +168,7 @@ def _record(
 
 
 def build_suite(output_root: Path = DEFAULT_OUTPUT, manifest_path: Path = MANIFEST_PATH) -> tuple[list[dict[str, Any]], dict[str, Path]]:
-    """Generate all supported presets and all 76 manifest entries."""
+    """Generate all supported presets and all 74 manifest entries."""
     files: dict[str, Path] = {}
     entries: list[dict[str, Any]] = []
 
@@ -286,7 +286,6 @@ def build_suite(output_root: Path = DEFAULT_OUTPUT, manifest_path: Path = MANIFE
         ("RET-03", "retriever_sparse_bm25", "benchmark_ingest_bge_recursive", "BM25"),
         ("RET-04", "retriever_sparse_postgres_fts", "benchmark_ingest_bge_recursive", "PostgreSQL FTS"),
         ("RET-05", "retriever_sparse_bge_m3", "benchmark_ingest_bge_recursive", "BGE-M3 sparse"),
-        ("RET-06", "retriever_sparse_splade_v3", "benchmark_ingest_bge_recursive", "SPLADE-v3"),
         ("RET-07", "retriever_hybrid_rrf_default", "benchmark_ingest_bge_recursive", "hybrid RRF"),
         ("RET-08", "retriever_hybrid_weighted", "benchmark_ingest_bge_recursive", "weighted hybrid"),
         ("RET-09", "retriever_multivector_colbert", "benchmark_ingest_bge_recursive", "ColBERT multivector"),
@@ -366,7 +365,7 @@ def build_suite(output_root: Path = DEFAULT_OUTPUT, manifest_path: Path = MANIFE
     add_query("ADV-02", "15_combined", bge_ingestion, assessors=["assessor_evidence_sufficiency"], decision="decision_merge_branches", execution=adv_two, components={"alternatives": ["dense", "hybrid", "reranker_branches"], "retriever": "retriever_hybrid_rrf_default", "rerankers": ["reranker_bge_v2_m3", "reranker_jina_v2_multilingual"]}, hypothesis="Sequential retrieval alternatives followed by a final reranker branch maximize recovery coverage under a bounded budget.", constraints=["Alternatives stop after acceptance and reuse the explicitly named earlier path.", "Exact model-specific branch settings require branch-aware runtime configuration."])
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(yaml.safe_dump({"schema_version": 1, "suite": "rag-benchmark-76", "seed": 0, "evaluation_conditions": {"dataset": "Use the same fixed evaluation corpus and query set for every family.", "prompts": "Use the selected registered prompt unchanged across comparisons.", "stochasticity": "Record model/provider stochasticity separately from deterministic pipeline metrics."}, "experiments": entries}, sort_keys=False), encoding="utf-8")
+    manifest_path.write_text(yaml.safe_dump({"schema_version": 1, "suite": "rag-benchmark-74", "seed": 0, "evaluation_conditions": {"dataset": "Use the same fixed evaluation corpus and query set for every family.", "prompts": "Use the selected registered prompt unchanged across comparisons.", "stochasticity": "Record model/provider stochasticity separately from deterministic pipeline metrics."}, "experiments": entries}, sort_keys=False), encoding="utf-8")
     return entries, files
 
 

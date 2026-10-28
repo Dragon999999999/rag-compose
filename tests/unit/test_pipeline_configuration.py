@@ -351,12 +351,6 @@ def test_supported_dense_backends_advertise_vector_capabilities(backend: str) ->
             "multivector",
             "colbert_v2",
         ),
-        (
-            "benchmark_ingest_emb_splade_v3.yaml",
-            "benchmark_emb_splade_v3.yaml",
-            "sparse",
-            "splade_v3",
-        ),
     ],
 )
 def test_learned_embedding_pipeline_presets_are_runnable(
@@ -365,7 +359,7 @@ def test_learned_embedding_pipeline_presets_are_runnable(
     representation: str,
     retriever: str,
 ) -> None:
-    """ColBERT-v2 and SPLADE-v3 presets resolve through learned Qdrant indexes."""
+    """ColBERT-v2 presets resolve through learned Qdrant indexes."""
     root = Path("config/pipelines/benchmarks/03_embeddings")
     catalog = load_model_catalog()
     ingestion_pipeline = load_pipeline_config(root / ingestion_name, catalog=catalog)

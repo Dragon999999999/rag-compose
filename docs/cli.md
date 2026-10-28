@@ -66,7 +66,7 @@ recursive across its numbered family folders:
 llm-grounding pipeline import config/pipelines/benchmarks
 ```
 
-See [`rag_benchmarks.md`](rag_benchmarks.md) for the 76-entry manifest,
+See [`rag_benchmarks.md`](rag_benchmarks.md) for the 74-entry manifest,
 validation coverage, and known representation boundaries.
 
 Ingestion pipelines are valid for projects. Query pipelines are valid for

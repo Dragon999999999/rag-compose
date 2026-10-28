@@ -1,5 +1,5 @@
 schema_version: 1
-suite: rag-benchmark-76
+suite: rag-benchmark-74
 seed: 0
 evaluation_conditions:
   dataset: Use the same fixed evaluation corpus and query set for every family.
@@ -609,32 +609,6 @@ experiments:
   compatibility_constraints:
   - Use the same BGE-M3 recursive ingestion representation where compatible.
   - BGE-M3 sparse retrieval requires the resources declared by its registered retriever
-    contract.
-- id: RET-06
-  name: benchmark_ret_06
-  family: retrieval
-  status: supported
-  ingestion_pipeline: config/pipelines/benchmarks/01_baselines/benchmark_ingest_bge_recursive.yaml
-  query_pipeline: config/pipelines/benchmarks/05_retrieval/benchmark_ret_06.yaml
-  components:
-    retriever: retriever_sparse_splade_v3
-  baseline: BGE-M3 + recursive-token chunking + Qdrant + dense retrieval + identity
-    reranker + noop assessor + always-accept
-  hypothesis: The SPLADE-v3 strategy changes evidence recall, ranking quality, and
-    query cost.
-  required_models_and_services:
-  - Registered local or configured remote model resources used by the selected components.
-  - PostgreSQL for persisted chunks and FTS where required; Qdrant, pgvector, or FAISS
-    according to the ingestion preset.
-  expected_metrics:
-  - recall@K
-  - precision@K
-  - MRR
-  - nDCG@K
-  - retrieval latency
-  compatibility_constraints:
-  - Use the same BGE-M3 recursive ingestion representation where compatible.
-  - SPLADE-v3 retrieval requires the resources declared by its registered retriever
     contract.
 - id: RET-07
   name: benchmark_ret_07

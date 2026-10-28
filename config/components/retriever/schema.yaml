@@ -6,7 +6,7 @@ allOf:
   - type: object
     properties:
       type: {enum: [dense, sparse, hybrid, multivector, full_context]}
-      implementation: {enum: [vector_similarity, postgres_fts, bm25, splade_v3, bge_m3_sparse, colbert_v2, hybrid_rrf, hybrid_weighted, postgres_all_chunks]}
+      implementation: {enum: [vector_similarity, postgres_fts, bm25, bge_m3_sparse, colbert_v2, hybrid_rrf, hybrid_weighted, postgres_all_chunks]}
       config:
         type: object
         additionalProperties: false

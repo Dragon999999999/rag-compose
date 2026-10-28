@@ -81,10 +81,7 @@ from llm_grounding.retrieval.colbert import ColBERTRetriever, MultiVectorIndex
 from llm_grounding.retrieval.full_context import FullContextRetriever
 from llm_grounding.retrieval.hybrid import HybridRetriever
 from llm_grounding.retrieval.hybrid_weighted import WeightedHybridRetriever
-from llm_grounding.retrieval.learned_sparse import (
-    BgeM3SparseRetriever,
-    SpladeV3Retriever,
-)
+from llm_grounding.retrieval.learned_sparse import BgeM3SparseRetriever
 from llm_grounding.retrieval.protocol import Retriever
 from llm_grounding.retrieval.reranking.cross_encoder import CrossEncoderReranker
 from llm_grounding.retrieval.reranking.identity import IdentityReranker
@@ -192,7 +189,6 @@ class ComponentRegistry:
                 "postgres_fts"
             ),
             "bm25": lambda: _retriever_requires_runtime_dependencies("bm25"),
-            "splade_v3": lambda: _retriever_requires_runtime_dependencies("splade_v3"),
             "bge_m3_sparse": lambda: _retriever_requires_runtime_dependencies(
                 "bge_m3_sparse"
             ),
@@ -269,7 +265,6 @@ class ComponentRegistry:
             "postgres_all_chunks": self._build_full_context_retriever,
             "postgres_fts": self._build_sparse_retriever,
             "bm25": self._build_bm25_retriever,
-            "splade_v3": self._build_splade_retriever,
             "bge_m3_sparse": self._build_bge_sparse_retriever,
             "colbert_v2": self._build_colbert_retriever,
             "hybrid_rrf": self._build_hybrid_retriever,
@@ -723,22 +718,6 @@ class ComponentRegistry:
         )
 
     @staticmethod
-    def _build_splade_retriever(
-        config: RetrieverConfig, dependencies: RetrieverDependencies
-    ) -> Retriever:
-        """Build SPLADE-v3 retrieval from a lazily provisioned sparse index."""
-        if dependencies.sparse_embedder is None or dependencies.sparse_store is None:
-            raise ConfigurationError(
-                "SPLADE-v3 retrieval requires a sparse model and index"
-            )
-        return SpladeV3Retriever(
-            dependencies.repository,
-            dependencies.sparse_embedder,
-            dependencies.sparse_store,
-            top_k=config.top_k or 20,
-        )
-
-    @staticmethod
     def _build_bge_sparse_retriever(
         config: RetrieverConfig, dependencies: RetrieverDependencies
     ) -> Retriever:
@@ -835,7 +814,7 @@ class ComponentRegistry:
             return frozenset({"persisted_chunks", "postgres_fts"})
         if retriever_type == "bm25":
             return frozenset({"persisted_chunks"})
-        if retriever_type in {"splade_v3", "bge_m3_sparse"}:
+        if retriever_type == "bge_m3_sparse":
             return frozenset(
                 {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
             )
@@ -877,9 +856,6 @@ class ComponentRegistry:
                 "postgres_all_chunks": frozenset({"persisted_chunks"}),
                 "postgres_fts": frozenset({"persisted_chunks", "postgres_fts"}),
                 "bm25": frozenset({"persisted_chunks"}),
-                "splade_v3": frozenset(
-                    {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
-                ),
                 "bge_m3_sparse": frozenset(
                     {"persisted_chunks", "sparse_vector_index", "sparse_query_embedder"}
                 ),

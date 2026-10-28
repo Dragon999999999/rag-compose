@@ -61,8 +61,6 @@ class ComponentConfig(BaseModel):
             "vector": ("dense", "vector_similarity"),
             "postgres_fts": ("sparse", "postgres_fts"),
             "bm25": ("sparse", "bm25"),
-            "splade": ("sparse", "splade"),
-            "splade_v3": ("sparse", "splade_v3"),
             "bge_m3_sparse": ("sparse", "bge_m3_sparse"),
             "colbert": ("multivector", "colbert_v2"),
             "colbert_v2": ("multivector", "colbert_v2"),
