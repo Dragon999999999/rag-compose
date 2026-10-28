@@ -547,6 +547,7 @@ function ProjectWorkspace({
         )}
         {sourcesRoute ? (
           <SourcesWorkspace
+            key={projectId}
             error={sources.error}
             loading={sources.isLoading}
             onRemove={(id) => sourceMutations.remove.mutate(id)}
