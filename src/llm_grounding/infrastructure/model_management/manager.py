@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from llm_grounding.infrastructure.config.declarative import ModelDefinition
@@ -38,6 +39,31 @@ class LocalModelManager:
         self._leases: dict[str, int] = {}
         self._endpoints: dict[str, ModelEndpoint] = {}
         self._idle_tasks: dict[str, asyncio.Task[None]] = {}
+
+    async def prepare(self, model_id: str) -> Path:
+        """Download and verify a local model without starting its runtime.
+
+        This is the explicit prefetch boundary used by administrative tools.
+        Normal pipeline execution continues to use :meth:`acquire`, which
+        prepares a model lazily immediately before it is needed.
+
+        Args:
+            model_id: Configured local model identifier.
+
+        Returns:
+            Persistent directory containing the verified model weights.
+
+        Raises:
+            ValueError: If the model is configured as a remote resource.
+            ModelStorageError: If the model cannot be made available.
+        """
+        definition = self.registry.resolve(model_id)
+        if definition.location != "local":
+            raise ValueError(
+                f"Model {model_id} is remote; only local models have "
+                "downloadable weights"
+            )
+        return await self.storage.ensure_available(definition)
 
     @asynccontextmanager
     async def acquire(self, model_id: str) -> AsyncIterator[LocalModelHandle]:

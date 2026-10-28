@@ -158,6 +158,29 @@ class _FakeStorage:
         return True
 
 
+@pytest.mark.asyncio
+async def test_manager_prepare_downloads_weights_without_starting_runtime(
+    tmp_path: Path,
+) -> None:
+    """Explicit preparation makes weights available without creating a runtime."""
+    registry = load_model_registry()
+    storage = ModelStorageManager(tmp_path)
+    manager = LocalModelManager(registry, storage)
+    calls = 0
+
+    async def fake_ensure(model_definition: ModelDefinition) -> Path:
+        nonlocal calls
+        calls += 1
+        assert model_definition.id == "gliner_small"
+        return tmp_path / "gliner_small"
+
+    storage.ensure_available = fake_ensure  # type: ignore[method-assign]
+
+    assert await manager.prepare("gliner_small") == tmp_path / "gliner_small"
+    assert calls == 1
+    await manager.close()
+
+
 class _FakeRuntime:
     """Record lifecycle calls made by LocalModelManager."""
 

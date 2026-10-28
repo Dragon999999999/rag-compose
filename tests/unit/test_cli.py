@@ -27,6 +27,9 @@ def test_cli_parser_preserves_existing_commands_and_adds_discovery_commands() ->
     )
     component = parser.parse_args(["component", "list", "--stage", "retrievers"])
     model = parser.parse_args(["model", "inspect", "embedding_001"])
+    download = parser.parse_args(
+        ["model", "download", "qwen3_1_7b", "gliner_small"]
+    )
     vector_db = parser.parse_args(["vector-db", "test", "qdrant"])
 
     assert (project.command, project.project_command) == (
@@ -38,6 +41,8 @@ def test_cli_parser_preserves_existing_commands_and_adds_discovery_commands() ->
     assert chat.override_command == "set"
     assert component.stage == "retrievers"
     assert model.model_command == "inspect"
+    assert download.model_command == "download"
+    assert download.models == ["qwen3_1_7b", "gliner_small"]
     assert vector_db.vector_db_command == "test"
 
 
@@ -54,6 +59,20 @@ def test_component_list_filters_configured_stage(
     assert "retriever_dense_vector_default" in output
     assert "retriever" in output
     assert "parser_pymupdf" not in output
+
+
+def test_component_list_accepts_short_knowledge_stage_alias(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Knowledge-builder components are discoverable with the short CLI label."""
+    parser = create_phase_one_parser()
+    args = parser.parse_args(["component", "list", "--stage", "knowledge"])
+
+    assert execute_components(args) == 0
+    output = capsys.readouterr().out
+
+    assert "knowledge_metadata_gliner" in output
+    assert "chunker_recursive_tokens" not in output
 
 
 def test_print_table_aligns_columns_to_longest_value(

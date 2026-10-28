@@ -39,6 +39,7 @@ _STAGE_ALIASES = {
     "assessors": "assessor",
     "knowledge-builder": "knowledge_builder",
     "knowledge_builder": "knowledge_builder",
+    "knowledge": "knowledge_builder",
     "decision-policy": "decision_policy",
     "decision_policy": "decision_policy",
     "renderer": "renderer",

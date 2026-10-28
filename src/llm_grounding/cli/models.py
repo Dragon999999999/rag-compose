@@ -24,6 +24,10 @@ def register(
     )
     inspect = commands.add_parser("inspect", help="Inspect one configured model")
     inspect.add_argument("model")
+    download = commands.add_parser(
+        "download", help="Download and verify local model weights"
+    )
+    download.add_argument("models", nargs="+", help="Model IDs to prepare")
 
 
 async def _status(
@@ -51,20 +55,29 @@ def _matches(definition: ModelDefinition, requested: str | None) -> bool:
     """Match the user-facing model type filter against safe registry fields."""
     if requested is None:
         return True
-    normalized = requested.casefold()
+    normalized = requested.casefold().replace("_", "-")
+    if normalized in {"knowledge", "knowledge-building"}:
+        normalized = "validation"
     return normalized in {
-        definition.stage.casefold(),
+        definition.stage.casefold().replace("_", "-"),
         definition.location.casefold(),
         getattr(definition, "backend", "").casefold(),
         (definition.provider or "").casefold(),
     }
 
 
+def _display_stage(definition: ModelDefinition) -> str:
+    """Return the shorter CLI label for models used in knowledge building."""
+    if definition.stage.casefold() == "validation":
+        return "knowledge"
+    return definition.stage
+
+
 def _definition_payload(definition: ModelDefinition) -> dict[str, object]:
     """Return model configuration without resolved credentials."""
     return {
         "id": definition.id,
-        "stage": definition.stage,
+        "stage": _display_stage(definition),
         "location": definition.location,
         "backend": definition.backend,
         "provider": definition.provider,
@@ -90,7 +103,7 @@ async def execute(args: argparse.Namespace) -> int:
                     rows.append(
                         [
                             definition.id,
-                            definition.stage,
+                            _display_stage(definition),
                             definition.location,
                             definition.backend,
                             status["availability"],
@@ -99,6 +112,20 @@ async def execute(args: argparse.Namespace) -> int:
             print_table(
                 ["ID", "STAGE", "LOCATION", "BACKEND", "AVAILABILITY"], rows
             )
+            return 0
+        if args.model_command == "download":
+            rows: list[list[object]] = []
+            for model_id in args.models:
+                definition = registry.resolve(model_id)
+                if definition.location != "local":
+                    raise ValueError(
+                        f"Model {model_id} is remote and has no local weights "
+                        "to download"
+                    )
+                print(f"Preparing {model_id} ({definition.name})...")
+                path = await manager.prepare(model_id)
+                rows.append([model_id, _display_stage(definition), path, "ready"])
+            print_table(["ID", "STAGE", "WEIGHTS", "STATUS"], rows)
             return 0
         if args.model_command == "inspect":
             definition = registry.resolve(args.model)
