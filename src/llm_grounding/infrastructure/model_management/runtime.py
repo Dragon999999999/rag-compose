@@ -26,6 +26,7 @@ class DockerModelRuntime:
         """Inject a Docker client and readiness probe for deterministic tests."""
         self._client = client
         self._probe = probe
+        self._image_locks: dict[str, asyncio.Lock] = {}
 
     def _docker(self) -> Any:
         """Create the Docker SDK client only when a local model is requested."""
@@ -48,7 +49,11 @@ class DockerModelRuntime:
             raise RuntimeError(
                 f"Model {definition.id} does not select a Docker runtime"
             )
-        return self._ensure_started_sync(definition, weights)
+        image = runtime.image
+        assert image is not None
+        image_lock = self._image_locks.setdefault(image, asyncio.Lock())
+        async with image_lock:
+            return self._ensure_started_sync(definition, weights)
 
     def _ensure_started_sync(
         self, definition: ModelDefinition, weights: Path
@@ -71,6 +76,7 @@ class DockerModelRuntime:
         except Exception:
             container = None
         if container is None:
+            self._ensure_image(client, runtime.image)
             kwargs: dict[str, object] = {
                 "name": name,
                 "image": runtime.image,
@@ -113,6 +119,77 @@ class DockerModelRuntime:
             reload_method()
         base_url = self._endpoint_url(container, runtime.host_port, runtime.port)
         return ModelEndpoint(definition.id, base_url, name)
+
+    @staticmethod
+    def _ensure_image(client: Any, image: str | None) -> None:
+        """Ensure one Docker image is local before creating its container.
+
+        Docker image lookup and pull errors are translated here so callers do not
+        receive an opaque container-creation failure. The caller serializes this
+        operation per image, which prevents concurrent model starts from pulling
+        the same image more than once.
+        """
+        if not image:
+            raise RuntimeError("Docker model runtime has no configured image")
+        try:
+            from docker.errors import ImageNotFound  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install the Docker SDK to manage local model images"
+            ) from exc
+
+        images = getattr(client, "images", None)
+        if images is None or not callable(getattr(images, "get", None)):
+            raise RuntimeError("Docker client does not provide image management")
+        try:
+            images.get(image)
+            return
+        except ImageNotFound:
+            pass
+        except Exception as exc:
+            raise RuntimeError(
+                DockerModelRuntime._image_error_message("inspect", image, exc)
+            ) from exc
+
+        try:
+            images.pull(image)
+        except Exception as exc:
+            raise RuntimeError(
+                DockerModelRuntime._image_error_message("pull", image, exc)
+            ) from exc
+
+    @staticmethod
+    def _image_error_message(operation: str, image: str, error: Exception) -> str:
+        """Return a useful, credential-safe message for a Docker image error."""
+        response = getattr(error, "response", None)
+        status_code = getattr(error, "status_code", None) or getattr(
+            response, "status_code", None
+        )
+        detail = str(error).strip() or type(error).__name__
+        detail = " ".join(detail.split())[:300]
+        lowered = detail.lower()
+        error_name = type(error).__name__.lower()
+        if "timeout" in error_name or "timed out" in lowered:
+            category = "timed out"
+        elif (
+            status_code in {401, 403}
+            or "unauthorized" in lowered
+            or "authentication" in lowered
+            or "access denied" in lowered
+            or "forbidden" in lowered
+        ):
+            category = "was rejected by the registry (authentication or access)"
+        elif (
+            status_code is not None
+            or "registry" in lowered
+            or "manifest unknown" in lowered
+            or "repository does not exist" in lowered
+            or "not found" in lowered
+        ):
+            category = "was rejected by the registry"
+        else:
+            category = "failed"
+        return f"Docker image {operation} for '{image}' {category}: {detail}"
 
     async def wait_ready(
         self, endpoint: ModelEndpoint, definition: ModelDefinition
