@@ -38,8 +38,11 @@ def build_application(args: object) -> PhaseOneApplication:
     )
 
 
-async def start_application(args: object) -> PhaseOneApplication:
-    """Build and start the shared application services."""
+async def start_application(
+    args: object, *, synchronize: bool = True
+) -> PhaseOneApplication:
+    """Build application services, optionally deferring startup synchronization."""
     application = build_application(args)
-    await application.startup()
+    if synchronize:
+        await application.startup()
     return application

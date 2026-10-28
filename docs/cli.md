@@ -52,7 +52,12 @@ llm-grounding pipeline validate CONFIG_FILE
 llm-grounding pipeline create CONFIG_FILE
 llm-grounding pipeline import [DIRECTORY]
 llm-grounding pipeline delete PIPELINE_ID
+llm-grounding pipeline repair-representation-hashes [--dry-run]
 ```
+
+Use `repair-representation-hashes --dry-run` first to preview verified legacy
+hash repairs. The operation only updates canonical hash metadata for unchanged
+YAML-owned ingestion pipelines; it does not alter pipeline definitions or IDs.
 
 The checked-in benchmark suite can be imported as a directory; discovery is
 recursive across its numbered family folders:

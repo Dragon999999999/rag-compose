@@ -653,6 +653,38 @@ class PipelineRepresentationConfig(BaseModel):
         import json
 
         data = self.model_dump(mode="json")
+        backend = data.get("vector_backend")
+        if isinstance(backend, dict):
+            backend.pop("representation", None)
+            backend.pop("similarity_metric", None)
+        if catalog is not None and self.embedding is not None:
+            embedding_config = catalog.embedding(self.embedding.model_ref)
+            data["embedding_model"] = (
+                embedding_config.specification().model_dump(mode="json")
+                if embedding_config.embedding_space_id is not None
+                else embedding_config.model_dump(mode="json")
+            )
+            if embedding_config.embedding_space_id is None:
+                if data["embedding_model"].get("embedding_space_id") is None:
+                    data["embedding_model"].pop("embedding_space_id", None)
+                if data["embedding_model"].get("representation") == "dense":
+                    data["embedding_model"].pop("representation", None)
+                if data["embedding_model"].get("similarity_metric") == "cosine":
+                    data["embedding_model"].pop("similarity_metric", None)
+        return sha256(
+            json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def legacy_identity(self, catalog: "ModelCatalog | None" = None) -> str:
+        """Return the pre-canonicalization identity for verified hash repairs only.
+
+        This preserves the historical field-set-dependent serialization solely so
+        the repair workflow can prove that a stored hash was produced by the
+        known defect. New code must use :meth:`identity`.
+        """
+        import json
+
+        data = self.model_dump(mode="json")
         if self.knowledge_builder is not None:
             data["knowledge_builder"] = self.knowledge_builder.model_dump(
                 mode="json", exclude_unset=True
@@ -765,6 +797,20 @@ class PipelineConfig(BaseModel):
 
     def identity(self) -> str:
         """Return a stable hash of the pipeline's semantic configuration."""
+        import json
+
+        data = self.model_dump(mode="json")
+        representation = data.get("representation")
+        if isinstance(representation, dict):
+            backend = representation.get("vector_backend")
+            if isinstance(backend, dict):
+                backend.pop("representation", None)
+                backend.pop("similarity_metric", None)
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        return sha256(canonical.encode()).hexdigest()
+
+    def legacy_identity(self) -> str:
+        """Return the pre-canonicalization configuration hash for repairs only."""
         import json
 
         data = self.model_dump(mode="json")

@@ -47,7 +47,13 @@ async def _run_command(args: argparse.Namespace) -> int:
     if args.command == "pipeline" and args.pipeline_command == "validate":
         return pipelines.validate(args)
 
-    application = await start_application(args)
+    application = await start_application(
+        args,
+        synchronize=not (
+            args.command == "pipeline"
+            and args.pipeline_command == "repair-representation-hashes"
+        ),
+    )
     try:
         if args.command == "project":
             return await projects.execute(args, application)

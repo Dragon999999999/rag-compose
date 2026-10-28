@@ -18,6 +18,9 @@ def test_cli_parser_preserves_existing_commands_and_adds_discovery_commands() ->
 
     project = parser.parse_args(["project", "set-ingestion-pipeline", "p", "i"])
     pipeline = parser.parse_args(["pipeline", "list", "--type", "query"])
+    repair = parser.parse_args(
+        ["pipeline", "repair-representation-hashes", "--dry-run"]
+    )
     chat = parser.parse_args(
         ["chat", "override", "set", "c", "retriever", "top_k", "10"]
     )
@@ -30,6 +33,7 @@ def test_cli_parser_preserves_existing_commands_and_adds_discovery_commands() ->
         "set-ingestion-pipeline",
     )
     assert pipeline.pipeline_type == "query"
+    assert repair.dry_run
     assert chat.override_command == "set"
     assert component.stage == "retrievers"
     assert model.model_command == "inspect"

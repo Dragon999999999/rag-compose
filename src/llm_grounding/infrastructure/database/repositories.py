@@ -532,6 +532,84 @@ class PostgresRepository:
             )
             return self._pipeline(row)
 
+    async def repair_ingestion_hashes(
+        self,
+        repairs: tuple[tuple[str, str, str, str, str], ...],
+    ) -> dict[str, int]:
+        """Apply verified canonical-hash repairs without changing pipeline content.
+
+        Each repair contains pipeline id, expected old and new configuration
+        hashes, and expected old and new representation hashes. Rows are updated
+        only when all expected values still match, which makes repeated calls
+        safe and leaves concurrent semantic changes untouched.
+        """
+        counts = {
+            "pipelines": 0,
+            "pipeline_versions": 0,
+            "projects": 0,
+            "index_capabilities": 0,
+        }
+        async with self._sessions.begin() as session:
+            for (
+                pipeline_id,
+                old_config_hash,
+                new_config_hash,
+                old_representation_hash,
+                new_representation_hash,
+            ) in repairs:
+                row = await session.get(PipelineRow, pipeline_id, with_for_update=True)
+                if (
+                    row is None
+                    or row.kind != "ingestion"
+                    or row.config_hash != old_config_hash
+                    or row.representation_hash != old_representation_hash
+                ):
+                    continue
+                row.config_hash = new_config_hash
+                row.representation_hash = new_representation_hash
+                counts["pipelines"] += 1
+
+                version = await session.get(
+                    PipelineVersionRow,
+                    (pipeline_id, row.version),
+                    with_for_update=True,
+                )
+                if (
+                    version is not None
+                    and version.config_hash == old_config_hash
+                    and version.representation_hash == old_representation_hash
+                ):
+                    version.config_hash = new_config_hash
+                    version.representation_hash = new_representation_hash
+                    counts["pipeline_versions"] += 1
+
+                projects = (
+                    await session.scalars(
+                        select(ProjectRow)
+                        .where(
+                            ProjectRow.ingestion_pipeline_id == pipeline_id,
+                            ProjectRow.ingestion_pipeline_config_hash
+                            == old_config_hash,
+                            ProjectRow.ingestion_representation_hash
+                            == old_representation_hash,
+                        )
+                        .with_for_update()
+                    )
+                ).all()
+                for project in projects:
+                    project.ingestion_pipeline_config_hash = new_config_hash
+                    project.ingestion_representation_hash = new_representation_hash
+                    counts["projects"] += 1
+                    capabilities = dict(project.index_capabilities_json)
+                    if (
+                        capabilities.get("representation_hash")
+                        == old_representation_hash
+                    ):
+                        capabilities["representation_hash"] = new_representation_hash
+                        project.index_capabilities_json = capabilities
+                        counts["index_capabilities"] += 1
+        return counts
+
     @staticmethod
     def _validate_pipeline_config(
         config: PipelineConfig | dict[str, object],

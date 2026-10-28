@@ -22,6 +22,7 @@ from llm_grounding.infrastructure.config.loader import (
     load_ingestion_config,
     load_model_catalog,
     load_pipeline_config,
+    pipeline_source_fingerprint,
 )
 from llm_grounding.infrastructure.config.models import ModelCatalog
 from llm_grounding.infrastructure.vector.memory import InMemoryVectorStore
@@ -161,6 +162,70 @@ class RecordingRuntime:
     def invalidate(self, pipeline_id: str) -> None:
         """Record the pipeline whose cached runtime must be discarded."""
         self.invalidated.append(pipeline_id)
+
+
+@pytest.mark.asyncio
+async def test_repairs_only_verified_legacy_ingestion_hashes() -> None:
+    """Hash repair previews and applies only metadata for an unchanged YAML source."""
+    catalog = load_model_catalog()
+    path = Path("config/pipelines/ingestion_default_v1.yaml").resolve()
+    config = load_pipeline_config(path, catalog=catalog).with_resolved_catalog(catalog)
+    now = datetime.now(UTC)
+    record = Pipeline(
+        "legacy-ingestion",
+        config.name,
+        config.version,
+        config.schema_version,
+        config.description,
+        config.model_dump(mode="json"),
+        config.legacy_identity(),
+        config.representation.legacy_identity(catalog),  # type: ignore[union-attr]
+        "yaml",
+        str(path),
+        pipeline_source_fingerprint(path),
+        True,
+        config.is_default,
+        now,
+        now,
+        "ingestion",
+    )
+
+    class RepairRepository:
+        def __init__(self) -> None:
+            self.repairs: tuple[tuple[str, str, str, str, str], ...] = ()
+
+        async def list_pipelines(self, **_kwargs: object) -> tuple[Pipeline, ...]:
+            return (record,)
+
+        async def repair_ingestion_hashes(
+            self, repairs: tuple[tuple[str, str, str, str, str], ...]
+        ) -> dict[str, int]:
+            self.repairs = repairs
+            return {
+                "pipelines": 1,
+                "pipeline_versions": 1,
+                "projects": 0,
+                "index_capabilities": 0,
+            }
+
+    repository = RepairRepository()
+    service = PipelineService(repository, catalog)  # type: ignore[arg-type]
+
+    preview = await service.repair_ingestion_hashes(dry_run=True)
+    assert len(preview.repairs) == 1
+    assert repository.repairs == ()
+
+    applied = await service.repair_ingestion_hashes()
+    assert applied.updated["pipelines"] == 1
+    assert repository.repairs == (
+        (
+            record.id,
+            record.config_hash,
+            config.config_hash,
+            record.representation_hash,
+            config.representation_hash(catalog),
+        ),
+    )
 
 
 async def test_pipeline_service_crud_validates_and_invalidates_runtime_async() -> None:

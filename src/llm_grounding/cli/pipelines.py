@@ -47,6 +47,15 @@ def register(
         "delete", help="Deactivate one persisted pipeline"
     )
     deactivate.add_argument("pipeline_id")
+    repair = commands.add_parser(
+        "repair-representation-hashes",
+        help="Repair verified legacy ingestion hashes without changing configurations",
+    )
+    repair.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report eligible repairs without writing metadata",
+    )
 
 
 def validate(args: argparse.Namespace) -> int:
@@ -83,6 +92,11 @@ async def execute(
     elif command == "delete":
         await application.pipeline_service.deactivate(args.pipeline_id)
         print(f"Deactivated pipeline {args.pipeline_id}")
+    elif command == "repair-representation-hashes":
+        result = await application.pipeline_service.repair_ingestion_hashes(
+            dry_run=args.dry_run
+        )
+        print_json(result.as_dict())
     else:
         raise ValueError(f"Unsupported pipeline command: {command}")
     return 0

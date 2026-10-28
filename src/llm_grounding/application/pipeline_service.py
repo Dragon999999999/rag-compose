@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from llm_grounding.application.pipeline_runtime import (
@@ -14,6 +15,8 @@ from llm_grounding.domain.corpus import Pipeline
 from llm_grounding.infrastructure.config.loader import (
     ConfigurationError,
     load_configuration_registry,
+    load_pipeline_config,
+    pipeline_source_fingerprint,
 )
 from llm_grounding.infrastructure.config.models import (
     ModelCatalog,
@@ -73,6 +76,50 @@ class PipelineUpdateImpact:
             "can_migrate": self.compatible,
             "compatibility_reason": self.compatibility_reason,
             "changes": [change.as_dict() for change in self.changes],
+        }
+
+
+@dataclass(frozen=True)
+class IngestionHashRepair:
+    """Describe one verified ingestion hash canonicalization repair."""
+
+    pipeline_id: str
+    name: str
+    old_config_hash: str
+    new_config_hash: str
+    old_representation_hash: str
+    new_representation_hash: str
+
+    def as_dict(self) -> dict[str, str]:
+        """Serialize the repair preview without exposing configuration secrets."""
+        return {
+            "pipeline_id": self.pipeline_id,
+            "name": self.name,
+            "old_config_hash": self.old_config_hash,
+            "new_config_hash": self.new_config_hash,
+            "old_representation_hash": self.old_representation_hash,
+            "new_representation_hash": self.new_representation_hash,
+        }
+
+
+@dataclass(frozen=True)
+class IngestionHashRepairResult:
+    """Summarize a safe ingestion hash repair or dry-run preview."""
+
+    dry_run: bool
+    scanned: int
+    repairs: tuple[IngestionHashRepair, ...]
+    skipped: tuple[str, ...]
+    updated: dict[str, int]
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize an auditable repair result for API and CLI callers."""
+        return {
+            "dry_run": self.dry_run,
+            "scanned": self.scanned,
+            "repairs": [repair.as_dict() for repair in self.repairs],
+            "skipped": list(self.skipped),
+            "updated": self.updated,
         }
 
 
@@ -201,6 +248,105 @@ class PipelineService:
     async def get(self, pipeline_id: str) -> Pipeline:
         """Retrieve one persisted pipeline by stable ID."""
         return await self._repository.get_pipeline(pipeline_id)
+
+    async def repair_ingestion_hashes(
+        self, *, dry_run: bool = False
+    ) -> IngestionHashRepairResult:
+        """Repair known legacy ingestion hashes after proving semantic equality.
+
+        Only YAML-owned records whose current source file matches the stored
+        fingerprint and whose legacy hashes match the historical serialization
+        are eligible. Pipeline content, identifiers, versions, and associations
+        are never changed.
+        """
+        records = await self.list(active_only=False, kind="ingestion")
+        repairs: list[IngestionHashRepair] = []
+        skipped: list[str] = []
+        for record in records:
+            if record.source_kind != "yaml" or not record.source_path:
+                skipped.append(f"{record.id}: not YAML-owned")
+                continue
+            source_path = Path(record.source_path)
+            if not source_path.is_file():
+                skipped.append(f"{record.id}: source file is unavailable")
+                continue
+            if pipeline_source_fingerprint(source_path) != record.source_fingerprint:
+                skipped.append(f"{record.id}: source fingerprint changed")
+                continue
+            try:
+                source = load_pipeline_config(source_path, catalog=self._catalog)
+                source = source.with_resolved_catalog(self._catalog)
+                persisted = PipelineConfig.model_validate(record.config)
+            except (OSError, ValueError) as exc:
+                skipped.append(f"{record.id}: cannot validate configuration ({exc})")
+                continue
+            if source.model_dump(mode="json") != persisted.model_dump(mode="json"):
+                skipped.append(
+                    f"{record.id}: persisted configuration differs from source"
+                )
+                continue
+            old_config_hash = source.legacy_identity()
+            old_representation_hash = source.representation.legacy_identity(
+                self._catalog
+            )
+            new_config_hash = source.config_hash
+            new_representation_hash = source.representation_hash(self._catalog)
+            if (
+                record.config_hash != old_config_hash
+                or record.representation_hash != old_representation_hash
+            ):
+                if (
+                    record.config_hash != new_config_hash
+                    or record.representation_hash != new_representation_hash
+                ):
+                    skipped.append(
+                        f"{record.id}: hashes do not match the known legacy form"
+                    )
+                continue
+            if (
+                old_config_hash == new_config_hash
+                and old_representation_hash == new_representation_hash
+            ):
+                continue
+            repairs.append(
+                IngestionHashRepair(
+                    record.id,
+                    record.name,
+                    old_config_hash,
+                    new_config_hash,
+                    old_representation_hash,
+                    new_representation_hash,
+                )
+            )
+        updated = {
+            "pipelines": 0,
+            "pipeline_versions": 0,
+            "projects": 0,
+            "index_capabilities": 0,
+        }
+        if repairs and not dry_run:
+            updated = await self._repository.repair_ingestion_hashes(
+                tuple(
+                    (
+                        repair.pipeline_id,
+                        repair.old_config_hash,
+                        repair.new_config_hash,
+                        repair.old_representation_hash,
+                        repair.new_representation_hash,
+                    )
+                    for repair in repairs
+                )
+            )
+            if self._runtime is not None:
+                for repair in repairs:
+                    self._runtime.invalidate(repair.pipeline_id)
+        return IngestionHashRepairResult(
+            dry_run=dry_run,
+            scanned=len(records),
+            repairs=tuple(repairs),
+            skipped=tuple(skipped),
+            updated=updated,
+        )
 
     async def default(self, kind: str | None = None) -> Pipeline:
         """Return the active default for a requested pipeline kind."""

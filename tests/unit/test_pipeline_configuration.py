@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 
 from llm_grounding.application.pipeline_compatibility import (
     IndexCapabilities,
@@ -11,12 +12,14 @@ from llm_grounding.application.pipeline_compatibility import (
 )
 from llm_grounding.application.pipeline_sync import PipelineSynchronizer
 from llm_grounding.domain.corpus import Pipeline
+from llm_grounding.infrastructure.config.declarative import DeclarativePipelineConfig
 from llm_grounding.infrastructure.config.loader import (
     ConfigurationError,
     load_model_catalog,
     load_pipeline_config,
 )
-from llm_grounding.infrastructure.config.models import ModelCatalog
+from llm_grounding.infrastructure.config.models import ModelCatalog, PipelineConfig
+from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 from llm_grounding.infrastructure.database.models import PipelineRow
 from llm_grounding.ingestion.models import (
     EmbeddingConfig,
@@ -24,6 +27,80 @@ from llm_grounding.ingestion.models import (
     IngestionConfig,
 )
 from llm_grounding.orchestration.registry import ComponentRegistry
+
+
+def test_representation_hash_uses_effective_knowledge_builder_defaults() -> None:
+    """Implicit and explicitly serialized defaults identify one representation."""
+    catalog = load_model_catalog()
+    fresh = load_pipeline_config(
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    ).with_resolved_catalog(catalog)
+    restored = PipelineConfig.model_validate(fresh.model_dump(mode="json"))
+
+    assert fresh.representation_hash(catalog) == restored.representation_hash(catalog)
+    assert fresh.config_hash == restored.config_hash
+
+
+def test_representation_hash_survives_yaml_json_pydantic_round_trip() -> None:
+    """Persisted JSON must retain the same effective ingestion identity as YAML."""
+    catalog = load_model_catalog()
+    fresh = load_pipeline_config(
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    ).with_resolved_catalog(catalog)
+    serialized = fresh.model_dump_json()
+    restored = PipelineConfig.model_validate_json(serialized)
+
+    assert restored.representation_hash(catalog) == fresh.representation_hash(catalog)
+    assert restored.config_hash == fresh.config_hash
+
+
+def test_representation_hash_changes_for_knowledge_builder_behavior() -> None:
+    """A behavior-changing knowledge setting remains representation-affecting."""
+    catalog = load_model_catalog()
+    baseline = load_pipeline_config(
+        Path("config/pipelines/ingestion_default_v1.yaml"), catalog=catalog
+    ).with_resolved_catalog(catalog)
+    assert baseline.representation is not None
+    assert baseline.representation.knowledge_builder is not None
+    changed_builder = baseline.representation.knowledge_builder.model_copy(
+        update={"max_keywords": 13}
+    )
+    changed = baseline.model_copy(
+        update={
+            "representation": baseline.representation.model_copy(
+                update={"knowledge_builder": changed_builder}
+            )
+        }
+    )
+
+    assert changed.representation_hash(catalog) != baseline.representation_hash(catalog)
+    assert changed.config_hash != baseline.config_hash
+
+
+def test_all_registered_ingestion_presets_have_round_trip_stable_hashes() -> None:
+    """Every shipped ingestion preset is stable across persisted JSON restoration."""
+    root = Path(__file__).resolve().parents[2]
+    catalog = load_model_catalog()
+    configuration_registry = ConfigurationRegistry.from_directories(
+        root / "config/models", root / "config/components"
+    )
+    paths = sorted((root / "config/pipelines").rglob("*.yaml"))
+    ingestion_configs: list[PipelineConfig] = []
+    for path in paths:
+        source = DeclarativePipelineConfig.model_validate(
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        )
+        config = configuration_registry.pipeline(source, catalog)
+        if config.kind == "ingestion":
+            ingestion_configs.append(config.with_resolved_catalog(catalog))
+
+    assert ingestion_configs
+    for config in ingestion_configs:
+        restored = PipelineConfig.model_validate(config.model_dump(mode="json"))
+        assert restored.representation_hash(catalog) == config.representation_hash(
+            catalog
+        )
+        assert restored.config_hash == config.config_hash
 
 
 def test_all_checked_in_pipelines_validate_against_real_catalog() -> None:
