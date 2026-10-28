@@ -224,7 +224,7 @@ function ProjectWorkspace({
   const chat = chats.data?.find((item) => item.id === chatId);
   const projectMutations = useProjectMutations();
   const chatMutations = useChatMutations(projectId, chatId);
-  const sourceMutations = useSourceMutations(projectId);
+  const sourceMutations = useSourceMutations(projectId, chatId);
   const invalidRoute =
     (!projects.isLoading && !projects.error && !project) ||
     (Boolean(chatId) && !chats.isLoading && !chats.error && !chat);
@@ -547,7 +547,7 @@ function ProjectWorkspace({
         )}
         {sourcesRoute ? (
           <SourcesWorkspace
-            key={projectId}
+            key={`${projectId}:${chatId ?? "project"}`}
             error={sources.error}
             loading={sources.isLoading}
             onRemove={(id) => sourceMutations.remove.mutate(id)}
