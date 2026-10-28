@@ -676,6 +676,7 @@ function AssistantAnswer({
         <span className="message-role">Assistant</span>
         <CopyButton label="Copy answer" text={answer.answer_text} />
       </div>
+      {answer.claims.length === 0 && <p>{answer.answer_text}</p>}
       {answer.claims.map((claim) => (
         <p
           className={
