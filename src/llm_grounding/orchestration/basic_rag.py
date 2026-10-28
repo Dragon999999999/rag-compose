@@ -254,6 +254,7 @@ class BasicRagRunner:
         if "context_top_k" not in values and isinstance(policy_top_k, int):
             values["context_top_k"] = policy_top_k
         retrieval_span = traces.start("retrieval")
+        retrieval_performed = _candidate_override is None and _chunk_override is None
         if _candidate_override is not None:
             candidates = _candidate_override
         elif _chunk_override is not None:
@@ -265,9 +266,11 @@ class BasicRagRunner:
                 retriever_override=_retriever_override,
                 summary_override=_summary_override,
             )
+        if retrieval_performed:
+            usage.add_retrieval()
         traces.end(retrieval_span, output_count=len(candidates))
         rerank_span = traces.start("rerank", input_count=len(candidates))
-        chunks = (
+        reranked_chunks = (
             _chunk_override
             if _chunk_override is not None
             else await self._rerank_chunks(
@@ -279,9 +282,11 @@ class BasicRagRunner:
         )
         if _chunk_override is None:
             usage.add_reranker()
-        traces.end(rerank_span, output_count=len(chunks))
-        selection_span = traces.start("context_selection", input_count=len(chunks))
-        chunks = self._select_context(chunks, values)
+        traces.end(rerank_span, output_count=len(reranked_chunks))
+        selection_span = traces.start(
+            "context_selection", input_count=len(reranked_chunks)
+        )
+        chunks = self._select_context(reranked_chunks, values)
         traces.end(selection_span, output_count=len(chunks))
         query_embedding = (
             self._last_retrieval_response.query_embedding
@@ -311,12 +316,24 @@ class BasicRagRunner:
                     "_artifacts": {"candidates": candidates, "chunks": chunks},
                     "retrieval_stages": [
                         stage.model_dump(mode="json")
-                        for stage in build_retrieval_stages((), run_id=str(uuid4()))
+                        for stage in build_retrieval_stages(
+                            candidates,
+                            run_id=str(uuid4()),
+                            reranked_context=(
+                                reranked_chunks if _chunk_override is None else None
+                            ),
+                            final_context=(),
+                        )
                     ],
                     "stage_graph": [
                         stage.model_dump(mode="json")
                         for stage in build_retrieval_stage_graph(
-                            (), run_id=str(uuid4())
+                            candidates,
+                            run_id=str(uuid4()),
+                            reranked_context=(
+                                reranked_chunks if _chunk_override is None else None
+                            ),
+                            final_context=(),
                         )
                     ],
                     "trace": [span.model_dump(mode="json") for span in traces.spans],
@@ -440,23 +457,52 @@ class BasicRagRunner:
                 "assessment_scores": [item.score for item in assessments],
                 "assessment_dimensions": [item.dimension for item in assessments],
                 "decision": decision.action,
+                "decision_record": {
+                    "action": decision.action,
+                    "metadata": decision.metadata,
+                },
+                "assessments": [
+                    {
+                        "assessor": item.assessor,
+                        "dimension": item.dimension,
+                        "label": item.label,
+                        "score": item.score,
+                        "status": item.status,
+                        "evidence_ids": list(item.evidence_ids),
+                        "metadata": item.metadata,
+                    }
+                    for item in assessments
+                ],
                 "decision_metadata": decision.metadata,
                 "parameter_overrides": decision.metadata.get("parameter_overrides", {}),
                 "branch_ids": decision.metadata.get("branch_ids", []),
                 "generated_chat_name": reasoning.payload.get("chat_name"),
+                "generation": reasoning.metadata.get("generation", {}),
+                "prompt_id": reasoning.metadata.get("prompt_id"),
+                "prompt_version": reasoning.metadata.get("prompt_version"),
                 "answer_payload": answer.payload,
                 "evidence_ids": list(answer.evidence_ids),
                 "answer_metadata": answer.metadata,
                 "retrieval_stages": [
                     stage.model_dump(mode="json")
                     for stage in build_retrieval_stages(
-                        chunks, run_id=reasoning.result_id
+                        candidates,
+                        run_id=reasoning.result_id,
+                        reranked_context=(
+                            reranked_chunks if _chunk_override is None else None
+                        ),
+                        final_context=chunks,
                     )
                 ],
                 "stage_graph": [
                     stage.model_dump(mode="json")
                     for stage in build_retrieval_stage_graph(
-                        chunks, run_id=reasoning.result_id
+                        candidates,
+                        run_id=reasoning.result_id,
+                        reranked_context=(
+                            reranked_chunks if _chunk_override is None else None
+                        ),
+                        final_context=chunks,
                     )
                 ],
                 "trace": [span.model_dump(mode="json") for span in traces.spans],
@@ -688,6 +734,11 @@ class BasicRagRunner:
                     "accepted": accepted,
                     "decision": self._action_value(metadata.get("decision")),
                     "retrieved_chunk_ids": metadata.get("retrieved_chunk_ids", []),
+                    "retrieval_stages": metadata.get("retrieval_stages", []),
+                    "stage_graph": metadata.get("stage_graph", []),
+                    "trace": metadata.get("trace", []),
+                    "assessments": metadata.get("assessments", []),
+                    "usage": metadata.get("usage", {}),
                 }
             )
             if accepted:
@@ -719,6 +770,7 @@ class BasicRagRunner:
                 ),
             }
         )
+        merged_metadata.update(self._combined_attempt_observation_metadata(attempts))
         return self._public_result((result_id, answer, merged_metadata))
 
     def _join_branch_outcomes(
@@ -759,7 +811,11 @@ class BasicRagRunner:
                 "retrieved_chunk_ids": result[2].get("retrieved_chunk_ids", []),
                 "retrieval_results": result[2].get("retrieval_results", []),
                 "assessment_labels": result[2].get("assessment_labels", []),
+                "assessments": result[2].get("assessments", []),
+                "retrieval_stages": result[2].get("retrieval_stages", []),
+                "stage_graph": result[2].get("stage_graph", []),
                 "trace": result[2].get("trace", []),
+                "usage": result[2].get("usage", {}),
             }
             for branch_id, result in outcomes
         ]
@@ -774,6 +830,33 @@ class BasicRagRunner:
                     branch_id: result[2].get("_artifacts", {})
                     for branch_id, result in outcomes
                 },
+                "retrieval_stages": [
+                    stage
+                    for _, result in outcomes
+                    for stage in result[2].get("retrieval_stages", [])
+                    if isinstance(stage, dict)
+                ],
+                "stage_graph": [
+                    stage
+                    for _, result in outcomes
+                    for stage in result[2].get("stage_graph", [])
+                    if isinstance(stage, dict)
+                ],
+                "trace": [
+                    span
+                    for _, result in outcomes
+                    for span in result[2].get("trace", [])
+                    if isinstance(span, dict)
+                ],
+                "assessments": [
+                    assessment
+                    for _, result in outcomes
+                    for assessment in result[2].get("assessments", [])
+                    if isinstance(assessment, dict)
+                ],
+                "usage": self._merge_usage(
+                    [result[2].get("usage", {}) for _, result in outcomes]
+                ),
             }
         )
         merge = evidence_merge or self._execution.evidence_merge
@@ -819,6 +902,10 @@ class BasicRagRunner:
                     ),
                     "retrieval_results": result_metadata.get("retrieval_results", []),
                     "trace": result_metadata.get("trace", []),
+                    "retrieval_stages": result_metadata.get("retrieval_stages", []),
+                    "stage_graph": result_metadata.get("stage_graph", []),
+                    "assessments": result_metadata.get("assessments", []),
+                    "usage": result_metadata.get("usage", {}),
                     "parameter_overrides": dict(values),
                 }
             )
@@ -845,6 +932,7 @@ class BasicRagRunner:
                 ),
             }
         )
+        merged_metadata.update(self._combined_attempt_observation_metadata(attempts))
         if self._execution.evidence_merge in {"union", "rrf"}:
             merged_metadata["retrieved_chunk_ids"] = self._merged_attempt_chunk_ids(
                 attempts
@@ -861,6 +949,101 @@ class BasicRagRunner:
         if isinstance(value, DecisionAction):
             return value.value
         return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _merge_usage(records: list[object]) -> dict[str, object]:
+        """Aggregate usage records from independent branches or retry rounds."""
+        values = [record for record in records if isinstance(record, dict)]
+        if not values:
+            return {}
+        count_fields = (
+            "llm_calls",
+            "embedding_calls",
+            "retrieval_calls",
+            "reranker_calls",
+        )
+        token_fields = (
+            "context_tokens",
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_tokens",
+        )
+        merged: dict[str, object] = {
+            field: sum(
+                int(value[field])
+                for value in values
+                if isinstance(value.get(field), int)
+            )
+            for field in count_fields
+        }
+        for field in token_fields:
+            field_values = [value.get(field) for value in values]
+            merged[field] = (
+                sum(int(item) for item in field_values if isinstance(item, int))
+                if field_values and all(isinstance(item, int) for item in field_values)
+                else None
+            )
+        origins = {value.get("usage_origin") for value in values}
+        merged["usage_origin"] = (
+            "provider_reported" if origins == {"provider_reported"}
+            else "unavailable"
+            if not origins or origins == {"unavailable"}
+            else "estimated"
+        )
+        merged["resource_usage"] = [
+            resource
+            for value in values
+            for resource in value.get("resource_usage", [])
+            if isinstance(resource, dict)
+        ]
+        merged["metadata"] = {
+            "llm_usage": [
+                item
+                for value in values
+                for item in (
+                    value.get("metadata")
+                    if isinstance(value.get("metadata"), dict)
+                    else {}
+                ).get("llm_usage", [])
+                if isinstance(item, dict)
+            ]
+        }
+        return merged
+
+    @classmethod
+    def _combined_attempt_observation_metadata(
+        cls, attempts: list[dict[str, object]]
+    ) -> dict[str, object]:
+        """Expose every bounded retry attempt in the canonical observation."""
+        return {
+            "retrieval_stages": [
+                stage
+                for attempt in attempts
+                for stage in attempt.get("retrieval_stages", [])
+                if isinstance(stage, dict)
+            ],
+            "stage_graph": [
+                stage
+                for attempt in attempts
+                for stage in attempt.get("stage_graph", [])
+                if isinstance(stage, dict)
+            ],
+            "trace": [
+                span
+                for attempt in attempts
+                for span in attempt.get("trace", [])
+                if isinstance(span, dict)
+            ],
+            "assessments": [
+                assessment
+                for attempt in attempts
+                for assessment in attempt.get("assessments", [])
+                if isinstance(assessment, dict)
+            ],
+            "usage": cls._merge_usage(
+                [attempt.get("usage", {}) for attempt in attempts]
+            ),
+        }
 
     @staticmethod
     def _public_result(

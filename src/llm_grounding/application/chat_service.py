@@ -1,6 +1,7 @@
 """Thin persistent chat use cases that consume a project corpus through Basic RAG v1."""
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from llm_grounding.application.pipeline_compatibility import (
     CompatibilityResult,
@@ -10,7 +11,15 @@ from llm_grounding.application.pipeline_compatibility import (
 from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
 from llm_grounding.application.pipeline_service import PipelineService
 from llm_grounding.domain.answers import Answer
-from llm_grounding.domain.corpus import Chat, CorpusRequest, Message, Pipeline, TaskType
+from llm_grounding.domain.corpus import (
+    Chat,
+    ChunkRetrievalResult,
+    CorpusRequest,
+    Message,
+    Pipeline,
+    TaskType,
+)
+from llm_grounding.domain.evidence import RankingScore
 from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.config.overrides import (
     OverrideValidationError,
@@ -19,6 +28,8 @@ from llm_grounding.infrastructure.config.overrides import (
 )
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import IngestionConfig
+from llm_grounding.observability.builder import ObservationBuilder
+from llm_grounding.observability.configuration import build_effective_configuration
 from llm_grounding.orchestration.basic_rag import BasicRagRunner
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 
@@ -71,6 +82,10 @@ class ChatService:
         max_history: int = 10,
         pipeline_runtime: PipelineRuntimeResolver | None = None,
         pipeline_service: PipelineService | None = None,
+        *,
+        observation_builder: ObservationBuilder | None = None,
+        architecture: object | None = None,
+        ingestion_config: IngestionConfig | None = None,
     ) -> None:
         """Inject persistence, query architecture, and bounded history policy."""
         self._repository, self._runner, self._max_history, self._pipeline_runtime = (
@@ -80,6 +95,9 @@ class ChatService:
             pipeline_runtime,
         )
         self._pipeline_service = pipeline_service
+        self._observation_builder = observation_builder or ObservationBuilder()
+        self._architecture = architecture
+        self._ingestion_config = ingestion_config
 
     async def create_chat(
         self,
@@ -267,6 +285,7 @@ class ChatService:
         selected_name = "query_basic_v1"
         selected_version = 1
         selected_pipeline: Pipeline | None = None
+        runtime = None
         if self._pipeline_service is not None:
             selected_pipeline = await self._pipeline_for_chat(chat)
             if self._pipeline_runtime is None:
@@ -371,6 +390,17 @@ class ChatService:
             run_id,
             turn_title,
         )
+        await self._save_canonical_observation(
+            run_id=run_id,
+            chat=chat,
+            message=message,
+            task_type=task_type,
+            history=history,
+            answer=answer,
+            metadata=metadata,
+            assistant_message=assistant_message,
+            runtime=runtime,
+        )
         if generate_chat_name and (chat_name := _generated_chat_name(answer, metadata)):
             await self._repository.set_generated_chat_name(chat_id, chat_name)
         retrieved = metadata.get("retrieved_chunk_ids", [])
@@ -394,6 +424,96 @@ class ChatService:
                 ),
                 "included_history_turn_ids": [item.id for item in history],
             },
+        )
+
+    async def _save_canonical_observation(
+        self,
+        *,
+        run_id: str,
+        chat: Chat,
+        message: str,
+        task_type: TaskType,
+        history: tuple[Message, ...],
+        answer: Answer,
+        metadata: dict[str, object],
+        assistant_message: Message,
+        runtime: object | None,
+    ) -> None:
+        """Persist the same canonical observation used by the evaluation API."""
+        saver = getattr(self._repository, "save_observation", None)
+        if saver is None:
+            return
+        chunks = await self._hydrate_observation_chunks(metadata)
+        architecture = getattr(runtime, "architecture", None) or self._architecture
+        ingestion = getattr(runtime, "ingestion", None) or self._ingestion_config
+        effective = None
+        if architecture is not None and ingestion is not None:
+            effective = build_effective_configuration(
+                architecture,
+                ingestion,
+                corpus_id=chat.project_id,
+                prompt_id=(
+                    str(metadata["prompt_id"])
+                    if metadata.get("prompt_id") is not None
+                    else None
+                ),
+                prompt_version=(
+                    str(metadata["prompt_version"])
+                    if metadata.get("prompt_version") is not None
+                    else None
+                ),
+            )
+        observation = self._observation_builder.from_basic_rag_metadata(
+            run_id=run_id,
+            request_id=run_id,
+            corpus_id=chat.project_id,
+            architecture_name=(
+                getattr(architecture, "name", None) or "query_basic_v1"
+            ),
+            architecture_version=getattr(architecture, "version", 1),
+            request=CorpusRequest(chat.project_id, message, task_type),
+            chunks=chunks,
+            answer=answer,
+            metadata=metadata,
+            effective_configuration=effective,
+            history=history,
+        ).model_copy(
+            update={
+                "conversation_id": chat.id,
+                "turn_id": assistant_message.id,
+                "turn_index": len(
+                    [item for item in history if item.role == "assistant"]
+                ),
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        await saver(observation)
+
+    async def _hydrate_observation_chunks(
+        self, metadata: dict[str, object]
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Hydrate final-context chunks for canonical answer provenance."""
+        entries = metadata.get("retrieval_results", [])
+        if not isinstance(entries, list):
+            return ()
+        specs = [entry for entry in entries if isinstance(entry, dict)]
+        ids = tuple(str(entry["chunk_id"]) for entry in specs if "chunk_id" in entry)
+        chunks = await self._repository.chunks_by_ids(ids)
+        return tuple(
+            ChunkRetrievalResult(
+                chunks[chunk_id],
+                int(entry.get("rank", index)),
+                str(entry.get("retriever_id", "unknown")),
+                (
+                    float(entry["score"])
+                    if isinstance(entry.get("score"), (int, float))
+                    else None
+                ),
+                _ranking_score(entry.get("retrieval_score")),
+                _ranking_score(entry.get("rerank_score")),
+            )
+            for index, entry in enumerate(specs, 1)
+            if (chunk_id := str(entry.get("chunk_id", ""))) in chunks
         )
 
     async def _select_pipeline(self, pipeline_id: str | None) -> Pipeline:
@@ -544,3 +664,23 @@ class ChatService:
                 + suffix,
             )
         return project.ingestion_representation_hash or pipeline.representation_hash
+
+
+def _ranking_score(value: object) -> RankingScore | None:
+    """Restore a serialized native score without changing its semantics."""
+    if not isinstance(value, dict):
+        return None
+    score = value.get("value")
+    kind = value.get("kind", value.get("type"))
+    method_id = value.get("method_id")
+    if not isinstance(score, (int, float)) or not isinstance(kind, str):
+        return None
+    if not isinstance(method_id, str):
+        return None
+    return RankingScore(
+        float(score),
+        kind,
+        method_id,
+        bool(value.get("higher_is_better", True)),
+        bool(value.get("calibrated", False)),
+    )

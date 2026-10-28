@@ -22,6 +22,7 @@ from llm_grounding.observability.models import (
     ObservationRequest,
     RagRunObservation,
     RagUsage,
+    RetrievalStageSnapshot,
     StageSnapshot,
     TraceSpan,
 )
@@ -141,11 +142,13 @@ class ObservationBuilder:
     ) -> RagRunObservation:
         """Build from the metadata returned by ``BasicRagRunner.run``."""
         generation_data = metadata.get("generation")
+        generation_record = (
+            generation_data if isinstance(generation_data, dict) else {}
+        )
         generation = GenerationInfo(
             model_id=(
-                str(generation_data.get("model_id"))
-                if isinstance(generation_data, dict)
-                and generation_data.get("model_id") is not None
+                str(generation_record.get("model_id"))
+                if generation_record.get("model_id") is not None
                 else (
                     effective_configuration.generation.model_id
                     if effective_configuration and effective_configuration.generation
@@ -169,6 +172,16 @@ class ObservationBuilder:
                     if effective_configuration and effective_configuration.prompt
                     else None
                 )
+            ),
+            temperature=(
+                float(generation_record["temperature"])
+                if isinstance(generation_record.get("temperature"), (int, float))
+                else None
+            ),
+            max_tokens=(
+                int(generation_record["max_tokens"])
+                if isinstance(generation_record.get("max_tokens"), int)
+                else None
             ),
         )
         trace_data = metadata.get("trace", [])
@@ -203,7 +216,40 @@ class ObservationBuilder:
             if isinstance(stage_data, list)
             else []
         )
-        return self.build(
+        retrieval_stage_data = metadata.get("retrieval_stages", [])
+        retrieval_stages = (
+            [
+                RetrievalStageSnapshot.model_validate(item)
+                for item in retrieval_stage_data
+                if isinstance(item, dict)
+            ]
+            if isinstance(retrieval_stage_data, list)
+            else []
+        )
+        if not retrieval_stages:
+            retrieval_stages = None
+        if effective_configuration is not None:
+            prompt = effective_configuration.prompt
+            if prompt is not None:
+                effective_configuration = effective_configuration.model_copy(
+                    update={
+                        "prompt": prompt.model_copy(
+                            update={
+                                "prompt_id": (
+                                    str(metadata["prompt_id"])
+                                    if metadata.get("prompt_id") is not None
+                                    else prompt.prompt_id
+                                ),
+                                "prompt_version": (
+                                    str(metadata["prompt_version"])
+                                    if metadata.get("prompt_version") is not None
+                                    else prompt.prompt_version
+                                ),
+                            }
+                        )
+                    }
+                )
+        observation = self.build(
             run_id=run_id,
             request_id=request_id,
             corpus_id=corpus_id,
@@ -228,6 +274,71 @@ class ObservationBuilder:
             embedding=embedding,
             usage=usage,
             stages=stages,
+            retrieval_stages=retrieval_stages,
+        )
+        assessment_data = metadata.get("assessments", [])
+        assessments = (
+            [
+                AssessmentModel(
+                    assessment_id=f"assessment_{index}",
+                    assessor=str(item.get("assessor", "unknown")),
+                    dimension=str(item.get("dimension", "unknown")),
+                    label=(
+                        str(item["label"]) if item.get("label") is not None else None
+                    ),
+                    score=(
+                        float(item["score"])
+                        if isinstance(item.get("score"), (int, float))
+                        else None
+                    ),
+                    status=(
+                        str(item["status"])
+                        if item.get("status") is not None
+                        else None
+                    ),
+                    evidence_ids=[
+                        str(value)
+                        for value in item.get("evidence_ids", [])
+                        if isinstance(value, str)
+                    ],
+                    metadata=(
+                        dict(item["metadata"])
+                        if isinstance(item.get("metadata"), dict)
+                        else {}
+                    ),
+                )
+                for index, item in enumerate(assessment_data, 1)
+                if isinstance(item, dict)
+            ]
+            if isinstance(assessment_data, list)
+            else []
+        )
+        decision_data = metadata.get("decision_record")
+        if not isinstance(decision_data, dict) and metadata.get("decision") is not None:
+            decision_data = {
+                "action": metadata.get("decision"),
+                "metadata": metadata.get("decision_metadata", {}),
+            }
+        decision = None
+        if isinstance(decision_data, dict) and decision_data.get("action") is not None:
+            decision_metadata = decision_data.get("metadata")
+            decision = DecisionModel(
+                action=str(decision_data["action"]),
+                reason=(
+                    str(decision_metadata["reason"])
+                    if isinstance(decision_metadata, dict)
+                    and decision_metadata.get("reason") is not None
+                    else None
+                ),
+                assessment_ids=[item.assessment_id for item in assessments],
+                metadata=(
+                    dict(decision_metadata)
+                    if isinstance(decision_metadata, dict)
+                    else {}
+                ),
+            )
+        return observation.model_copy(
+            update={"assessments": assessments, "decision": decision}
         )
 
     @staticmethod

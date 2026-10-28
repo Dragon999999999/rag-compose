@@ -10,6 +10,7 @@ from llm_grounding.application.bootstrap import PhaseOneApplication
 from llm_grounding.application.eval_config import EvaluationConfigService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
 from llm_grounding.domain.corpus import ChunkRetrievalResult, CorpusRequest, Message
+from llm_grounding.domain.evidence import RankingScore
 from llm_grounding.observability.builder import ObservationBuilder
 from llm_grounding.observability.configuration import build_effective_configuration
 from llm_grounding.observability.models import RagRunObservation
@@ -249,6 +250,24 @@ class EvalService:
             )
         return existing
 
+    async def observation(self, run_id: str) -> RagRunObservation:
+        """Restore one canonical observation by run ID without re-executing it."""
+        loader = getattr(self._application.repository, "get_observation", None)
+        if loader is None:
+            raise EvalServiceError(
+                "observations_unavailable",
+                "Canonical observation persistence is unavailable.",
+                503,
+            )
+        observation = await loader(run_id)
+        if observation is None:
+            raise EvalServiceError(
+                "observation_not_found",
+                "No observation has that rag_run_id.",
+                404,
+            )
+        return observation
+
     async def create_corpus(self, **kwargs: object):
         """Create an isolated evaluation corpus inventory."""
         return await self._corpora.create(**kwargs)
@@ -473,6 +492,8 @@ class EvalService:
                     if isinstance(entry.get("score"), (int, float))
                     else None
                 ),
+                _ranking_score(entry.get("retrieval_score")),
+                _ranking_score(entry.get("rerank_score")),
             )
             for index, entry in enumerate(specs, 1)
             if (chunk_id := str(entry.get("chunk_id", ""))) in chunks
@@ -501,3 +522,23 @@ class EvalService:
             )
             for item in history
         )
+
+
+def _ranking_score(value: object) -> RankingScore | None:
+    """Restore a serialized native score without changing its semantics."""
+    if not isinstance(value, dict):
+        return None
+    score = value.get("value")
+    kind = value.get("kind", value.get("type"))
+    method_id = value.get("method_id")
+    if not isinstance(score, (int, float)) or not isinstance(kind, str):
+        return None
+    if not isinstance(method_id, str):
+        return None
+    return RankingScore(
+        float(score),
+        kind,
+        method_id,
+        bool(value.get("higher_is_better", True)),
+        bool(value.get("calibrated", False)),
+    )

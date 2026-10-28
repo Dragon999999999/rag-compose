@@ -122,61 +122,100 @@ def build_retrieval_stages(
     *,
     run_id: str | None = None,
     component_name: str = "vector_retriever",
+    reranked_context: tuple[ChunkRetrievalResult, ...] | None = None,
     final_context: tuple[ChunkRetrievalResult, ...] | None = None,
 ) -> list[RetrievalStageSnapshot]:
-    """Build candidate and final-context stages with stable item identities."""
+    """Build candidate, reranking, and final-context stages with stable IDs.
+
+    ``results`` is the candidate retrieval output. When ``reranked_context`` is
+    supplied it represents the output of the reranker before context selection;
+    ``final_context`` then represents the exact evidence passed to generation.
+    """
     builder = RetrievalStageBuilder(run_id=run_id)
     candidate = builder.from_results(
         RetrievalStageType.CANDIDATE_RETRIEVAL,
         results,
         component_name=component_name,
     )
-    final_results = results if final_context is None else final_context
+    stages = [candidate]
+    prior_stage = candidate
+    prior_results = results
+    if reranked_context is not None:
+        rerank_removed = tuple(
+            item.chunk.chunk_id
+            for item in results
+            if item.chunk.chunk_id
+            not in {entry.chunk.chunk_id for entry in reranked_context}
+        )
+        rerank = builder.from_results(
+            RetrievalStageType.RERANK,
+            reranked_context,
+            component_name="reranker",
+            parent_stage_ids=(candidate.stage_id,),
+            removed_item_ids=rerank_removed,
+        )
+        rerank.input_item_ids = [item.retrieval_id for item in candidate.items]
+        rerank.output_item_ids = [item.retrieval_id for item in rerank.items]
+        rerank.removed_items = [
+            item for item in candidate.items if item.retrieval_id in rerank_removed
+        ]
+        stages.append(rerank)
+        prior_stage = rerank
+        prior_results = reranked_context
+
+    final_results = prior_results if final_context is None else final_context
     removed = tuple(
         item.chunk.chunk_id
-        for item in results
+        for item in prior_results
         if item.chunk.chunk_id not in {entry.chunk.chunk_id for entry in final_results}
     )
     final = builder.from_results(
         RetrievalStageType.FINAL_CONTEXT,
         final_results,
         component_name="grounding_context",
-        parent_stage_ids=(candidate.stage_id,),
+        parent_stage_ids=(prior_stage.stage_id,),
         removed_item_ids=removed,
     )
     candidate.input_item_ids = []
     candidate.output_item_ids = [item.retrieval_id for item in candidate.items]
-    final.input_item_ids = [item.retrieval_id for item in candidate.items]
+    final.input_item_ids = [item.retrieval_id for item in prior_stage.items]
     final.output_item_ids = [item.retrieval_id for item in final.items]
     final.removed_items = [
-        item for item in candidate.items if item.retrieval_id in removed
+        item for item in prior_stage.items if item.retrieval_id in removed
     ]
-    return [candidate, final]
+    stages.append(final)
+    return stages
 
 
 def build_retrieval_stage_graph(
     results: tuple[ChunkRetrievalResult, ...],
     *,
     run_id: str | None = None,
+    reranked_context: tuple[ChunkRetrievalResult, ...] | None = None,
     final_context: tuple[ChunkRetrievalResult, ...] | None = None,
 ) -> list[StageSnapshot]:
-    """Build generic candidate/final-context lineage for the basic architecture."""
+    """Build generic retrieval lineage for the basic architecture."""
     snapshots = build_retrieval_stages(
-        results, run_id=run_id, final_context=final_context
+        results,
+        run_id=run_id,
+        reranked_context=reranked_context,
+        final_context=final_context,
     )
     graph = StageGraphRecorder(run_id=run_id)
-    candidate = graph.add_stage(
-        snapshots[0].stage_type.value,
-        snapshots[0].component_name or "vector_retriever",
-        output_item_ids=tuple(item.retrieval_id for item in snapshots[0].items),
-        metadata={"status": snapshots[0].status},
-    )
-    graph.add_stage(
-        snapshots[1].stage_type.value,
-        snapshots[1].component_name or "grounding_context",
-        parent_stage_ids=(candidate.stage_id,),
-        input_item_ids=tuple(item.retrieval_id for item in snapshots[0].items),
-        output_item_ids=tuple(item.retrieval_id for item in snapshots[1].items),
-        metadata={"status": snapshots[1].status},
-    )
+    stage_ids: dict[str, str] = {}
+    for snapshot in snapshots:
+        graph_stage = graph.add_stage(
+            snapshot.stage_type.value,
+            snapshot.component_name or snapshot.stage_type.value.lower(),
+            parent_stage_ids=tuple(
+                stage_ids[parent_id] for parent_id in snapshot.parent_stage_ids
+            ),
+            input_item_ids=tuple(snapshot.input_item_ids),
+            output_item_ids=tuple(snapshot.output_item_ids),
+            metadata={
+                "status": snapshot.status,
+                "removed_item_ids": snapshot.removed_item_ids,
+            },
+        )
+        stage_ids[snapshot.stage_id] = graph_stage.stage_id
     return graph.build()

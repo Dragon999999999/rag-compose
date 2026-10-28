@@ -24,6 +24,8 @@ the canonical request fingerprint is deterministic. Clients may send
 - `POST /eval/v1/retrieve` runs candidate retrieval and final-context construction
   without generation.
 - `GET /eval/v1/requests/{request_id}` restores a persisted observation.
+- `GET /eval/v1/observations/{rag_run_id}` restores the original persisted
+  observation by run ID without re-executing the query.
 - `POST /eval/v1/corpora` creates an isolated benchmark corpus inventory.
 - `GET /eval/v1/corpora/{corpus_id}` reads an isolated benchmark corpus inventory.
 - `DELETE /eval/v1/corpora/{corpus_id}` deletes only that isolated inventory.
@@ -36,8 +38,10 @@ the canonical request fingerprint is deterministic. Clients may send
 
 ## Observation semantics
 
-`retrieval` contains ordered `CANDIDATE_RETRIEVAL` and `FINAL_CONTEXT` snapshots;
-`stages` additionally contains generic DAG nodes and item lineage for custom,
+`retrieval` contains ordered `CANDIDATE_RETRIEVAL`, optional `RERANK`, and
+`FINAL_CONTEXT` snapshots. `FINAL_CONTEXT` is the exact context passed to the
+generation stage. `stages` additionally contains generic DAG nodes and item
+lineage for custom,
 parallel, split, merge, and rewrite components. Basic RAG reports only the
 components it actually runs.
 Items retain stable chunk identities, one-based ranks, scores, and source
@@ -58,3 +62,10 @@ Local process telemetry declares `measurement_scope: process` and never claims
 remote-provider CPU/GPU data. Provider seeds, confidence calibration, and
 multi-hop decomposition remain explicitly unavailable. Per-request Basic RAG
 overrides are validated and recorded without mutating shared configuration.
+
+Browser chat queries and evaluation queries use the same Basic RAG runner and
+persist the same canonical observation. Browser response DTOs remain compact;
+the full observation is available through the replay endpoint. The current
+application has no separate authentication middleware for this protocol, so
+deployment-level access control remains responsible for protecting observation
+data.

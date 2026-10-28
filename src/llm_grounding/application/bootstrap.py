@@ -289,6 +289,8 @@ def create_phase_one_application(
             max_history,
             pipeline_runtime,
             pipeline_service,
+            architecture=architecture,
+            ingestion_config=ingestion_config,
         ),
         engine,
         vectors,

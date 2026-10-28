@@ -50,7 +50,11 @@ def create_eval_router(service: EvalService) -> APIRouter:
                 "retrieve",
                 "rerank",
                 "observations",
+                "observation_replay",
                 "usage",
+                "traces",
+                "provenance",
+                "score_semantics",
                 "effective_config",
             ],
             "unsupported": [
@@ -200,6 +204,19 @@ def create_eval_router(service: EvalService) -> APIRouter:
         except EvalServiceError as exc:
             return _error_response(exc)
         return observation.model_dump(mode="json", exclude_none=True)
+
+    @router.get("/observations/{rag_run_id}", response_model=None)
+    async def observation(
+        rag_run_id: str,
+        x_rag_eval_protocol: str | None = Header(default=None),
+    ) -> dict[str, Any] | JSONResponse:
+        """Return the persisted canonical observation without re-running the query."""
+        try:
+            _validate_protocol(x_rag_eval_protocol)
+            value = await service.observation(rag_run_id)
+        except EvalServiceError as exc:
+            return _error_response(exc)
+        return value.model_dump(mode="json", exclude_none=True)
 
     return router
 
