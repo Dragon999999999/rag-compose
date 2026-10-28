@@ -27,6 +27,7 @@ dependencies = [
     "huggingface-hub>=0.26,<1",
     "torch>=2.14,<3",
     "transformers>=4.57,<5",
+    "einops>=0.8,<1",
 ]
 
 [project.optional-dependencies]
