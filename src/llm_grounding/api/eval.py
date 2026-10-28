@@ -33,31 +33,59 @@ def create_eval_router(service: EvalService) -> APIRouter:
 
     @router.get("/capabilities")
     async def capabilities() -> dict[str, Any]:
-        """Advertise implemented protocol features only."""
+        """Advertise the Target Protocol v1 capabilities of this adapter."""
         return {
-            "protocol_version": "1",
-            "features": [
-                "query",
-                "retrieve",
-                "rerank",
-                "observations",
-                "observation_replay",
-                "usage",
-                "traces",
-                "provenance",
-                "score_semantics",
-                "effective_config",
-            ],
-            "unsupported": [
-                "claim_entailment",
-                "judging",
-                "fusion",
-                "filter",
-                "compression",
-                "confidence_calibration",
-                "multi_hop_decomposition",
-                "provider_seed",
-            ],
+            "protocol_version": "1.0",
+            "target": {
+                "name": "llm-grounding",
+                "version": "3.0.0",
+                "implementation": "llm-grounding",
+            },
+            "capabilities": {
+                "query": True,
+                "answer": True,
+                "streaming": False,
+                "conversation_history": True,
+                "retrieval": True,
+                "retrieval_stages": True,
+                "document_ingestion": True,
+                "chunk_ingestion": True,
+                "context_injection": True,
+                "citations": True,
+                "claims": True,
+                "assessments": True,
+                "decision": True,
+                "confidence": True,
+                "target_trace": True,
+                "effective_configuration": True,
+                "idempotency": True,
+                "request_recovery": True,
+                "observation_hydration": True,
+                "usage": {
+                    "tokens": True,
+                    "cost": False,
+                    "cpu": False,
+                    "ram": False,
+                    "gpu": False,
+                    "vram": False,
+                },
+                "retrieval_metadata": {
+                    "rank": True,
+                    "score": True,
+                    "document_id": True,
+                    "chunk_id": True,
+                    "page": True,
+                    "character_span": True,
+                },
+            },
+            "limits": {
+                "max_document_bytes": 104_857_600,
+                "max_chunks_per_request": 1_000,
+                "max_contexts_per_query": 100,
+                "max_concurrent_requests": 16,
+            },
+            "idempotency": {"retention_seconds": 604_800},
+            "metadata": {"service": "llm-grounding"},
         }
 
     @router.get("/config-schema")

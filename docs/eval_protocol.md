@@ -23,8 +23,13 @@ the canonical request fingerprint is deterministic. Clients may send
   under `details.dependencies`. `READY` and `DEGRADED` use HTTP 200, while
   `NOT_READY` uses HTTP 503. Each dependency reports a redacted error when a
   check fails. The endpoint never executes a RAG query or loads model weights.
-- `GET /eval/v1/capabilities` advertises implemented features. Claim entailment
-  and judging are intentionally not advertised.
+- `GET /eval/v1/capabilities` returns Target Protocol v1 capability discovery
+  with `protocol_version: "1.0"`, a target identity, nested boolean capability
+  flags, retrieval metadata support, usage support, and adapter limits. It does
+  not return the legacy `features` or `unsupported` lists. Token usage remains
+  explicitly unavailable when the provider does not report it; the capability
+  indicates that the observation field is supported, not that every provider
+  must supply a measurement.
 - `GET /eval/v1/config-schema` returns the JSON schema for effective configuration.
 - `POST /eval/v1/query` runs retrieval, generation, validation, and rendering.
 - `POST /eval/v1/retrieve` runs candidate retrieval and final-context construction

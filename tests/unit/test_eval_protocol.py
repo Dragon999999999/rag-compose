@@ -267,3 +267,38 @@ async def test_observation_endpoint_returns_persisted_payload() -> None:
     assert response.status_code == 200
     assert response.json()["run_id"] == "run-1"
     assert response.json()["request_id"] == "request-1"
+
+
+async def test_capabilities_returns_target_protocol_v1_shape() -> None:
+    """Capability discovery returns nested booleans instead of legacy feature lists."""
+    service = EvalService(SimpleNamespace(repository=ObservationRepository()))  # type: ignore[arg-type]
+    app = FastAPI()
+    app.include_router(create_eval_router(service))
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/eval/v1/capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["protocol_version"] == "1.0"
+    assert payload["target"] == {
+        "name": "llm-grounding",
+        "version": "3.0.0",
+        "implementation": "llm-grounding",
+    }
+    assert isinstance(payload["capabilities"]["query"], bool)
+    assert isinstance(payload["capabilities"]["usage"], dict)
+    assert isinstance(payload["capabilities"]["retrieval_metadata"], dict)
+    assert payload["capabilities"]["retrieval_stages"] is True
+    assert payload["capabilities"]["usage"] == {
+        "tokens": True,
+        "cost": False,
+        "cpu": False,
+        "ram": False,
+        "gpu": False,
+        "vram": False,
+    }
+    assert "features" not in payload
+    assert "unsupported" not in payload
