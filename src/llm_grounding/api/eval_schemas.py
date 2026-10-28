@@ -50,6 +50,21 @@ class EvalError(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvalHealthDependency(BaseModel):
+    """Report one dependency state without exposing connection details."""
+
+    status: Literal["healthy", "degraded", "unhealthy"]
+    error: str | None = None
+
+
+class EvalHealthResponse(BaseModel):
+    """Canonical Target Protocol v1 health response."""
+
+    status: Literal["healthy", "degraded", "unhealthy"]
+    protocol_version: Literal["1"] = "1"
+    dependencies: dict[str, EvalHealthDependency]
+
+
 class ProtocolHeaders(BaseModel):
     """Validated protocol metadata carried by evaluation requests."""
 

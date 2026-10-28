@@ -46,6 +46,11 @@ class FaissVectorStore:
         self._root = Path(root).expanduser()
         self._states: dict[Path, dict[str, Any]] = {}
 
+    async def health_check(self) -> None:
+        """Check that the local FAISS index path is usable."""
+        if self._root.exists() and not self._root.is_dir():
+            raise RuntimeError("FAISS index path is not a directory")
+
     @property
     def loaded_index_count(self) -> int:
         """Return how many FAISS indexes currently occupy process memory."""

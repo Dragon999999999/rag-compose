@@ -38,6 +38,10 @@ class QdrantVectorStore:
         self._repository = repository
         self._client = AsyncQdrantClient(url=settings.url, api_key=settings.api_key)
 
+    async def health_check(self) -> None:
+        """Check Qdrant reachability without creating or querying a collection."""
+        await self._client.get_collections()
+
     async def _ensure_collection(self, vector: EmbeddingVector) -> None:
         """Create or validate the collection's embedding-space dimensions."""
         try:

@@ -1,11 +1,21 @@
 """Application service for the native ``/eval/v1`` protocol."""
 
+import asyncio
 import json
+import re
 from datetime import UTC, datetime
 from hashlib import sha256
+from typing import Literal, cast
 from uuid import uuid4
 
-from llm_grounding.api.eval_schemas import EvalQueryRequest, EvalRetrieveRequest
+from sqlalchemy import text
+
+from llm_grounding.api.eval_schemas import (
+    EvalHealthDependency,
+    EvalHealthResponse,
+    EvalQueryRequest,
+    EvalRetrieveRequest,
+)
 from llm_grounding.application.bootstrap import PhaseOneApplication
 from llm_grounding.application.eval_config import EvaluationConfigService
 from llm_grounding.application.eval_corpus_service import EvalCorpusService
@@ -25,6 +35,26 @@ class EvalServiceError(ValueError):
         self.code, self.message, self.status_code = code, message, status_code
 
 
+class _HealthCheckDegraded(RuntimeError):
+    """Mark a dependency as usable for the API but not ready for evaluation."""
+
+
+def _safe_health_error(error: Exception) -> str:
+    """Return bounded, credential-free diagnostic text for a failed probe."""
+    message = " ".join(str(error).split())
+    message = re.sub(
+        r"(?i)(://[^/\s:@]+):[^/\s@]+@",
+        r"\1:[redacted]@",
+        message,
+    )
+    message = re.sub(
+        r"(?i)(password|token|api[_-]?key)=([^,\s]+)",
+        r"\1=[redacted]",
+        message,
+    )
+    return message[:240] or "health check failed"
+
+
 class EvalService:
     """Orchestrate evaluation requests through the existing Basic RAG runner."""
 
@@ -33,12 +63,96 @@ class EvalService:
         application: PhaseOneApplication,
         builder: ObservationBuilder | None = None,
         corpus_service: EvalCorpusService | None = None,
+        health_timeout_seconds: float = 2.0,
     ) -> None:
         """Inject the application composition and canonical observation builder."""
+        if health_timeout_seconds <= 0:
+            raise ValueError("health_timeout_seconds must be positive")
         self._application = application
         self._builder = builder or ObservationBuilder()
         self._corpora = corpus_service or EvalCorpusService(application.repository)
         self._config = EvaluationConfigService()
+        self._health_timeout_seconds = health_timeout_seconds
+
+    async def health(self) -> EvalHealthResponse:
+        """Check evaluation dependencies without executing a RAG request.
+
+        PostgreSQL and the configured vector backend are checked concurrently,
+        and every probe is bounded by the service timeout.  Configuration-only
+        runner checks do not load models or contact providers.
+        """
+        checks = {
+            "repository": self._check_repository,
+            "vectors": self._check_vectors,
+            "runner": self._check_runner,
+        }
+        results = await asyncio.gather(
+            *(self._probe(name, check) for name, check in checks.items())
+        )
+        dependencies = dict(results)
+        statuses = {item.status for item in dependencies.values()}
+        overall = (
+            "unhealthy"
+            if "unhealthy" in statuses
+            else "degraded"
+            if "degraded" in statuses
+            else "healthy"
+        )
+        return EvalHealthResponse(
+            status=cast(Literal["healthy", "degraded", "unhealthy"], overall),
+            dependencies=dependencies,
+        )
+
+    async def _probe(
+        self,
+        name: str,
+        check: object,
+    ) -> tuple[str, EvalHealthDependency]:
+        """Run one dependency probe and redact implementation details from errors."""
+        try:
+            operation = check
+            if not callable(operation):
+                raise RuntimeError("health check is not configured")
+            await asyncio.wait_for(operation(), self._health_timeout_seconds)
+        except TimeoutError:
+            return name, EvalHealthDependency(
+                status="unhealthy",
+                error=(
+                    "health check timed out after "
+                    f"{self._health_timeout_seconds:g} seconds"
+                ),
+            )
+        except _HealthCheckDegraded as exc:
+            return name, EvalHealthDependency(status="degraded", error=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return name, EvalHealthDependency(
+                status="unhealthy",
+                error=f"{type(exc).__name__}: {_safe_health_error(exc)}",
+            )
+        return name, EvalHealthDependency(status="healthy")
+
+    async def _check_repository(self) -> None:
+        """Verify that the configured PostgreSQL session can execute a probe."""
+        session_factory = getattr(self._application.repository, "session_factory", None)
+        if session_factory is None:
+            raise RuntimeError("PostgreSQL session is not configured")
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1"))
+
+    async def _check_vectors(self) -> None:
+        """Verify the configured vector backend through its health boundary."""
+        vectors = getattr(self._application, "_vectors", None)
+        if vectors is None:
+            raise _HealthCheckDegraded("vector backend is not configured")
+        check = getattr(vectors, "health_check", None)
+        if check is None:
+            raise RuntimeError("vector backend health check is unavailable")
+        await check()
+
+    async def _check_runner(self) -> None:
+        """Verify that a query runner is composed without loading model weights."""
+        if getattr(self._application, "runner", None) is None:
+            raise RuntimeError("evaluation runner is not configured")
 
     async def query(
         self,

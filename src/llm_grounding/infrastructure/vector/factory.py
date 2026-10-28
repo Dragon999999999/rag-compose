@@ -229,3 +229,11 @@ class VectorStoreRouter:
             close = getattr(store, "close", None)
             if close is not None:
                 await close()
+
+    async def health_check(self) -> None:
+        """Check the configured default backend without executing a search."""
+        store = self._default_store()
+        check = getattr(store, "health_check", None)
+        if check is None:
+            raise RuntimeError("Vector backend health check is unavailable")
+        await check()

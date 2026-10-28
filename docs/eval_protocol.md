@@ -16,7 +16,11 @@ the canonical request fingerprint is deterministic. Clients may send
 
 ## Endpoints
 
-- `GET /eval/v1/health` reports adapter and dependency configuration.
+- `GET /eval/v1/health` performs bounded PostgreSQL, vector-backend, and runner
+  checks. It returns `status: "healthy"`, `"degraded"`, or `"unhealthy"`;
+  healthy and degraded responses use HTTP 200, while unhealthy responses use
+  HTTP 503. Each dependency reports its own status and a redacted error when a
+  check fails. The endpoint never executes a RAG query or loads model weights.
 - `GET /eval/v1/capabilities` advertises implemented features. Claim entailment
   and judging are intentionally not advertised.
 - `GET /eval/v1/config-schema` returns the JSON schema for effective configuration.

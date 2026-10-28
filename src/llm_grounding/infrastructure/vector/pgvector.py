@@ -37,6 +37,11 @@ class PgVectorStore:
         self._schema_ready = False
         self._indexes: set[tuple[int, str]] = set()
 
+    async def health_check(self) -> None:
+        """Check PostgreSQL reachability without creating the pgvector schema."""
+        async with self._repository.session_factory() as session:
+            await session.execute(text("SELECT 1"))
+
     async def _ensure_schema(self) -> None:
         """Create the derived vector table when this backend is first used."""
         if self._schema_ready:

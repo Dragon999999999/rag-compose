@@ -9,6 +9,7 @@ from llm_grounding.api.eval_schemas import (
     EvalConfigOverrides,
     EvalCorpusRequest,
     EvalError,
+    EvalHealthResponse,
     EvalInventoryUpload,
     EvalQueryRequest,
     EvalRetrieveRequest,
@@ -21,24 +22,14 @@ def create_eval_router(service: EvalService) -> APIRouter:
     """Create the ``/eval/v1`` router around the application evaluation service."""
     router = APIRouter(prefix="/eval/v1", tags=["evaluation"])
 
-    @router.get("/health")
-    async def health() -> dict[str, Any]:
-        """Report that the evaluation adapter and its configured dependencies exist."""
-        application = service._application  # noqa: SLF001
-        return {
-            "status": "ok",
-            "protocol_version": "1",
-            "dependencies": {
-                "repository": (
-                    "configured" if application.repository else "unavailable"
-                ),
-                "vectors": (
-                    "configured"
-                    if getattr(application, "_vectors", None)
-                    else "unavailable"
-                ),
-            },
-        }
+    @router.get("/health", response_model=EvalHealthResponse)
+    async def health() -> JSONResponse:
+        """Report bounded PostgreSQL, vector, and evaluation-runner health."""
+        result = await service.health()
+        return JSONResponse(
+            result.model_dump(mode="json"),
+            status_code=503 if result.status == "unhealthy" else 200,
+        )
 
     @router.get("/capabilities")
     async def capabilities() -> dict[str, Any]:

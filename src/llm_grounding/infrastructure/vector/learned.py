@@ -59,6 +59,10 @@ class QdrantSparseVectorStore:
         self._model_identity = model_identity
         self._client = AsyncQdrantClient(url=settings.url, api_key=settings.api_key)
 
+    async def health_check(self) -> None:
+        """Check Qdrant reachability without loading the learned index."""
+        await self._client.get_collections()
+
     async def _ensure_collection(self) -> None:
         """Create the sparse collection only when learned sparse retrieval is used."""
         if await self._client.collection_exists(self._collection):
@@ -296,6 +300,10 @@ class QdrantMultiVectorStore:
         self._repository = repository
         self._model_identity = model_identity
         self._client = AsyncQdrantClient(url=settings.url, api_key=settings.api_key)
+
+    async def health_check(self) -> None:
+        """Check Qdrant reachability without loading the multivector index."""
+        await self._client.get_collections()
 
     async def _ensure_collection(self, dimension: int) -> None:
         """Create or validate a MaxSim collection with the model token dimension."""
