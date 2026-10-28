@@ -58,6 +58,54 @@ def test_qwen_reranker_accepts_batch_encoding_from_chat_template() -> None:
     assert result > 0.5
 
 
+def test_colbert_token_runtime_applies_checkpoint_projection(tmp_path: Path) -> None:
+    """ColBERT token outputs use the checkpoint's 768-to-128 projection."""
+    import torch
+
+    from llm_grounding.infrastructure.model_management.runtime import (
+        _TransformersModel,
+    )
+
+    definition = load_model_registry().resolve("embedding_colbert_v2")
+
+    class _Tokenizer:
+        def __call__(self, texts: list[str], **kwargs: object) -> dict[str, object]:
+            assert texts == ["document"]
+            if kwargs.get("return_offsets_mapping"):
+                return {
+                    "offset_mapping": torch.tensor([[[0, 4], [4, 8]]]),
+                }
+            return {
+                "input_ids": torch.tensor([[4, 5]]),
+                "attention_mask": torch.tensor([[1, 1]]),
+            }
+
+    class _Model:
+        def __call__(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                last_hidden_state=torch.tensor([[[3.0, 4.0, 0.0], [0.0, 4.0, 3.0]]])
+            )
+
+    projection = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    from safetensors.torch import save_file
+
+    save_file({"linear.weight": projection}, str(tmp_path / "model.safetensors"))
+    loaded_projection = _TransformersModel._load_token_projection(
+        tmp_path, _Model()
+    )
+    assert torch.equal(loaded_projection, projection)
+
+    model = _TransformersModel(
+        definition, _Tokenizer(), _Model(), "cpu", loaded_projection
+    )
+
+    response = model.request("/v1/token_embeddings", {"input": ["document"]})
+    values = response["data"][0]["token_embeddings"]
+
+    assert values[0] == pytest.approx([0.6, 0.8])
+    assert values[1] == pytest.approx([0.0, 1.0])
+
+
 def test_model_registry_validates_standard_sources_and_excludes_schema() -> None:
     """Canonical model files expose location and nested source/runtime metadata."""
     registry = load_model_registry()

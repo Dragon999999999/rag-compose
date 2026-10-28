@@ -453,13 +453,19 @@ class _TransformersModel:
     """Synchronous inference adapter used behind the async in-process runtime."""
 
     def __init__(
-        self, definition: ModelDefinition, tokenizer: Any, model: Any, device: str
+        self,
+        definition: ModelDefinition,
+        tokenizer: Any,
+        model: Any,
+        device: str,
+        token_projection: Any | None = None,
     ) -> None:
         """Store loaded provider objects and model-specific configuration."""
         self._definition = definition
         self._tokenizer = tokenizer
         self._model = model
         self._device = device
+        self._token_projection = token_projection
 
     @classmethod
     def load(cls, definition: ModelDefinition, weights: Path) -> "_TransformersModel":
@@ -530,6 +536,9 @@ class _TransformersModel:
             local_files_only=True,
             trust_remote_code=bool(getattr(definition, "trust_remote_code", False)),
         )
+        token_projection = None
+        if definition.parameter("representation") == "multivector":
+            token_projection = cls._load_token_projection(weights, model)
         model.eval()
         configured_device = definition.runtime.device if definition.runtime else "cpu"
         device = configured_device
@@ -542,7 +551,63 @@ class _TransformersModel:
                 raise
             device = "cpu"
             model.to(device)
-        return cls(definition, tokenizer, model, device)
+        return cls(definition, tokenizer, model, device, token_projection)
+
+    @staticmethod
+    def _load_token_projection(weights: Path, model: Any) -> Any:
+        """Load the checkpoint projection used by late-interaction encoders.
+
+        ColBERT-v2 stores a 768-to-128 projection alongside the BERT weights.
+        ``AutoModel`` loads the BERT base but does not expose that additional
+        checkpoint tensor, so the runtime must restore it before indexing or
+        querying token vectors.
+        """
+        import torch
+
+        projection_module = getattr(model, "linear", None)
+        projection_weight = getattr(projection_module, "weight", None)
+        if projection_weight is not None:
+            return projection_weight.detach().float()
+
+        state: Mapping[str, Any] | None = None
+        safetensors_path = weights / "model.safetensors"
+        if safetensors_path.is_file():
+            try:
+                from safetensors.torch import load_file
+
+                state = load_file(str(safetensors_path), device="cpu")
+            except (ImportError, OSError, RuntimeError) as exc:
+                raise RuntimeError(
+                    "Unable to load the ColBERT token projection from model.safetensors"
+                ) from exc
+        else:
+            pytorch_path = weights / "pytorch_model.bin"
+            if pytorch_path.is_file():
+                try:
+                    state = torch.load(
+                        str(pytorch_path), map_location="cpu", weights_only=True
+                    )
+                except (OSError, RuntimeError, TypeError) as exc:
+                    raise RuntimeError(
+                        "Unable to load the ColBERT token projection from "
+                        "pytorch_model.bin"
+                    ) from exc
+        if state is None:
+            raise RuntimeError(
+                "Multivector model weights do not contain a token projection"
+            )
+        for key in ("linear.weight", "colbert.linear.weight"):
+            projection_weight = state.get(key)
+            if projection_weight is not None:
+                if (
+                    not hasattr(projection_weight, "ndim")
+                    or projection_weight.ndim != 2
+                ):
+                    raise RuntimeError("Multivector token projection must be a matrix")
+                return projection_weight.detach().float()
+        raise RuntimeError(
+            "Multivector model weights do not contain a linear token projection"
+        )
 
     def request(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         """Execute the supported dense, sparse, or token representation request."""
@@ -806,6 +871,9 @@ class _TransformersModel:
 
         output, mask = self._forward(texts)
         values = output.last_hidden_state
+        if self._token_projection is not None:
+            projection = self._token_projection.to(values.device, dtype=values.dtype)
+            values = torch.matmul(values, projection.transpose(0, 1))
         if bool(self._definition.parameter("normalize", True)):
             values = torch.nn.functional.normalize(values, p=2, dim=-1)
         offsets: list[list[tuple[int, int]]] = []
