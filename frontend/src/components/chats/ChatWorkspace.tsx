@@ -7,6 +7,11 @@ import { Button, EmptyState, ErrorState } from "../common/ui";
 
 type ConversationTurn = {
   id: string;
+  variants: ConversationVariant[];
+};
+
+type ConversationVariant = {
+  id: string;
   prompt: Message;
   response?: Message;
   liveAnswer?: GroundedAnswer;
@@ -52,6 +57,7 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
   const [value, setValue] = useState(() => loadDraft(chatId));
   const [hoveredTurnTitle, setHoveredTurnTitle] = useState<string | null>(null);
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, number>>({});
   const thread = useRef<HTMLDivElement>(null);
   const messagesHydrated = useRef(false);
   const turnElements = useRef(new Map<string, HTMLElement>());
@@ -60,12 +66,25 @@ export function ChatWorkspace({
     [messages, answer],
   );
   const completedTurns = turns.filter(
-    (turn) => turn.response !== undefined || turn.liveAnswer !== undefined,
+    (turn) =>
+      turn.variants.some(
+        (variant) =>
+          variant.response !== undefined || variant.liveAnswer !== undefined,
+      ),
   );
   const failedTurn = failedPrompt
     ? [...turns]
         .reverse()
-        .find((turn) => turn.prompt.content === failedPrompt && !turn.response)
+        .map((turn) => ({
+          turn,
+          variant: [...turn.variants]
+            .reverse()
+            .find(
+              (variant) =>
+                variant.prompt.content === failedPrompt && !variant.response,
+            ),
+        }))
+        .find((item) => item.variant)
     : undefined;
   const hasInlineGenerationFailure = Boolean(generationError && failedPrompt);
   const showTurnNavigation = completedTurns.length > 1;
@@ -128,12 +147,35 @@ export function ChatWorkspace({
   };
 
   const scrollToTurn = (turn: ConversationTurn): void => {
-    if (turn.runId) {
-      onSelectAnswer(turn.runId, turn.title);
+    const variant = selectedVariant(turn);
+    if (variant.runId) {
+      onSelectAnswer(variant.runId, variant.title);
     }
     turnElements.current
       .get(turn.id)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const selectedVariant = (turn: ConversationTurn): ConversationVariant => {
+    const requestedIndex = selectedVariants[turn.id];
+    const index =
+      requestedIndex === undefined
+        ? turn.variants.length - 1
+        : Math.min(requestedIndex, turn.variants.length - 1);
+    return turn.variants[index];
+  };
+
+  const shiftVariant = (turn: ConversationTurn, offset: number): void => {
+    const currentIndex = turn.variants.indexOf(selectedVariant(turn));
+    const nextIndex = currentIndex + offset;
+    if (nextIndex < 0 || nextIndex >= turn.variants.length) {
+      return;
+    }
+    setSelectedVariants((previous) => ({ ...previous, [turn.id]: nextIndex }));
+    const variant = turn.variants[nextIndex];
+    if (variant.runId) {
+      onSelectAnswer(variant.runId, variant.title);
+    }
   };
 
   useEffect(() => {
@@ -142,7 +184,10 @@ export function ChatWorkspace({
       return;
     }
     const turnsById = new Map(
-      turns.filter((turn) => turn.runId).map((turn) => [turn.id, turn]),
+      turns
+        .map((turn) => ({ turn, variant: selectedVariant(turn) }))
+        .filter((item) => item.variant.runId)
+        .map((item) => [item.turn.id, item]),
     );
     const observer = new IntersectionObserver(
       (entries) => {
@@ -151,14 +196,14 @@ export function ChatWorkspace({
           .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
         const turnId = visible?.target.getAttribute("data-turn-id");
         const turn = turnId ? turnsById.get(turnId) : undefined;
-        if (turn?.runId) {
-          onSelectAnswer(turn.runId, turn.title);
+        if (turn?.variant.runId) {
+          onSelectAnswer(turn.variant.runId, turn.variant.title);
         }
       },
       { root, threshold: [0.35, 0.65] },
     );
     for (const turn of turnsById.values()) {
-      const element = turnElements.current.get(turn.id);
+      const element = turnElements.current.get(turn.turn.id);
       if (element) {
         observer.observe(element);
       }
@@ -176,16 +221,16 @@ export function ChatWorkspace({
           <nav aria-label="Conversation turns" className="turn-navigation">
             {completedTurns.map((turn) => (
               <button
-                aria-label={`Jump to ${turn.title}`}
+                aria-label={`Jump to ${selectedVariant(turn).title}`}
                 className="turn-marker"
                 key={turn.id}
                 onBlur={() => setHoveredTurnTitle(null)}
                 onClick={() => scrollToTurn(turn)}
-                onFocus={() => setHoveredTurnTitle(turn.title)}
-                onMouseEnter={() => setHoveredTurnTitle(turn.title)}
+                onFocus={() => setHoveredTurnTitle(selectedVariant(turn).title)}
+                onMouseEnter={() => setHoveredTurnTitle(selectedVariant(turn).title)}
                 onMouseLeave={() => setHoveredTurnTitle(null)}
                 type="button"
-                title={turn.title}
+                title={selectedVariant(turn).title}
               >
                 <span aria-hidden="true" className="turn-marker-line" />
               </button>
@@ -212,33 +257,52 @@ export function ChatWorkspace({
                 }
               }}
             >
-              <div className="conversation-turn-content">
-                <MessageArticle
-                  message={turn.prompt}
-                  onRetry={() => onAsk(turn.prompt.content)}
-                  retryDisabled={loading}
-                />
-                {failedTurn?.id === turn.id && generationError && (
-                  <GenerationFailure
-                    error={generationError}
-                    onRetry={() => onAsk(turn.prompt.content)}
+              <div className="conversation-turn-layout">
+                {turn.variants.length > 1 && (
+                  <VariantSwitcher
+                    current={turn.variants.indexOf(selectedVariant(turn))}
+                    total={turn.variants.length}
+                    onNext={() => shiftVariant(turn, 1)}
+                    onPrevious={() => shiftVariant(turn, -1)}
                   />
                 )}
-                {turn.liveAnswer ? (
+                <div className="conversation-turn-content">
+                  {(() => {
+                    const variant = selectedVariant(turn);
+                    return (
+                      <>
+                <MessageArticle
+                  message={variant.prompt}
+                  onRetry={() => onAsk(variant.prompt.content)}
+                  retryDisabled={loading}
+                />
+                {failedTurn?.turn.id === turn.id &&
+                  failedTurn.variant?.id === variant.id &&
+                  generationError && (
+                  <GenerationFailure
+                    error={generationError}
+                    onRetry={() => onAsk(variant.prompt.content)}
+                  />
+                )}
+                {variant.liveAnswer ? (
                   <AssistantAnswer
                     activeChunk={activeChunk}
-                    answer={turn.liveAnswer}
+                    answer={variant.liveAnswer}
                     onSelectAnswer={onSelectAnswer}
                     onSelectCitation={onSelectCitation}
                   />
-                ) : turn.response ? (
+                ) : variant.response ? (
                   <PersistedAssistantAnswer
                     activeChunk={activeChunk}
-                    message={turn.response}
+                    message={variant.response}
                     onSelectAnswer={onSelectAnswer}
                     onSelectCitation={onSelectCitation}
                   />
                 ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
             </section>
           ))}
@@ -304,43 +368,109 @@ function buildConversationTurns(
   messages: Message[],
   answer: GroundedAnswer | null,
 ): ConversationTurn[] {
-  // Pair each user prompt with its following assistant answer.
+  // Pair each prompt with its answer and group consecutive regenerations of the
+  // same prompt into one turn so alternatives occupy the same conversation slot.
   const turns: ConversationTurn[] = [];
   let currentTurn: ConversationTurn | undefined;
+  let currentVariant: ConversationVariant | undefined;
 
   for (const message of messages) {
     if (message.role === "user") {
-      currentTurn = {
-        id: `turn-${message.id}`,
-        prompt: message,
-        title: fallbackTurnTitle(message.content),
-      };
-      turns.push(currentTurn);
+      const previousVariant = currentTurn?.variants.at(-1);
+      if (
+        currentTurn &&
+        previousVariant?.response &&
+        previousVariant.prompt.content === message.content
+      ) {
+        currentVariant = {
+          id: `variant-${message.id}`,
+          prompt: message,
+          title: fallbackTurnTitle(message.content),
+        };
+        currentTurn.variants.push(currentVariant);
+      } else {
+        currentVariant = {
+          id: `variant-${message.id}`,
+          prompt: message,
+          title: fallbackTurnTitle(message.content),
+        };
+        currentTurn = {
+          id: `turn-${message.id}`,
+          variants: [currentVariant],
+        };
+        turns.push(currentTurn);
+      }
       continue;
     }
 
-    if (message.role === "assistant" && currentTurn && !currentTurn.response) {
-      currentTurn.response = message;
-      currentTurn.runId = message.rag_run_id ?? undefined;
-      currentTurn.title = message.turn_title ?? currentTurn.title;
+    if (message.role === "assistant" && currentVariant) {
+      currentVariant.response ??= message;
+      currentVariant.runId = message.rag_run_id ?? undefined;
+      currentVariant.title = message.turn_title ?? currentVariant.title;
       if (isCurrentAnswer(message, answer)) {
-        currentTurn.liveAnswer = answer;
-        currentTurn.runId = answer.rag_run_id;
-        currentTurn.title = answer.turn_title ?? currentTurn.title;
+        currentVariant.liveAnswer = answer;
+        currentVariant.runId = answer.rag_run_id;
+        currentVariant.title = answer.turn_title ?? currentVariant.title;
       }
     }
   }
 
-  if (answer && !turns.some((turn) => turn.liveAnswer)) {
+  if (
+    answer &&
+    !turns.some((turn) =>
+      turn.variants.some((variant) => variant.liveAnswer),
+    )
+  ) {
     const latestTurn = turns.at(-1);
-    if (latestTurn && !latestTurn.response) {
-      latestTurn.liveAnswer = answer;
-      latestTurn.runId = answer.rag_run_id;
-      latestTurn.title = answer.turn_title ?? latestTurn.title;
+    const latestVariant = latestTurn?.variants.at(-1);
+    if (latestVariant && !latestVariant.response) {
+      latestVariant.liveAnswer = answer;
+      latestVariant.runId = answer.rag_run_id;
+      latestVariant.title = answer.turn_title ?? latestVariant.title;
     }
   }
 
   return turns;
+}
+
+function VariantSwitcher({
+  current,
+  total,
+  onNext,
+  onPrevious,
+}: {
+  current: number;
+  total: number;
+  onNext: () => void;
+  onPrevious: () => void;
+}) {
+  return (
+    <nav aria-label="Prompt alternatives" className="variant-switcher">
+      <button
+        aria-label="Previous response"
+        className="message-icon-button"
+        disabled={current === 0}
+        onClick={onPrevious}
+        title="Previous response"
+        type="button"
+      >
+        <span aria-hidden="true">‹</span>
+      </button>
+      <span aria-live="polite" className="variant-count">
+        {current + 1}/{total}
+      </span>
+      <button
+        aria-label="Next response"
+        className="message-icon-button"
+        disabled={current === total - 1}
+        onClick={onNext}
+        title="Next response"
+        type="button"
+      >
+        <span aria-hidden="true">›</span>
+      </button>
+    </nav>
+  );
 }
 
 function fallbackTurnTitle(prompt: string): string {

@@ -108,6 +108,11 @@ input:focus, select:focus, textarea:focus { background: var(--color-surface); bo
 
 .chat-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; min-height: 0; position: relative; }
 .chat-thread { overflow: auto; padding: 40px clamp(24px, 8vw, 96px); overscroll-behavior: contain; }
+.conversation-turn-layout { align-items: flex-start; display: flex; gap: 7px; }
+.conversation-turn-content { flex: 1; min-width: 0; }
+.variant-switcher { align-items: center; display: flex; flex: 0 0 30px; flex-direction: column; gap: 1px; margin-top: 12px; }
+.variant-switcher .message-icon-button { font-size: 19px; height: 22px; line-height: 1; width: 24px; }
+.variant-count { color: var(--color-text-muted); font-size: 10px; line-height: 1.2; }
 .message { max-width: 760px; margin: 0 0 var(--spacing-5); line-height: 1.68; }
 .message-role { display: block; color: var(--color-text-muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; margin-bottom: 7px; text-transform: uppercase; }
 .message-heading { align-items: center; display: flex; justify-content: space-between; min-height: 24px; }
