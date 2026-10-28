@@ -266,6 +266,17 @@ def test_postgresql_only_capabilities_do_not_advertise_vectors() -> None:
     assert capabilities.dimension is None
 
 
+@pytest.mark.parametrize("backend", ["qdrant", "pgvector", "faiss"])
+def test_supported_dense_backends_advertise_vector_capabilities(backend: str) -> None:
+    """Every registered dense backend is eligible for dense query pipelines."""
+    capabilities = IndexCapabilities.from_ingestion(
+        IngestionConfig(vector_backend=backend)
+    )
+
+    assert "chunk_vectors" in capabilities.capabilities
+    assert "dense_vector_index" in capabilities.capabilities
+
+
 def test_retriever_requirements_are_loaded_from_component_yaml() -> None:
     """The executable dense retriever declares its resource requirements in YAML."""
     config = load_pipeline_config(Path("config/pipelines/query_basic_v1.yaml"))

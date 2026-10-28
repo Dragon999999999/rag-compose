@@ -43,7 +43,11 @@ class IndexCapabilities:
             "persisted_chunks",
             "postgres_fts",
         }
-        if config.embedding is not None and config.vector_backend == "qdrant":
+        if config.embedding is not None and config.vector_backend in {
+            "qdrant",
+            "pgvector",
+            "faiss",
+        }:
             capabilities.update({"chunk_vectors", "dense_vector_index"})
         return cls(
             frozenset(capabilities),

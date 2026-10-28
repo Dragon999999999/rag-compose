@@ -253,3 +253,24 @@ async def test_structured_run_derives_used_chunks_from_canonical_claims() -> Non
     assert dto["claims"][0]["citations"] == [{"chunk_id": cited.chunk_id}]
     assert dto["evidence"][cited.chunk_id]["used"] is True
     assert dto["evidence"][additional.chunk_id]["used"] is False
+
+
+async def test_structured_run_returns_abstention_for_empty_answer_payload() -> None:
+    """A no-retrieval run remains renderable when no generated payload exists."""
+    application = EvidenceApplication(())
+    application.repository = RunEvidenceRepository(
+        (),
+        {
+            "answer_payload": {},
+            "answer_metadata": {"insufficient_evidence": True},
+            "observation_status": "abstained",
+            "retrieved_chunk_ids": [],
+        },
+    )
+
+    dto = await _structured_run(application, "run")  # type: ignore[arg-type]
+
+    assert dto["answer_text"].startswith("Insufficient evidence:")
+    assert dto["insufficient_evidence"] is True
+    assert dto["claims"] == []
+    assert dto["evidence"] == {}

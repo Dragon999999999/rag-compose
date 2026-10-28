@@ -303,11 +303,39 @@ async def _structured_run(
     """Restore persisted structured provenance for an older assistant message."""
     metadata = await application.repository.run_metadata(run_id)
     payload_data = metadata.get("answer_payload", {})
-    if not isinstance(payload_data, dict):
-        raise HTTPException(404, "Structured evidence is unavailable for this run.")
+    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
+    if not isinstance(payload_data, dict) or not payload_data:
+        answer_metadata = metadata.get("answer_metadata")
+        answer_metadata = (
+            answer_metadata if isinstance(answer_metadata, dict) else {}
+        )
+        rejected = (
+            metadata.get("status") == "rejected"
+            or metadata.get("observation_status") == "rejected"
+            or answer_metadata.get("grounding_rejected") is True
+        )
+        evidence = await _evidence_dtos(
+            application,
+            retrieved_chunk_ids,
+            (),
+        )
+        return {
+            "rag_run_id": run_id,
+            "turn_title": "Earlier answer",
+            "answer_text": (
+                "Grounding failure: the generated response did not pass source "
+                "validation."
+                if rejected
+                else "Insufficient evidence: no indexed project chunks matched "
+                "this request."
+            ),
+            "insufficient_evidence": not rejected,
+            "claims": [],
+            "evidence": {chunk_id: item for chunk_id, item in evidence.items()},
+            "retrieved_chunk_ids": list(retrieved_chunk_ids),
+        }
     payload = GroundedResponsePayload.model_validate(payload_data)
     used_chunk_ids = _claim_source_chunk_ids(payload)
-    retrieved_chunk_ids = _identifier_list(metadata.get("retrieved_chunk_ids"))
     visible_chunk_ids = tuple(dict.fromkeys((*retrieved_chunk_ids, *used_chunk_ids)))
     evidence = await _evidence_dtos(
         application,
