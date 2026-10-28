@@ -95,11 +95,16 @@ async def test_health_reports_healthy_dependencies() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "healthy"
-    assert payload["protocol_version"] == "1"
+    assert set(payload) == {"status", "target", "details"}
+    assert payload["status"] == "READY"
+    assert payload["target"] == {
+        "name": "llm-grounding",
+        "version": "1.0.0",
+        "implementation": "llm-grounding",
+    }
     assert all(
         dependency["status"] == "healthy"
-        for dependency in payload["dependencies"].values()
+        for dependency in payload["details"]["dependencies"].values()
     )
 
 
@@ -109,8 +114,8 @@ async def test_health_reports_degraded_when_vectors_are_not_configured() -> None
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "degraded"
-    assert payload["dependencies"]["vectors"] == {
+    assert payload["status"] == "DEGRADED"
+    assert payload["details"]["dependencies"]["vector_db"] == {
         "status": "degraded",
         "error": "vector backend is not configured",
     }
@@ -127,9 +132,11 @@ async def test_health_returns_service_unavailable_for_database_failure() -> None
 
     assert response.status_code == 503
     payload = response.json()
-    assert payload["status"] == "unhealthy"
-    assert payload["dependencies"]["repository"]["status"] == "unhealthy"
-    assert "ConnectionError" in payload["dependencies"]["repository"]["error"]
+    assert payload["status"] == "NOT_READY"
+    assert payload["details"]["dependencies"]["postgresql"]["status"] == "unhealthy"
+    assert "ConnectionError" in payload["details"]["dependencies"]["postgresql"][
+        "error"
+    ]
 
 
 @pytest.mark.asyncio
@@ -145,5 +152,6 @@ async def test_health_times_out_a_stalled_dependency() -> None:
 
     assert response.status_code == 503
     payload = response.json()
-    assert payload["dependencies"]["repository"]["status"] == "unhealthy"
-    assert "timed out" in payload["dependencies"]["repository"]["error"]
+    assert payload["status"] == "NOT_READY"
+    assert payload["details"]["dependencies"]["postgresql"]["status"] == "unhealthy"
+    assert "timed out" in payload["details"]["dependencies"]["postgresql"]["error"]

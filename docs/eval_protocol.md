@@ -16,10 +16,12 @@ the canonical request fingerprint is deterministic. Clients may send
 
 ## Endpoints
 
-- `GET /eval/v1/health` performs bounded PostgreSQL, vector-backend, and runner
-  checks. It returns `status: "healthy"`, `"degraded"`, or `"unhealthy"`;
-  healthy and degraded responses use HTTP 200, while unhealthy responses use
-  HTTP 503. Each dependency reports its own status and a redacted error when a
+- `GET /eval/v1/health` performs bounded PostgreSQL, vector-backend, and
+  ingestion/evaluation-service checks. It returns the Target Protocol v1
+  readiness states `READY`, `DEGRADED`, or `NOT_READY` under the `status` field,
+  identifies the target under `target`, and reports dependency-level statuses
+  under `details.dependencies`. `READY` and `DEGRADED` use HTTP 200, while
+  `NOT_READY` uses HTTP 503. Each dependency reports a redacted error when a
   check fails. The endpoint never executes a RAG query or loads model weights.
 - `GET /eval/v1/capabilities` advertises implemented features. Claim entailment
   and judging are intentionally not advertised.

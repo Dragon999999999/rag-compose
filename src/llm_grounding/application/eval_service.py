@@ -5,14 +5,15 @@ import json
 import re
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Literal, cast
 from uuid import uuid4
 
 from sqlalchemy import text
 
 from llm_grounding.api.eval_schemas import (
     EvalHealthDependency,
+    EvalHealthDetails,
     EvalHealthResponse,
+    EvalHealthTarget,
     EvalQueryRequest,
     EvalRetrieveRequest,
 )
@@ -82,9 +83,9 @@ class EvalService:
         runner checks do not load models or contact providers.
         """
         checks = {
-            "repository": self._check_repository,
-            "vectors": self._check_vectors,
-            "runner": self._check_runner,
+            "postgresql": self._check_repository,
+            "vector_db": self._check_vectors,
+            "ingestion_service": self._check_ingestion_service,
         }
         results = await asyncio.gather(
             *(self._probe(name, check) for name, check in checks.items())
@@ -92,15 +93,20 @@ class EvalService:
         dependencies = dict(results)
         statuses = {item.status for item in dependencies.values()}
         overall = (
-            "unhealthy"
+            "NOT_READY"
             if "unhealthy" in statuses
-            else "degraded"
+            else "DEGRADED"
             if "degraded" in statuses
-            else "healthy"
+            else "READY"
         )
         return EvalHealthResponse(
-            status=cast(Literal["healthy", "degraded", "unhealthy"], overall),
-            dependencies=dependencies,
+            status=overall,
+            target=EvalHealthTarget(
+                name="llm-grounding",
+                version="1.0.0",
+                implementation="llm-grounding",
+            ),
+            details=EvalHealthDetails(dependencies=dependencies),
         )
 
     async def _probe(
@@ -149,8 +155,12 @@ class EvalService:
             raise RuntimeError("vector backend health check is unavailable")
         await check()
 
-    async def _check_runner(self) -> None:
-        """Verify that a query runner is composed without loading model weights."""
+    async def _check_ingestion_service(self) -> None:
+        """Verify ingestion and query services are composed without model I/O."""
+        projects = getattr(self._application, "projects", None)
+        ingestion = getattr(projects, "_ingestion", None)
+        if projects is not None and ingestion is None:
+            raise RuntimeError("ingestion service is not configured")
         if getattr(self._application, "runner", None) is None:
             raise RuntimeError("evaluation runner is not configured")
 

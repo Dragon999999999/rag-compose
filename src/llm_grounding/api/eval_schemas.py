@@ -57,12 +57,26 @@ class EvalHealthDependency(BaseModel):
     error: str | None = None
 
 
+class EvalHealthTarget(BaseModel):
+    """Identify the Target Protocol implementation being checked."""
+
+    name: str
+    version: str | None = None
+    implementation: str | None = None
+
+
+class EvalHealthDetails(BaseModel):
+    """Expose dependency-level diagnostics for the target health check."""
+
+    dependencies: dict[str, EvalHealthDependency]
+
+
 class EvalHealthResponse(BaseModel):
     """Canonical Target Protocol v1 health response."""
 
-    status: Literal["healthy", "degraded", "unhealthy"]
-    protocol_version: Literal["1"] = "1"
-    dependencies: dict[str, EvalHealthDependency]
+    status: Literal["READY", "DEGRADED", "NOT_READY"]
+    target: EvalHealthTarget
+    details: EvalHealthDetails | None = None
 
 
 class ProtocolHeaders(BaseModel):

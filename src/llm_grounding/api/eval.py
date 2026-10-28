@@ -24,11 +24,11 @@ def create_eval_router(service: EvalService) -> APIRouter:
 
     @router.get("/health", response_model=EvalHealthResponse)
     async def health() -> JSONResponse:
-        """Report bounded PostgreSQL, vector, and evaluation-runner health."""
+        """Report bounded Target Protocol readiness and dependency health."""
         result = await service.health()
         return JSONResponse(
             result.model_dump(mode="json"),
-            status_code=503 if result.status == "unhealthy" else 200,
+            status_code=503 if result.status == "NOT_READY" else 200,
         )
 
     @router.get("/capabilities")
