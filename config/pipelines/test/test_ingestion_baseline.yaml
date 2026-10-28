@@ -1,0 +1,11 @@
+schema_version: 2
+kind: ingestion
+name: test_ingestion_baseline
+version: 1
+description: Minimal dense Qdrant ingestion baseline for comparison experiments.
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: knowledge_basic
+  chunker: chunker_block_aware
+  embedding: embedding_local_minilm
+  vector_backend: vector_backend_qdrant

@@ -1,0 +1,28 @@
+schema_version: 2
+kind: query
+name: test_2
+version: 1
+description: Bounded adaptive retrieval with a larger second-pass candidate pool.
+query:
+  retriever: retriever_hybrid_rrf_default
+  reranker: reranker_bge_v2_m3
+  reasoner: reasoner_basic_grounded
+  assessors:
+    - assessor_evidence_sufficiency
+    - assessor_relevance
+  decision_policy: decision_adaptive_retrieval
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 2
+    max_stage_calls: 100
+    evidence_merge: replace
+    final_failure_policy: best_result
+    alternatives:
+      - id: initial
+      - id: expanded
+        stage_overrides:
+          retriever:
+            top_k: 20

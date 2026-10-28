@@ -1,0 +1,19 @@
+schema_version: 2
+kind: query
+name: test_1
+version: 1
+description: Weighted hybrid retrieval with BGE reranking and grounding assessment.
+query:
+  retriever: retriever_hybrid_weighted
+  reranker: reranker_bge_v2_m3
+  reasoner: reasoner_basic_grounded
+  assessors:
+    - assessor_evidence_sufficiency
+    - assessor_relevance
+    # Required by the registered basic-grounding policy contract.
+    - assessor_source_reference
+  decision_policy: decision_basic_grounding
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
