@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { isNotFoundError } from "../../api/client";
 import type { Evidence, GroundedAnswer } from "../../api/types";
 import { Button, EmptyState } from "../common/ui";
 import { PdfViewer } from "../pdf/PdfViewer";
@@ -9,6 +10,7 @@ type EvidenceWorkspaceProps = {
   activeChunk: string | null;
   mode: "evidence" | "pdf";
   documentEvidence: Evidence | null;
+  error?: Error | null;
   turnTitle?: string | null;
   onSelect: (id: string) => void;
   onOpenPdf: (evidence: Evidence) => void;
@@ -21,6 +23,7 @@ export function EvidenceWorkspace({
   activeChunk,
   mode,
   documentEvidence,
+  error,
   turnTitle,
   onSelect,
   onOpenPdf,
@@ -50,6 +53,23 @@ export function EvidenceWorkspace({
 
   if (mode === "pdf" && pdfEvidence) {
     return <PdfViewer evidence={pdfEvidence} onBack={onBack} />;
+  }
+  if (error) {
+    return (
+      <section className="evidence-workspace" ref={workspace}>
+        <EmptyState
+          title={
+            isNotFoundError(error)
+              ? "Evidence unavailable"
+              : "Evidence could not be loaded"
+          }
+        >
+          {isNotFoundError(error)
+            ? "This response is no longer available."
+            : "The response evidence could not be loaded. Try selecting another response."}
+        </EmptyState>
+      </section>
+    );
   }
   if (!answer) {
     return (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
+import { isNotFoundError } from "../api/client";
 import type { Chat, Evidence, GroundedAnswer, Project } from "../api/types";
 import { ChatWorkspace } from "../components/chats/ChatWorkspace";
 import { ChatCreateDialog, Dialog, ProjectCreateDialog } from "../components/common/Dialog";
@@ -227,7 +228,8 @@ function ProjectWorkspace({
   const sourceMutations = useSourceMutations(projectId, chatId);
   const invalidRoute =
     (!projects.isLoading && !projects.error && !project) ||
-    (Boolean(chatId) && !chats.isLoading && !chats.error && !chat);
+    (Boolean(chatId) && !chats.isLoading &&
+      (isNotFoundError(chats.error) || (!chats.error && !chat)));
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(true);
   const [createProject, setCreateProject] = useState(false);
@@ -461,6 +463,7 @@ function ProjectWorkspace({
       activeChunk={activeChunk}
       answer={answer}
       documentEvidence={directPdf}
+      error={evidence.error}
       mode={mode}
       turnTitle={evidenceTurnTitle ?? answer?.turn_title}
       onBack={() => {

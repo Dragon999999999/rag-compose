@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { isNotFoundError } from "../../api/client";
 import type { GroundedAnswer, Message } from "../../api/types";
 import { useEvidence } from "../../features/hooks";
 import { Button, EmptyState, ErrorState } from "../common/ui";
@@ -453,7 +454,11 @@ function PersistedAssistantAnswer({
           <span className="message-role">Assistant</span>
           <CopyButton label="Copy answer" text={message.content} />
         </div>
-        <p>Structured evidence is unavailable for this older response.</p>
+        <p>
+          {structuredAnswer.error && isNotFoundError(structuredAnswer.error)
+            ? "This response is no longer available."
+            : "Structured evidence could not be loaded for this response."}
+        </p>
       </article>
     );
   }

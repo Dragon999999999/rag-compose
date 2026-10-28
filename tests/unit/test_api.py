@@ -1,6 +1,11 @@
 """Test deterministic browser provenance DTO serialization."""
 
+import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import httpx
+import pytest
 
 from llm_grounding.api.main import (
     _claim_source_chunk_ids,
@@ -274,3 +279,46 @@ async def test_structured_run_returns_abstention_for_empty_answer_payload() -> N
     assert dto["insufficient_evidence"] is True
     assert dto["claims"] == []
     assert dto["evidence"] == {}
+
+
+@pytest.mark.asyncio
+async def test_missing_browser_resources_return_not_found_instead_of_server_error(
+) -> None:
+    """Browser resource lookups expose absent records as HTTP 404 responses."""
+
+    class MissingRepository:
+        async def run_metadata(self, run_id: str) -> dict[str, object]:
+            raise KeyError(f"Unknown RAG run: {run_id}")
+
+        async def get_document(self, document_id: str) -> object:
+            raise KeyError(f"Unknown document: {document_id}")
+
+    class MissingProjects:
+        async def get_project(self, project_id: str) -> object:
+            raise KeyError(f"Unknown project: {project_id}")
+
+    class MissingChats:
+        async def get_chat(self, chat_id: str) -> object:
+            raise KeyError(f"Unknown chat: {chat_id}")
+
+    from llm_grounding.api.main import create_api
+
+    application = SimpleNamespace(
+        evaluation=SimpleNamespace(corpus_service=None, embedding_store=None),
+        repository=MissingRepository(),
+        projects=MissingProjects(),
+        chats=MissingChats(),
+    )
+    app = create_api(application)  # type: ignore[arg-type]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        responses = await asyncio.gather(
+            client.get("/api/runs/missing/evidence"),
+            client.get("/api/projects/missing/chats"),
+            client.get("/api/chats/missing/messages"),
+            client.get("/api/documents/missing/pdf"),
+        )
+
+    assert [response.status_code for response in responses] == [404, 404, 404, 404]

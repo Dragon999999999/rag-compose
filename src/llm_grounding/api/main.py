@@ -546,7 +546,9 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
                     request.name, request.ingestion_pipeline_id
                 )
             )
-        except (KeyError, ValueError) as exc:
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @app.patch("/api/projects/{project_id}")
@@ -574,7 +576,10 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
 
     @app.delete("/api/projects/{project_id}", status_code=204)
     async def delete_project(project_id: str) -> None:
-        await application.projects.delete_project(project_id)
+        try:
+            await application.projects.delete_project(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/projects/{project_id}/compatible-query-pipelines")
     async def compatible_query_pipelines(
@@ -590,7 +595,14 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
 
     @app.get("/api/projects/{project_id}/chats")
     async def list_chats(project_id: str) -> list[dict[str, object]]:
-        return [_item(chat) for chat in await application.chats.list_chats(project_id)]
+        try:
+            project_service = getattr(application, "projects", None)
+            if project_service is not None:
+                await project_service.get_project(project_id)
+            chats = await application.chats.list_chats(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return [_item(chat) for chat in chats]
 
     @app.post("/api/projects/{project_id}/chats")
     async def create_chat(
@@ -605,6 +617,8 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             )
         except PipelineSelectionError as exc:
             raise _pipeline_http_error(exc) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
         return _item(chat)
 
     @app.patch("/api/chats/{chat_id}")
@@ -625,18 +639,25 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
                 chat = await application.chats.rename_chat(chat_id, request.name)
         except PipelineSelectionError as exc:
             raise _pipeline_http_error(exc) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
         return _item(chat)
 
     @app.delete("/api/chats/{chat_id}", status_code=204)
     async def delete_chat(chat_id: str) -> None:
-        await application.chats.delete_chat(chat_id)
+        try:
+            await application.chats.delete_chat(chat_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/chats/{chat_id}/messages")
     async def messages(chat_id: str) -> list[dict[str, object]]:
-        return [
-            _message_dto(message)
-            for message in await application.chats.messages(chat_id)
-        ]
+        try:
+            await application.chats.get_chat(chat_id)
+            chat_messages = await application.chats.messages(chat_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return [_message_dto(message) for message in chat_messages]
 
     @app.post("/api/chats/{chat_id}/messages")
     async def ask(chat_id: str, request: AskRequest) -> dict[str, object]:
@@ -650,19 +671,27 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             )
         except PipelineSelectionError as exc:
             raise _pipeline_http_error(exc) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
         return await _structured_answer(application, answer)
 
     @app.get("/api/runs/{run_id}/evidence")
     async def run_evidence(run_id: str) -> dict[str, object]:
-        return await _structured_run(application, run_id)
+        try:
+            return await _structured_run(application, run_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/projects/{project_id}/documents")
     async def documents(project_id: str) -> list[dict[str, object]]:
+        try:
+            await application.projects.get_project(project_id)
+            sources = await application.projects.list_documents(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
         return [
             await _source_dto(application, document, ingestion)
-            for document, ingestion in await application.projects.list_documents(
-                project_id
-            )
+            for document, ingestion in sources
         ]
 
     @app.post("/api/projects/{project_id}/documents")
@@ -676,19 +705,28 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         with tempfile.TemporaryDirectory(prefix="llm-grounding-upload-") as directory:
             temporary_path = Path(directory) / original_name
             temporary_path.write_bytes(await file.read())
-            document, ingestion = await application.projects.add_document(
-                project_id, temporary_path, load_ingestion_config(None)
-            )
+            try:
+                document, ingestion = await application.projects.add_document(
+                    project_id, temporary_path, load_ingestion_config(None)
+                )
+            except KeyError as exc:
+                raise HTTPException(404, str(exc)) from exc
             return await _source_dto(application, document, ingestion)
 
     @app.delete("/api/projects/{project_id}/documents/{document_id}", status_code=204)
     async def remove_document(project_id: str, document_id: str) -> None:
-        await application.projects.remove_document(project_id, document_id)
+        try:
+            await application.projects.remove_document(project_id, document_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/documents/{document_id}/pdf")
     async def pdf(document_id: str) -> FileResponse:
-        document = await application.repository.get_document(document_id)
-        path = await application.artifacts.path_for(document.artifact_key)
+        try:
+            document = await application.repository.get_document(document_id)
+            path = await application.artifacts.path_for(document.artifact_key)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(404, str(exc)) from exc
         return FileResponse(path, media_type="application/pdf", filename=document.name)
 
     return app
