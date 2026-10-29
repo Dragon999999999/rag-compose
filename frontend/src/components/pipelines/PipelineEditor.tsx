@@ -987,7 +987,7 @@ function StageInspector({ catalog, definition, models, value, onChange, onChange
   const retrieverCapabilities = isRecord(catalog.compatibility.retriever_capabilities)
     ? catalog.compatibility.retriever_capabilities
     : undefined;
-  const selectedRetriever = typeof value?.type === "string" ? value.type : undefined;
+  const selectedRetriever = typeof value?.id === "string" ? value.id : undefined;
   const requirements = definition.key === "retriever" && selectedRetriever && retrieverCapabilities
     ? retrieverCapabilities[selectedRetriever]
     : undefined;
@@ -1170,8 +1170,10 @@ function validateDraft(config: PipelineConfig | null, name: string, version: str
           issues.push(`${definition.label} requires ${humanize(field)}.`);
         }
       }
-      const type = value.type;
-      if (typeof type === "string" && stage.implementations.length > 0 && !stage.implementations.includes(type)) issues.push(`${definition.label} uses an unsupported implementation.`);
+      const idField = definition.key === "embedding" ? "component_id" : "id";
+      const selectedId = value[idField];
+      const configurationIds = catalog.configuration_ids?.components?.[definition.catalogKey] ?? [];
+      if (typeof selectedId === "string" && configurationIds.length > 0 && !configurationIds.includes(selectedId)) issues.push(`${definition.label} uses an unsupported stage configuration.`);
       if (definition.key === "embedding" && typeof value.model_ref === "string" && !models.embedding[value.model_ref]) issues.push("Embedding model reference is unavailable.");
       if (definition.key === "reasoner" && typeof value.model_ref === "string" && !models.reasoning[value.model_ref]) issues.push("Reasoning model reference is unavailable.");
     }
