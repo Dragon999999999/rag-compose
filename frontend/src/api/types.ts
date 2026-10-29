@@ -59,6 +59,10 @@ export type JsonSchema = {
 export type CatalogStage = { implementations: string[]; schema: JsonSchema };
 export type PipelineCatalog = {
   schema_version: number;
+  configuration_ids?: {
+    models?: string[];
+    components?: Record<string, string[]>;
+  };
   pipeline_kinds?: Record<string, string[]>;
   stages: Record<string, CatalogStage>;
   compatibility: Record<string, unknown>;
