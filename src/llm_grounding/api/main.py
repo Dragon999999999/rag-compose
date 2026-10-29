@@ -47,7 +47,6 @@ from llm_grounding.infrastructure.config.loader import (
     load_ingestion_config,
     load_pipeline_config,
 )
-from llm_grounding.infrastructure.config.models import PipelineConfig
 from llm_grounding.infrastructure.config.settings import ApiSettings
 from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
 from llm_grounding.rendering.chunk_references import chunk_reference_label
@@ -482,23 +481,25 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/pipelines", status_code=201)
-    async def create_pipeline(config: PipelineConfig) -> dict[str, object]:
+    async def create_pipeline(payload: dict[str, object]) -> dict[str, object]:
         """Validate and persist an API-owned pipeline configuration."""
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
         try:
+            config = application.pipeline_service.normalize_api_config(payload)
             return _item(await application.pipeline_service.create(config))
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @app.post("/api/pipelines/{pipeline_id}/impact")
     async def pipeline_update_impact(
-        pipeline_id: str, config: PipelineConfig
+        pipeline_id: str, payload: dict[str, object]
     ) -> dict[str, object]:
         """Return authoritative dependency and compatibility impact for a draft."""
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
         try:
+            config = application.pipeline_service.normalize_api_config(payload)
             impact = await application.pipeline_service.impact(pipeline_id, config)
             return impact.as_dict()
         except KeyError as exc:
@@ -509,7 +510,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
     @app.put("/api/pipelines/{pipeline_id}")
     async def update_pipeline(
         pipeline_id: str,
-        config: PipelineConfig,
+        payload: dict[str, object],
         expected_config_hash: str | None = Query(None),
         migrate_conversations: bool = Query(False),
     ) -> dict[str, object]:
@@ -517,6 +518,7 @@ def create_api(application: PhaseOneApplication) -> FastAPI:
         if application.pipeline_service is None:
             raise HTTPException(503, "Pipeline management is unavailable.")
         try:
+            config = application.pipeline_service.normalize_api_config(payload)
             return _item(
                 await application.pipeline_service.update(
                     pipeline_id,

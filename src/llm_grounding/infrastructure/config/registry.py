@@ -104,6 +104,56 @@ class ConfigurationRegistry:
             )
         return definition
 
+    def resolve_component_defaults(
+        self,
+        category: str,
+        component_id: str,
+    ) -> BaseModel:
+        """Resolve one standalone component ID to its typed default configuration.
+
+        This is the shared resolution boundary for API clients that persist
+        component IDs and for YAML composition loading. Returned models contain
+        the registered type, implementation, model references, and component
+        settings, but never provider credentials.
+
+        Args:
+            category: Component family such as ``retriever`` or ``reranker``.
+            component_id: Registered standalone component identifier.
+
+        Returns:
+            The fully typed configuration represented by ``component_id``.
+
+        Raises:
+            ValueError: If the component ID is unknown or cannot be resolved.
+        """
+        if category == "embedding":
+            return PipelineEmbeddingConfig(
+                model_ref=self._model_id_for_component("embedding", component_id),
+                component_id=component_id,
+            )
+        if category == "chunker":
+            return self._chunker(component_id)
+        if category == "knowledge_builder":
+            return self._knowledge_builder(component_id)
+        if category == "reranker":
+            return self._reranker(component_id)
+        if category == "reasoner":
+            return self._pipeline_reasoner(component_id)
+
+        model_types: dict[str, type[BaseModel]] = {
+            "parser": ComponentConfig,
+            "vector_backend": VectorBackendConfig,
+            "retriever": RetrieverConfig,
+            "assessor": AssessorConfig,
+            "decision_policy": DecisionPolicyConfig,
+            "renderer": ComponentConfig,
+        }
+        try:
+            model_type = model_types[category]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported component category: {category}") from exc
+        return self._component(category, component_id, model_type)
+
     def model_catalog(self) -> ModelCatalog:
         """Convert standalone model definitions to the runtime catalog."""
         embedding: dict[str, EmbeddingConfig] = {}

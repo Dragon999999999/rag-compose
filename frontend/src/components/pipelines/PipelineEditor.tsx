@@ -272,7 +272,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
       return;
     }
     const config: PipelineConfig = {
-      ...draft,
+      ...serializeDraft(draft, catalog.data),
       name: name.trim(),
       description,
       version: Number(version),
@@ -324,7 +324,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
     if (!pipelineId || !updateImpact) return;
     const impact = updateImpact;
     const config: PipelineConfig = {
-      ...draft,
+      ...serializeDraft(draft, catalog.data),
       name: name.trim(),
       description,
       version: Number(version),
@@ -362,7 +362,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
   const createCopy = (): void => {
     if (!updateImpact) return;
     const config: PipelineConfig = {
-      ...draft,
+      ...serializeDraft(draft, catalog.data),
       name: `Copy of ${name.trim()}`,
       description,
       version: 1,
@@ -978,6 +978,7 @@ function nextBranchId(branches: QueryBranch[]): string {
 function StageInspector({ catalog, definition, models, value, onChange, onAddAssessor, onRemoveAssessor, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onAddAssessor: () => void; onRemoveAssessor: (index: number) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
   const stage = catalog.stages[definition.catalogKey];
   const configurationIds = catalog.configuration_ids?.components?.[definition.catalogKey] ?? [];
+  const configurationDefaults = catalog.configuration_defaults?.components?.[definition.catalogKey] ?? {};
   const assessorValues = definition.key === "assessors" ? readAssessorValue(value) : [];
   const retrieverCapabilities = isRecord(catalog.compatibility.retriever_capabilities)
     ? catalog.compatibility.retriever_capabilities
@@ -993,9 +994,9 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
     <aside className="pipeline-inspector">
       <div className="inspector-heading"><span>{definition.section === "representation" ? "Representation / indexing" : "Query processing"}</span><h2>{definition.label}</h2><p>{definition.description}</p></div>
       {!stage ? <p className="form-error">This stage is not available in the backend catalog.</p> : definition.key === "assessors" ? (
-        <div className="assessor-editor">{assessorValues.map((assessor, index) => <div className="assessor-item" key={index}><div className="assessor-item-heading"><strong>Assessor {index + 1}</strong>{assessorValues.length > 1 && <button onClick={() => onRemoveAssessor(index)} type="button">Remove</button>}</div><SchemaFields configurationIds={configurationIds} stage={stage} value={assessor} models={models} stageKey={definition.key} onChange={(next) => onChangeAssessor(index, next)} /></div>)}<Button onClick={onAddAssessor}>＋ Add assessor</Button></div>
+        <div className="assessor-editor">{assessorValues.map((assessor, index) => <div className="assessor-item" key={index}><div className="assessor-item-heading"><strong>Assessor {index + 1}</strong>{assessorValues.length > 1 && <button onClick={() => onRemoveAssessor(index)} type="button">Remove</button>}</div><SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={assessor} models={models} stageKey={definition.key} onChange={(next) => onChangeAssessor(index, next)} /></div>)}<Button onClick={onAddAssessor}>＋ Add assessor</Button></div>
       ) : (
-        <SchemaFields configurationIds={configurationIds} stage={stage} value={value ?? {}} models={models} stageKey={definition.key} onChange={onChange} />
+        <SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={value ?? {}} models={models} stageKey={definition.key} onChange={onChange} />
       )}
       {definition.key === "embedding" && <p className="inspector-warning">Embedding changes alter the representation identity and may require a new compatible index.</p>}
       {requirementNames.length > 0 && <p className="inspector-warning">This retriever requires: {requirementNames.join(", ")}. The project index must provide these capabilities.</p>}
@@ -1004,10 +1005,10 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
   );
 }
 
-function SchemaFields({ stage, value, models, stageKey, configurationIds, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; configurationIds?: string[]; onChange: (value: Record<string, unknown>) => void }) {
+function SchemaFields({ stage, value, models, stageKey, configurationIds, configurationDefaults, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; configurationIds?: string[]; configurationDefaults?: Record<string, Record<string, unknown>>; onChange: (value: Record<string, unknown>) => void }) {
   const properties = stage.schema.properties ?? {};
   const required = new Set(stage.schema.required ?? []);
-  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "implementation" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} configurationIds={field === "id" || (field === "component_id" && stageKey === "embedding") ? configurationIds : undefined} onChange={(next) => { let updated = { ...value }; if (field === "implementation" && next !== value.implementation) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || key === "implementation" || allowed.has(key))); } if (next === undefined) delete updated[field]; else updated[field] = next; onChange(updated); }} />)}</div>;
+  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "implementation" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} configurationIds={field === "id" || (field === "component_id" && stageKey === "embedding") ? configurationIds : undefined} onChange={(next) => { const isConfigurationSelector = field === "id" || (field === "component_id" && stageKey === "embedding"); const selectedDefaults = isConfigurationSelector && typeof next === "string" ? configurationDefaults?.[next] : undefined; let updated = selectedDefaults ? { ...selectedDefaults } : { ...value }; if (isConfigurationSelector && next === "") delete updated[field]; else if (!selectedDefaults && field === "implementation" && next !== value.implementation) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || key === "implementation" || allowed.has(key))); } if (!selectedDefaults && next !== undefined && !(isConfigurationSelector && next === "")) updated[field] = next; onChange(updated); }} />)}</div>;
 }
 
 function SchemaField({ field, schema, required, value, implementations, modelOptions, configurationIds, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; implementations?: string[]; modelOptions?: string[]; configurationIds?: string[]; onChange: (value: unknown) => void }) {
@@ -1080,6 +1081,9 @@ function updateAssessors(config: PipelineConfig, values: Record<string, unknown>
 }
 
 function defaultStageValue(definition: StageDefinition, catalog: PipelineCatalog, models: ModelCatalog): Record<string, unknown> {
+  const firstId = catalog.configuration_ids?.components?.[definition.catalogKey]?.[0];
+  const firstDefaults = firstId ? catalog.configuration_defaults?.components?.[definition.catalogKey]?.[firstId] : undefined;
+  if (firstDefaults) return { ...firstDefaults };
   const stage = catalog.stages[definition.catalogKey];
   return Object.fromEntries(Object.entries(stage?.schema.properties ?? {}).map(([field, schema]) => {
     const resolved = resolveSchema(schema);
@@ -1090,6 +1094,67 @@ function defaultStageValue(definition: StageDefinition, catalog: PipelineCatalog
     if (resolved.enum?.length) return [field, resolved.enum[0]];
     return [field, schema.anyOf?.some((item) => item.type === "null") ? null : ""];
   }));
+}
+
+export function serializeDraft(config: PipelineConfig, catalog: PipelineCatalog): PipelineConfig {
+  const next = cloneConfig(config);
+  if (next.representation) {
+    const representation = { ...next.representation };
+    for (const definition of REPRESENTATION_STAGES) {
+      if (Object.prototype.hasOwnProperty.call(representation, definition.key)) {
+        representation[definition.key] = compactStageValue(
+          representation[definition.key],
+          definition,
+          catalog,
+        ) as never;
+      }
+    }
+    next.representation = representation;
+  }
+  if (next.query) {
+    const query = { ...next.query };
+    for (const definition of QUERY_STAGES) {
+      if (!Object.prototype.hasOwnProperty.call(query, definition.key)) continue;
+      query[definition.key] = definition.key === "assessors"
+        ? compactStageValues(query[definition.key], definition, catalog)
+        : compactStageValue(query[definition.key], definition, catalog);
+    }
+    const execution = isRecord(query.execution) ? { ...query.execution } : undefined;
+    if (execution && Array.isArray(execution.alternatives)) {
+      execution.alternatives = execution.alternatives.map((alternative) => {
+        if (!isRecord(alternative) || !isRecord(alternative.stage_overrides)) return alternative;
+        const overrides = { ...alternative.stage_overrides };
+        for (const definition of QUERY_STAGES) {
+          if (!Object.prototype.hasOwnProperty.call(overrides, definition.key)) continue;
+          overrides[definition.key] = definition.key === "assessors"
+            ? compactStageValues(overrides[definition.key], definition, catalog)
+            : compactStageValue(overrides[definition.key], definition, catalog);
+        }
+        return { ...alternative, stage_overrides: overrides };
+      });
+      query.execution = execution;
+    }
+    next.query = query;
+  }
+  return next;
+}
+
+function compactStageValues(value: unknown, definition: StageDefinition, catalog: PipelineCatalog): unknown {
+  return Array.isArray(value)
+    ? value.map((item) => compactStageValue(item, definition, catalog))
+    : value;
+}
+
+function compactStageValue(value: unknown, definition: StageDefinition, catalog: PipelineCatalog): unknown {
+  if (!isRecord(value)) return value;
+  const idField = definition.key === "embedding" ? "component_id" : "id";
+  const id = value[idField];
+  const defaults = typeof id === "string"
+    ? catalog.configuration_defaults?.components?.[definition.catalogKey]?.[id]
+    : undefined;
+  return defaults && JSON.stringify(value) === JSON.stringify(defaults)
+    ? { [idField]: id }
+    : value;
 }
 
 function validateDraft(config: PipelineConfig | null, name: string, version: string, stages: StageDefinition[], catalog?: PipelineCatalog, models?: ModelCatalog): string[] {

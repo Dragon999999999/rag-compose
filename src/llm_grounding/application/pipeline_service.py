@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from llm_grounding.infrastructure.config.models import (
     RetrieverConfig,
 )
 from llm_grounding.infrastructure.config.overrides import apply_query_overrides
+from llm_grounding.infrastructure.config.registry import ConfigurationRegistry
 from llm_grounding.infrastructure.database.repositories import PostgresRepository
 from llm_grounding.ingestion.models import IngestionConfig
 from llm_grounding.orchestration.registry import ComponentRegistry
@@ -550,6 +552,134 @@ class PipelineService:
         apply_query_overrides(config, (("pipeline", config.stage_overrides),))
         return config
 
+    def normalize_api_config(self, payload: Mapping[str, object]) -> PipelineConfig:
+        """Resolve ID-only API stages while preserving explicit field overrides.
+
+        API-owned pipeline payloads may use a registered component ID by itself,
+        or may send a resolved component object whose fields have been edited.
+        The latter takes precedence over the registered defaults before the
+        canonical ``PipelineConfig`` validation runs.
+
+        Args:
+            payload: JSON-like pipeline document received from an API client.
+
+        Returns:
+            A validated canonical pipeline configuration.
+
+        Raises:
+            ValueError: If the payload or any referenced component is invalid.
+        """
+        data = dict(payload)
+        standalone = load_configuration_registry()
+        if data.get("kind") == "ingestion" and isinstance(
+            data.get("representation"), Mapping
+        ):
+            data["representation"] = self._normalize_representation_payload(
+                data["representation"], standalone
+            )
+        elif data.get("kind") == "query" and isinstance(data.get("query"), Mapping):
+            data["query"] = self._normalize_query_payload(data["query"], standalone)
+        return PipelineConfig.model_validate(data)
+
+    def _normalize_representation_payload(
+        self,
+        payload: Mapping[str, object],
+        standalone: ConfigurationRegistry,
+    ) -> dict[str, object]:
+        """Resolve representation stage references in an API payload."""
+        normalized = dict(payload)
+        for stage, category in (
+            ("parser", "parser"),
+            ("knowledge_builder", "knowledge_builder"),
+            ("chunker", "chunker"),
+            ("embedding", "embedding"),
+            ("vector_backend", "vector_backend"),
+        ):
+            if stage in normalized and normalized[stage] is not None:
+                normalized[stage] = self._normalize_stage_value(
+                    normalized[stage], category, standalone
+                )
+        return normalized
+
+    def _normalize_query_payload(
+        self,
+        payload: Mapping[str, object],
+        standalone: ConfigurationRegistry,
+    ) -> dict[str, object]:
+        """Resolve query stage references, including alternative overrides."""
+        normalized = dict(payload)
+        for stage, category in (
+            ("retriever", "retriever"),
+            ("reranker", "reranker"),
+            ("reasoner", "reasoner"),
+            ("decision_policy", "decision_policy"),
+            ("renderer", "renderer"),
+        ):
+            if stage in normalized:
+                normalized[stage] = self._normalize_stage_value(
+                    normalized[stage], category, standalone
+                )
+        if "assessors" in normalized and isinstance(normalized["assessors"], list):
+            normalized["assessors"] = [
+                self._normalize_stage_value(item, "assessor", standalone)
+                for item in normalized["assessors"]
+            ]
+        execution = normalized.get("execution")
+        if isinstance(execution, Mapping):
+            normalized["execution"] = self._normalize_execution_payload(
+                execution, standalone
+            )
+        return normalized
+
+    def _normalize_execution_payload(
+        self,
+        payload: Mapping[str, object],
+        standalone: ConfigurationRegistry,
+    ) -> dict[str, object]:
+        """Resolve stage IDs nested in query alternative overrides."""
+        normalized = dict(payload)
+        alternatives = normalized.get("alternatives")
+        if not isinstance(alternatives, list):
+            return normalized
+        normalized_alternatives: list[object] = []
+        for alternative in alternatives:
+            if not isinstance(alternative, Mapping):
+                normalized_alternatives.append(alternative)
+                continue
+            item = dict(alternative)
+            overrides = item.get("stage_overrides")
+            if isinstance(overrides, Mapping):
+                item["stage_overrides"] = self._normalize_query_payload(
+                    overrides, standalone
+                )
+            normalized_alternatives.append(item)
+        normalized["alternatives"] = normalized_alternatives
+        return normalized
+
+    def _normalize_stage_value(
+        self,
+        value: object,
+        category: str,
+        standalone: ConfigurationRegistry,
+    ) -> object:
+        """Merge an ID-only stage or edited stage object with registered defaults."""
+        identifier_field = "component_id" if category == "embedding" else "id"
+        if isinstance(value, str):
+            identifier = value
+            explicit: dict[str, object] = {}
+        elif isinstance(value, Mapping):
+            explicit = dict(value)
+            identifier_value = explicit.get(identifier_field)
+            identifier = identifier_value if isinstance(identifier_value, str) else ""
+        else:
+            return value
+        if not identifier:
+            return explicit if explicit else value
+        defaults = standalone.resolve_component_defaults(
+            category, identifier
+        ).model_dump(mode="json")
+        return {**defaults, **explicit}
+
     async def resolve(self, pipeline_id: str) -> ResolvedPipeline:
         """Resolve a stored pipeline through the shared bounded runtime cache."""
         if self._runtime is None:
@@ -617,11 +747,22 @@ class PipelineService:
                 "models": sorted(standalone.models),
                 "components": components,
             }
+            configuration_defaults = {
+                category: {
+                    component_id: standalone.resolve_component_defaults(
+                        category, component_id
+                    ).model_dump(mode="json")
+                    for component_id in component_ids
+                }
+                for category, component_ids in components.items()
+            }
         except ConfigurationError:
             configuration_ids = {"models": [], "components": {}}
+            configuration_defaults = {}
         return {
             "schema_version": 1,
             "configuration_ids": configuration_ids,
+            "configuration_defaults": {"components": configuration_defaults},
             "pipeline_kinds": {
                 "ingestion": [
                     "parser",

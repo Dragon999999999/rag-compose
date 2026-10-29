@@ -479,11 +479,27 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
     config = load_pipeline_config(
         Path("config/pipelines/query_basic_v1.yaml"), catalog=catalog
     )
+    api_payload = config.model_dump(mode="json")
+    query_payload = api_payload["query"]
+    assert isinstance(query_payload, dict)
+    for stage_name in (
+        "retriever",
+        "reranker",
+        "reasoner",
+        "decision_policy",
+        "renderer",
+    ):
+        stage = query_payload[stage_name]
+        assert isinstance(stage, dict)
+        query_payload[stage_name] = {"id": stage["id"]}
+    assessor = query_payload["assessors"][0]
+    assert isinstance(assessor, dict)
+    query_payload["assessors"] = [{"id": assessor["id"]}]
 
     transport = httpx.ASGITransport(app=api)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         created_response = await client.post(
-            "/api/pipelines", json=config.model_dump(mode="json")
+            "/api/pipelines", json=api_payload
         )
         pipeline_id = created_response.json()["id"]
         changed_config = config.model_copy(update={"description": "updated"})
@@ -504,5 +520,8 @@ async def test_pipeline_management_api_exposes_crud_catalog_and_models() -> None
         update={"version": 2}
     ).model_dump(mode="json")
     assert "vector_backend" in catalog_response.json()["stages"]
+    assert catalog_response.json()["configuration_defaults"]["components"]["retriever"][
+        "retriever_dense_vector_summary"
+    ]["implementation"] == "vector_similarity"
     assert "embedding_001" in models_response.json()["embedding"]
     assert deleted_response.status_code == 204

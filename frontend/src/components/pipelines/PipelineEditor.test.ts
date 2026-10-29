@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { PipelineAlternative, PipelineConfig } from "../../api/types";
+import type { PipelineAlternative, PipelineCatalog, PipelineConfig } from "../../api/types";
 import {
   addQueryBranch,
   addQueryAlternative,
@@ -8,6 +8,7 @@ import {
   orderPipelineStages,
   QUERY_STAGES,
   removeQueryBranch,
+  serializeDraft,
   updateAlternativeSource,
 } from "./PipelineEditor";
 
@@ -161,5 +162,54 @@ describe("pipeline query stage order", () => {
 
     expect(alternatives[1]).not.toHaveProperty("acceptance");
     expect(alternatives[1]).not.toHaveProperty("decision_policy");
+  });
+});
+
+describe("pipeline stage serialization", () => {
+  const catalog = {
+    configuration_defaults: {
+      components: {
+        retriever: {
+          retriever_default: {
+            id: "retriever_default",
+            type: "dense",
+            implementation: "vector_similarity",
+            top_k: 20,
+          },
+        },
+      },
+    },
+  } as PipelineCatalog;
+
+  it("compacts an unchanged resolved stage to its component ID", () => {
+    const config = queryConfig();
+    config.query = {
+      retriever: {
+        id: "retriever_default",
+        type: "dense",
+        implementation: "vector_similarity",
+        top_k: 20,
+      },
+    };
+
+    expect(serializeDraft(config, catalog).query?.retriever).toEqual({
+      id: "retriever_default",
+    });
+  });
+
+  it("keeps a resolved stage when one of its parameters is edited", () => {
+    const config = queryConfig();
+    config.query = {
+      retriever: {
+        id: "retriever_default",
+        type: "dense",
+        implementation: "vector_similarity",
+        top_k: 25,
+      },
+    };
+
+    expect(serializeDraft(config, catalog).query?.retriever).toEqual(
+      config.query.retriever,
+    );
   });
 });

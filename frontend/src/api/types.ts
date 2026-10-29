@@ -63,6 +63,9 @@ export type PipelineCatalog = {
     models?: string[];
     components?: Record<string, string[]>;
   };
+  configuration_defaults?: {
+    components?: Record<string, Record<string, Record<string, unknown>>>;
+  };
   pipeline_kinds?: Record<string, string[]>;
   stages: Record<string, CatalogStage>;
   compatibility: Record<string, unknown>;
