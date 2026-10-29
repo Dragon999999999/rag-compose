@@ -386,7 +386,7 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
             ← Pipelines{source.data ? ` / ${source.data.name}` : ""}
           </button>
           <h1>{pipelineId ? "Edit pipeline" : "Create pipeline"}</h1>
-          <p>Choose a stage in the graph to inspect its registered implementations and parameters.</p>
+          <p>Choose a registered stage configuration to load its defaults, then adjust parameters if needed.</p>
         </div>
         <div className="editor-actions">
           {dirty && <span className="unsaved-indicator">Unsaved changes</span>}
@@ -442,9 +442,13 @@ export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) 
           definition={selectedDefinition}
           models={models.data}
           onChange={(value) => setDraft((current) => current ? updateStage(current, selectedDefinition, value, selectedAlternativeId) : current)}
-          onAddAssessor={() => setDraft((current) => current ? updateAssessors(current, [...readAssessors(current, selectedAlternativeId), defaultStageValue(stageByKey(QUERY_STAGES, "assessors"), catalog.data, models.data)], selectedAlternativeId) : current)}
-          onRemoveAssessor={(index) => setDraft((current) => current ? updateAssessors(current, readAssessors(current, selectedAlternativeId).filter((_, itemIndex) => itemIndex !== index), selectedAlternativeId) : current)}
-          onChangeAssessor={(index, value) => setDraft((current) => current ? updateAssessors(current, readAssessors(current, selectedAlternativeId).map((item, itemIndex) => itemIndex === index ? value : item), selectedAlternativeId) : current)}
+          onChangeAssessor={(index, value) => setDraft((current) => {
+            if (!current) return current;
+            const assessors = readAssessors(current, selectedAlternativeId);
+            if (index === 0 && assessors.length === 0) assessors.push(value);
+            else assessors[index] = value;
+            return updateAssessors(current, assessors, selectedAlternativeId);
+          })}
           value={selectedValue}
         />
       </div>
@@ -975,7 +979,7 @@ function nextBranchId(branches: QueryBranch[]): string {
   return `branch-${index}`;
 }
 
-function StageInspector({ catalog, definition, models, value, onChange, onAddAssessor, onRemoveAssessor, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onAddAssessor: () => void; onRemoveAssessor: (index: number) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
+function StageInspector({ catalog, definition, models, value, onChange, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
   const stage = catalog.stages[definition.catalogKey];
   const configurationIds = catalog.configuration_ids?.components?.[definition.catalogKey] ?? [];
   const configurationDefaults = catalog.configuration_defaults?.components?.[definition.catalogKey] ?? {};
@@ -994,7 +998,7 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
     <aside className="pipeline-inspector">
       <div className="inspector-heading"><span>{definition.section === "representation" ? "Representation / indexing" : "Query processing"}</span><h2>{definition.label}</h2><p>{definition.description}</p></div>
       {!stage ? <p className="form-error">This stage is not available in the backend catalog.</p> : definition.key === "assessors" ? (
-        <div className="assessor-editor">{assessorValues.map((assessor, index) => <div className="assessor-item" key={index}><div className="assessor-item-heading"><strong>Assessor {index + 1}</strong>{assessorValues.length > 1 && <button onClick={() => onRemoveAssessor(index)} type="button">Remove</button>}</div><SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={assessor} models={models} stageKey={definition.key} onChange={(next) => onChangeAssessor(index, next)} /></div>)}<Button onClick={onAddAssessor}>＋ Add assessor</Button></div>
+        <div className="assessor-editor">{(assessorValues.length > 0 ? assessorValues : [{}]).map((assessor, index) => <div className="assessor-item" key={index}><div className="assessor-item-heading"><strong>Assessor {index + 1}</strong></div><SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={assessor} models={models} stageKey={definition.key} onChange={(next) => onChangeAssessor(index, next)} /></div>)}</div>
       ) : (
         <SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={value ?? {}} models={models} stageKey={definition.key} onChange={onChange} />
       )}
@@ -1008,19 +1012,19 @@ function StageInspector({ catalog, definition, models, value, onChange, onAddAss
 function SchemaFields({ stage, value, models, stageKey, configurationIds, configurationDefaults, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; configurationIds?: string[]; configurationDefaults?: Record<string, Record<string, unknown>>; onChange: (value: Record<string, unknown>) => void }) {
   const properties = stage.schema.properties ?? {};
   const required = new Set(stage.schema.required ?? []);
-  return <div className="schema-fields">{Object.entries(properties).map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} implementations={field === "implementation" ? stage.implementations : undefined} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} configurationIds={field === "id" || (field === "component_id" && stageKey === "embedding") ? configurationIds : undefined} onChange={(next) => { const isConfigurationSelector = field === "id" || (field === "component_id" && stageKey === "embedding"); const selectedDefaults = isConfigurationSelector && typeof next === "string" ? configurationDefaults?.[next] : undefined; let updated = selectedDefaults ? { ...selectedDefaults } : { ...value }; if (isConfigurationSelector && next === "") delete updated[field]; else if (!selectedDefaults && field === "implementation" && next !== value.implementation) { const allowed = new Set(Object.keys(properties)); updated = Object.fromEntries(Object.entries(updated).filter(([key]) => key === "type" || key === "implementation" || allowed.has(key))); } if (!selectedDefaults && next !== undefined && !(isConfigurationSelector && next === "")) updated[field] = next; onChange(updated); }} />)}</div>;
+  return <div className="schema-fields">{Object.entries(properties).filter(([field]) => field !== "type" && field !== "implementation").map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} configurationIds={field === "id" || (field === "component_id" && stageKey === "embedding") ? configurationIds : undefined} onChange={(next) => { const isConfigurationSelector = field === "id" || (field === "component_id" && stageKey === "embedding"); const selectedDefaults = isConfigurationSelector && typeof next === "string" ? configurationDefaults?.[next] : undefined; const updated = selectedDefaults ? { ...selectedDefaults } : { ...value }; if (isConfigurationSelector && next === "") delete updated[field]; else if (!selectedDefaults && next !== undefined && !(isConfigurationSelector && next === "")) updated[field] = next; onChange(updated); }} />)}</div>;
 }
 
-function SchemaField({ field, schema, required, value, implementations, modelOptions, configurationIds, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; implementations?: string[]; modelOptions?: string[]; configurationIds?: string[]; onChange: (value: unknown) => void }) {
+function SchemaField({ field, schema, required, value, modelOptions, configurationIds, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; modelOptions?: string[]; configurationIds?: string[]; onChange: (value: unknown) => void }) {
   const resolved = resolveSchema(schema);
-  const options = configurationIds?.length ? configurationIds : implementations ?? modelOptions ?? resolved.enum?.filter((item): item is string => typeof item === "string");
+  const options = configurationIds?.length ? configurationIds : modelOptions ?? resolved.enum?.filter((item): item is string => typeof item === "string");
   const actualValue = value ?? resolved.default ?? (resolved.const !== undefined ? resolved.const : "");
   const optional = !required && (schema.anyOf?.some((item) => item.type === "null") ?? false);
   const selectOptions = resolved.const !== undefined ? [String(resolved.const)] : options;
   const hasConfigurationOptions = Boolean(configurationIds?.length);
   const currentValue = String(actualValue);
   const currentValueUnavailable = hasConfigurationOptions && currentValue && !selectOptions?.includes(currentValue);
-  return <label className="schema-field"><span>{humanize(field)}{required && <em>Required</em>}</span>{schema.description && <small>{schema.description}</small>}{selectOptions && selectOptions.length > 0 ? <select aria-label={field === "id" ? `Choose a ${humanize(field)} for this stage` : undefined} disabled={resolved.const !== undefined} onChange={(event) => onChange(event.target.value)} value={currentValue}>{hasConfigurationOptions && currentValueUnavailable && <option value={currentValue}>{currentValue} (current)</option>}{hasConfigurationOptions && <option disabled={required} value="">Choose a registered stage configuration…</option>}{!required && !hasConfigurationOptions && <option value="">Not set</option>}{selectOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select> : resolved.type === "boolean" ? <input checked={Boolean(actualValue)} onChange={(event) => onChange(event.target.checked)} type="checkbox" /> : resolved.type === "integer" || resolved.type === "number" ? <input max={resolved.maximum} min={resolved.minimum} onChange={(event) => onChange(event.target.value === "" ? (optional ? null : 0) : Number(event.target.value))} type="number" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} /> : <input maxLength={resolved.maxLength} minLength={resolved.minLength} onChange={(event) => onChange(event.target.value || (optional ? null : event.target.value))} type="text" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} />}{resolved.minimum !== undefined || resolved.maximum !== undefined ? <small className="schema-constraint">{resolved.minimum !== undefined && `Min ${resolved.minimum}`} {resolved.maximum !== undefined && `Max ${resolved.maximum}`}</small> : null}</label>;
+  return <label className="schema-field"><span>{humanize(field)}{required && <em>Required</em>}</span>{schema.description && <small>{schema.description}</small>}{selectOptions && selectOptions.length > 0 ? <select aria-label={field === "id" || field === "component_id" ? `Choose a ${humanize(field)} for this stage` : undefined} disabled={resolved.const !== undefined} onChange={(event) => onChange(event.target.value)} value={currentValue}>{hasConfigurationOptions && currentValueUnavailable && <option value={currentValue}>{currentValue} (current)</option>}{hasConfigurationOptions && <option disabled={required} value="">Choose a registered stage configuration…</option>}{!required && !hasConfigurationOptions && <option value="">Not set</option>}{selectOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select> : resolved.type === "boolean" ? <input checked={Boolean(actualValue)} onChange={(event) => onChange(event.target.checked)} type="checkbox" /> : resolved.type === "integer" || resolved.type === "number" ? <input max={resolved.maximum} min={resolved.minimum} onChange={(event) => onChange(event.target.value === "" ? (optional ? null : 0) : Number(event.target.value))} type="number" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} /> : <input maxLength={resolved.maxLength} minLength={resolved.minLength} onChange={(event) => onChange(event.target.value || (optional ? null : event.target.value))} type="text" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} />}{resolved.minimum !== undefined || resolved.maximum !== undefined ? <small className="schema-constraint">{resolved.minimum !== undefined && `Min ${resolved.minimum}`} {resolved.maximum !== undefined && `Max ${resolved.maximum}`}</small> : null}</label>;
 }
 
 function resolveSchema(schema: JsonSchema): JsonSchema {
@@ -1078,22 +1082,6 @@ function updateAssessors(config: PipelineConfig, values: Record<string, unknown>
   const next = cloneConfig(config);
   next.query = { ...(next.query ?? {}), assessors: values };
   return next;
-}
-
-function defaultStageValue(definition: StageDefinition, catalog: PipelineCatalog, models: ModelCatalog): Record<string, unknown> {
-  const firstId = catalog.configuration_ids?.components?.[definition.catalogKey]?.[0];
-  const firstDefaults = firstId ? catalog.configuration_defaults?.components?.[definition.catalogKey]?.[firstId] : undefined;
-  if (firstDefaults) return { ...firstDefaults };
-  const stage = catalog.stages[definition.catalogKey];
-  return Object.fromEntries(Object.entries(stage?.schema.properties ?? {}).map(([field, schema]) => {
-    const resolved = resolveSchema(schema);
-    if (field === "implementation") return [field, stage?.implementations[0] ?? ""];
-    if (field === "model_ref") return [field, definition.key === "embedding" ? Object.keys(models.embedding)[0] ?? "" : Object.keys(models.reasoning)[0] ?? ""];
-    if (resolved.const !== undefined) return [field, resolved.const];
-    if (resolved.default !== undefined) return [field, resolved.default];
-    if (resolved.enum?.length) return [field, resolved.enum[0]];
-    return [field, schema.anyOf?.some((item) => item.type === "null") ? null : ""];
-  }));
 }
 
 export function serializeDraft(config: PipelineConfig, catalog: PipelineCatalog): PipelineConfig {
@@ -1243,12 +1231,6 @@ export function orderPipelineStages(config: PipelineConfig): PipelineConfig {
     }
   }
   return { ...config, query: orderedQuery };
-}
-
-function stageByKey(stages: StageDefinition[], key: StageKey): StageDefinition {
-  const definition = stages.find((stage) => stage.key === key);
-  if (!definition) throw new Error(`Pipeline stage is not registered: ${key}`);
-  return definition;
 }
 
 function snapshot(config: PipelineConfig): DraftSnapshot {
