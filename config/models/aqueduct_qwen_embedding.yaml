@@ -9,7 +9,7 @@ connection:
   auth:
     env_var: AQUEDUCT_API_KEY
     file_env_var: AQUEDUCT_API_KEY_FILE
-  timeout_seconds: 120
+  timeout_seconds: 240
   retries: 2
 parameters:
   dimension: 2560
