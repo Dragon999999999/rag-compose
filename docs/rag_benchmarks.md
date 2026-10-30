@@ -1,7 +1,8 @@
 # RAG benchmark suite
 
 The repository contains a reproducible matrix of 74 benchmark entries covering
-15 families. The source pipeline files live below
+15 families: 73 are supported by the current runtime and one is retained as an
+explicitly unsupported composition boundary. The source pipeline files live below
 `config/pipelines/benchmarks/`, grouped by family. Query and ingestion
 pipelines are separate files; the manifest joins them for each experiment.
 
@@ -61,7 +62,9 @@ document representations are not rewritten by selecting a benchmark pipeline.
 
 Use the same fixed corpus, query set, seed, and evaluation harness for every
 family. Report deterministic pipeline metrics separately from stochastic model
-quality measurements. Suggested metrics are recall@K, precision@K, MRR,
+quality measurements. The native `/eval/v1` adapter provides persisted
+observations, retrieval metadata, claims, citations, assessments, decisions, and
+timing for this comparison. Suggested metrics are recall@K, precision@K, MRR,
 nDCG@K, context relevance, answer correctness, faithfulness, citation
 accuracy, evidence sufficiency, abstention accuracy, latency, inference time,
 token consumption, resource usage, and estimated cost. Only metrics supported by
@@ -70,17 +73,17 @@ the evaluation framework should be emitted.
 ## Known boundaries
 
 `CHUNK-08` is retained in the manifest as `unsupported`: the registered late
-chunker requires `embedding_jina_v2_base_en`, but this checkout has no
-composition component for that model. Adding an invented alias would violate
-the closed registry requirement.
+chunker requires `embedding_jina_v2_base_en`, but this checkout has no ingestion
+composition component that supplies that model. Adding an invented alias would
+violate the closed registry requirement.
 
 Learned sparse and multivector retrieval entries are valid query compositions,
 but require their corresponding sparse or multivector indexes to be prepared by
-the deployment/indexing setup. The ordinary dense ingestion preset does not
-silently create those representations. Branch definitions use the current
-execution contract's implementation names; exact per-model settings for a
-branch require the runtime's branch-aware model configuration and are called out
-in each affected manifest entry.
+the selected ingestion pipeline and deployment setup. The ordinary dense
+ingestion preset does not silently create those representations. Branch
+definitions use the current execution contract's implementation names; exact
+per-model settings for a branch require the runtime's branch-aware model
+configuration and are called out in each affected manifest entry.
 
 No credentials are stored in the presets or manifest. Model YAMLs retain only
 credential environment-variable names, and CLI discovery continues to redact

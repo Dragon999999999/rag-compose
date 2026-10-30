@@ -1,10 +1,12 @@
 # Native evaluation protocol
 
 The LLM Grounding service exposes a versioned evaluation adapter at `/eval/v1`.
-It supports production `corpus_id` values and a separate evaluation-corpus
+It accepts production project identifiers and a separate evaluation-corpus
 registry. Evaluation corpora never write production project, document, or chat
 tables. The adapter is intended for benchmark clients and returns the same
 provider-neutral `RagRunObservation` used by diagnostics and persisted replay.
+The checked-in `rag_eval_protocol_schema.json` contains the public Pydantic model
+schema for tooling that does not call the live schema endpoint.
 
 ## Headers
 
@@ -45,7 +47,9 @@ the canonical request fingerprint is deterministic. Clients may send
 - `GET /eval/v1/operations/{op_id}` reports upload status; `/documents`,
   `/chunks`, and `/evidence` read isolated inventories.
 - `POST /eval/v1/embeddings` exposes sampled raw vectors only with the configured
-  evaluation token; vectors are omitted unless explicitly requested.
+  `X-Eval-Embedding-Token`; vectors are omitted unless explicitly requested. The
+  endpoint is mounted only when the selected evaluation store supports vector
+  access.
 
 ## Observation semantics
 
@@ -76,7 +80,6 @@ overrides are validated and recorded without mutating shared configuration.
 
 Browser chat queries and evaluation queries use the same Basic RAG runner and
 persist the same canonical observation. Browser response DTOs remain compact;
-the full observation is available through the replay endpoint. The current
-application has no separate authentication middleware for this protocol, so
-deployment-level access control remains responsible for protecting observation
-data.
+the full observation is available through the replay endpoint. The application
+does not provide authentication middleware for this protocol; deployment-level
+access control remains responsible for protecting observation and embedding data.

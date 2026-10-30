@@ -1,10 +1,10 @@
 # Component configuration
 
 Standalone component definitions live under `config/components/<family>/`.
-Every instance has `id`, `type`, `implementation`, `description`, and `config`.
-`requirements` is used when a component declares runtime capabilities. The
-family `schema.yaml` files compose `config/components/schema.yaml` using JSON
-Schema Draft 2020-12. Schema files are excluded from component discovery.
+Every instance has `id`, `type`, `implementation`, `description`, and `config`,
+and may declare `requirements`, `input_terms`, and `output_terms`. The family
+`schema.yaml` files compose `config/components/schema.yaml` using JSON Schema
+Draft 2020-12. Schema files are excluded from component discovery.
 
 For example:
 
@@ -21,8 +21,10 @@ requirements:
 
 Component settings are resolved into typed Pydantic runtime models and
 synchronized to PostgreSQL during application startup. Pipeline YAML stores
-component references and is itself persisted as a resolved snapshot, so query
-execution does not need to reread the original YAML files.
+component references and is persisted as a resolved snapshot, so query
+execution does not need to reread the original YAML files. The registry checks
+implementation names, model-stage eligibility, and required resources before
+runtime construction.
 
 Override precedence is:
 
@@ -42,7 +44,8 @@ To add a component:
    that family's `schema.yaml`.
 2. Add the constructor to the corresponding typed registry or factory, using
    `implementation` as the lookup key.
-3. Declare requirements and override scopes in the schema when applicable.
+3. Declare requirements, input/output terms, and override scopes in the schema
+   when applicable.
 4. Add or update a pipeline reference and tests.
 
 The application synchronizer stores the validated definition in PostgreSQL;

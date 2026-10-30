@@ -1,8 +1,10 @@
 # LLM Grounding Project
 
-The project provides a grounded question-answering workflow with separate
-ingestion and query pipelines. Ingestion builds a reusable vector
-representation; query pipelines retrieve, assess, and render grounded answers.
+The project provides configurable scientific-document grounding with separate
+ingestion and query pipelines. Ingestion parses documents into canonical
+evidence and optional indexes; query pipelines retrieve, rerank, assess, and
+render grounded answers. A FastAPI adapter and a React frontend expose the same
+application services to browser clients and evaluation tools.
 
 ## Run
 
@@ -16,7 +18,8 @@ uv run python -m llm_grounding project add-document PROJECT_ID path/to/paper.pdf
 
 Alternatively, set `AQUEDUCT_API_KEY`; a nonempty value takes precedence over the
 UTF-8 key file. Both are stripped of surrounding whitespace. `.env.example`
-documents the variables; the application does not automatically load `.env`.
+documents the variables, and the application loads the repository `.env` without
+overriding values already present in the environment.
 
 The canonical pipeline definitions are under [`config/pipelines`](config/pipelines).
 Change model and component settings in those pipeline files when needed:
@@ -34,25 +37,28 @@ with standalone models in [`config/models/`](config/models/) and components in
 [`config/components/`](config/components/). See
 [`docs/architecture.md`](docs/architecture.md) for the resolution rules.
 
-## Persistent Basic RAG v1 development
+## Persistent development setup
 
-Basic RAG keeps PostgreSQL as canonical structured state, MinIO as canonical PDF
-storage, and Qdrant as a rebuildable vector index. Start the services and apply the
-canonical schema before using project/chat commands:
+The persistent application keeps PostgreSQL as canonical structured state, MinIO
+as canonical PDF storage, and a configured vector backend as a rebuildable index.
+The default ingestion pipeline uses Qdrant; pgvector and FAISS are also supported
+by the vector-backend registry. Start the local services and apply the canonical
+schema before using project or chat commands:
 
 ```bash
 cp .env.example .env
 docker compose up -d
 docker compose ps
-set -a; source .env; set +a
-uv sync --extra embeddings
+uv sync --locked --extra embeddings
 uv run alembic upgrade head
 ```
 
-The first command that embeds a document may download the configured Sentence
-Transformers model into the Hugging Face cache. Query embedding is cache-only and
-does not contact the Hub. Each one-shot CLI process still loads the cached weights
-into memory; a long-running application would reuse the same in-memory embedder.
+The first command that uses a local model may download its configured weights.
+Local models are stored below `MODEL_STORAGE_ROOT` (default
+`~/.cache/llm-grounding/models`); the configured runtime may be in-process or a
+managed Docker inference container. Query-time model use reuses the local weights
+and does not require Hub authentication once they are available. Install the
+`embeddings` extra when using in-process Sentence Transformers models.
 
 Then create a project, ingest a PDF, and ask a project-scoped question:
 
@@ -80,7 +86,7 @@ src/llm_grounding/
 ├── domain/             # Sources, evidence, claims, outputs, and run records
 ├── parsing/            # Structured PDF blocks with provenance
 ├── knowledge/          # In-memory canonical evidence
-├── retrieval/          # Retrieval plus top-k and local cross-encoder reranking
+├── retrieval/          # Dense, lexical, sparse, hybrid, and multivector retrieval
 ├── reasoning/          # Grounded prompt and typed answer generation
 ├── assessment/         # Grounding assessments
 ├── decision/           # Grounding decisions
@@ -88,8 +94,8 @@ src/llm_grounding/
 ├── orchestration/      # Split-pipeline query execution
 ├── infrastructure/     # Typed YAML and Aqueduct adapter/credentials
 └── application/        # Service and CLI
-config/pipelines/ingestion_default_v1.yaml
-config/pipelines/query_basic_v1.yaml
+config/pipelines/             # Ingestion, query, test, and benchmark compositions
+benchmarks/rag_benchmark_manifest.yaml
 tests/unit/
 tests/integration/
 ```
@@ -105,33 +111,35 @@ output, assessments, decision, timing, and stage trace. A component failure rais
 `RunFailedError`, whose `.run` retains partial results. The CLI uses concise error
 messages and nonzero exits. Library clients can inspect the chained cause.
 
-See [`docs/architecture.md`](docs/architecture.md) for contracts, a complete file
-map, prompt semantics, migration notes, and extension boundaries.
+See [`docs/architecture.md`](docs/architecture.md) for the configuration contract,
+runtime resolution rules, persistence boundaries, and extension points.
 
-### Optional local reranking
+### Configurable retrieval and reranking
 
-Query pipelines can keep the retrieval order with `type: identity`, truncate it
-with `provider: top_k`, or score candidates locally with
-`provider: cross_encoder`:
+Query pipelines can preserve or truncate retrieval order, use dense, PostgreSQL
+FTS, BM25, learned sparse, ColBERT MaxSim, full-context, or hybrid retrieval, and
+then apply an identity, top-k, local cross-encoder, or generative reranker. Local
+cross-encoder settings are kept in a reusable component definition:
 
 ```yaml
-reranker:
-  provider: cross_encoder
+id: reranker_cross_encoder
+type: reranker
+implementation: cross_encoder
+config:
+  model_id: cross_encoder_minilm
   retrieval_top_k: 20
   rerank_top_k: 5
-  model_name: cross-encoder/ms-marco-MiniLM-L6-v2
   device: cpu
   batch_size: 16
 ```
 
-Install the optional dependency with `uv sync --extra reranking`. The model is
-loaded only on the first reranking request and cached in
-`~/.cache/rag-eval/models`, or in `RAG_EVAL_MODEL_CACHE_DIR` when set. In Docker,
-mount that directory as a persistent volume if the application container should
-reuse downloaded weights across restarts. No API key or model server is needed.
+Install the optional dependency with `uv sync --locked --extra reranking`. The
+cross-encoder is loaded lazily and cached in `~/.cache/rag-eval/models`, or in
+`RAG_EVAL_MODEL_CACHE_DIR` when set. No API key or model server is needed for an
+in-process cross-encoder.
 
-Persistent project corpora and the separate ingestion/query workflow are documented
-in [`docs/phase1_persistent_corpus.md`](docs/phase1_persistent_corpus.md).
+Persistent project corpora and the ingestion/query workflow are documented in
+[`docs/persistent_corpus.md`](docs/persistent_corpus.md).
 The complete CLI command reference is in [`docs/cli.md`](docs/cli.md).
 
 ## Development checks
@@ -159,7 +167,8 @@ npm run dev
 ```
 
 `VITE_API_BASE_URL` is the only frontend environment setting and is intentionally
-non-secret. The API defaults to `http://127.0.0.1:8000/api`; change
+non-secret. The API defaults to `http://127.0.0.1:8002`; set
+`VITE_API_BASE_URL=http://127.0.0.1:8002/api` for the local frontend. Change
 `LLM_GROUNDING_CORS_ORIGINS` when serving the Vite app from a different origin.
 The Evidence pane receives canonical, validated claim citations and source metadata
 from the API, and PDF binaries are streamed through the API rather than MinIO.
@@ -175,19 +184,17 @@ resolved dependencies. Record the Git commit alongside experimental results;
 run metadata includes the package version, input digest, effective architecture
 configuration, and prompt/schema identity.
 
-## Limitations and next phase
+## Limitations
 
-Reading order is a positional heuristic, and OCR is not implemented. Query results
-are grounded only in indexed evidence; insufficient evidence is returned explicitly.
-The model is nondeterministic and its remote alias can change.
-
-Later work can introduce additional parsers, substantive assessors, decision
-policies, and scientific evaluation datasets behind the existing protocols.
-Cross-encoder scores reorder candidates but do not establish claim entailment or
-correctness.
-# LLM Grounding
+Query results are grounded only in indexed evidence; insufficient evidence is
+returned explicitly. Cross-encoder and generative reranker scores reorder
+candidates but do not establish claim entailment or answer correctness. The
+current PDF parser uses position-based reading order and does not perform OCR.
+Models are nondeterministic and remote aliases may change over time.
 
 The project includes a native `/eval/v1` adapter for reproducible retrieval and
 grounded-answer evaluation. Its canonical observations are defined in
 `src/llm_grounding/observability` and can be persisted and recovered by request
-identity. See [docs/eval_protocol.md](docs/eval_protocol.md) for the protocol.
+identity. The checked-in [`rag_eval_protocol_schema.json`](rag_eval_protocol_schema.json)
+captures the public observation models for tooling. See
+[`docs/eval_protocol.md`](docs/eval_protocol.md) for the HTTP contract.
