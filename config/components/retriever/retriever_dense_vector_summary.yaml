@@ -1,0 +1,13 @@
+id: retriever_dense_vector_summary
+type: dense
+implementation: vector_similarity
+description: Dense vector retrieval with bounded whole-corpus summary selection.
+config:
+  top_k: 8
+  context_chars: 12000
+  summary_per_facet: 3
+  query_embedder: null
+requirements:
+  required:
+    - dense_vector_index
+    - compatible_query_embedder

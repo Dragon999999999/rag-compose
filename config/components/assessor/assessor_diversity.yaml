@@ -1,0 +1,7 @@
+id: assessor_diversity
+type: assessor
+implementation: diversity
+description: Measure lexical or supplied-vector redundancy among retrieved chunks.
+input_terms: []
+output_terms: [assessment:diversity, assessment:numeric_score, assessment:label]
+config: {}

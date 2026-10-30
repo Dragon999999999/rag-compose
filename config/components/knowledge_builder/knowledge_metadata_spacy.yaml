@@ -1,0 +1,9 @@
+id: knowledge_metadata_spacy
+type: knowledge_builder
+implementation: metadata_spacy
+description: Extract named entities and optional linguistic metadata with spaCy.
+config:
+  spacy_model: en_core_web_sm
+  spacy_entity_labels: []
+  include_linguistic_metadata: false
+  batch_size: 4

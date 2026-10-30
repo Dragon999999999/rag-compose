@@ -1,0 +1,10 @@
+id: retriever_sparse_postgres_fts
+type: sparse
+implementation: postgres_fts
+description: PostgreSQL full-text retrieval using ts_rank_cd.
+config:
+  top_k: 20
+requirements:
+  required:
+    - persisted_chunks
+    - postgres_fts

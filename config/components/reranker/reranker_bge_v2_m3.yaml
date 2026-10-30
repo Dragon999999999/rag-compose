@@ -1,0 +1,10 @@
+id: reranker_bge_v2_m3
+type: reranker
+implementation: cross_encoder
+description: Rerank candidates with BGE Reranker v2 M3.
+config:
+  model_id: reranker_bge_v2_m3
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cuda
+  batch_size: 2

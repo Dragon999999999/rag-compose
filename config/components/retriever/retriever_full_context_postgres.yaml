@@ -1,0 +1,9 @@
+id: retriever_full_context_postgres
+type: full_context
+implementation: postgres_all_chunks
+description: Return all project chunks within a deterministic context budget.
+config:
+  context_budget_tokens: 16000
+requirements:
+  required:
+    - persisted_chunks

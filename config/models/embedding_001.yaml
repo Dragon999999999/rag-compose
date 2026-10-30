@@ -1,0 +1,23 @@
+id: embedding_001
+stage: embedding
+location: local
+backend: sentence_transformers
+name: sentence-transformers/all-MiniLM-L6-v2
+source:
+  type: huggingface
+  repository: sentence-transformers/all-MiniLM-L6-v2
+storage:
+  relative_path: embedding/all-MiniLM-L6-v2
+runtime:
+  type: docker
+  image: ghcr.io/huggingface/text-embeddings-inference:turing-1.9
+  command: ["--model-id", "/models/model"]
+  container_path: /models/model
+  port: 8000
+  readiness_path: /health
+  device: cpu
+  idle_timeout_seconds: 600
+parameters:
+  dimension: 384
+  normalize: true
+  batch_size: 32

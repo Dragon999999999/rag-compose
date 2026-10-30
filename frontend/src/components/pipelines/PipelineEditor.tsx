@@ -1,0 +1,1278 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+
+import { ApiRequestError } from "../../api/client";
+import type {
+  CatalogStage,
+  JsonSchema,
+  ModelCatalog,
+  PipelineAlternative,
+  Pipeline,
+  PipelineCatalog,
+  PipelineConfig,
+  PipelineKind,
+  PipelineUpdateImpact,
+} from "../../api/types";
+import { Dialog } from "../common/Dialog";
+import { Button, ErrorState } from "../common/ui";
+import {
+  useModelCatalog,
+  usePipeline,
+  usePipelineCatalog,
+  usePipelineMutations,
+  usePipelines,
+} from "../../features/hooks";
+import "./PipelinePages.css";
+
+type StageKey =
+  | "parser"
+  | "knowledge_builder"
+  | "chunker"
+  | "embedding"
+  | "vector_backend"
+  | "retriever"
+  | "reranker"
+  | "reasoner"
+  | "assessors"
+  | "decision_policy"
+  | "renderer";
+type StageSection = "representation" | "query";
+type StageDefinition = {
+  key: StageKey;
+  label: string;
+  section: StageSection;
+  catalogKey: string;
+  description: string;
+};
+type DraftSnapshot = {
+  config: string;
+  name: string;
+  description: string;
+  version: string;
+  isDefault: boolean;
+};
+type BranchStart = "retriever" | "reranker" | "assessor";
+type QueryBranch = {
+  id: string;
+  start_at: BranchStart;
+  retriever?: string;
+  reranker?: string;
+  assessors?: string[];
+};
+type GraphNodeLayout = {
+  key: string;
+  definition: StageDefinition;
+  x: number;
+  y: number;
+  shared: boolean;
+  reused: boolean;
+  branchId?: string;
+};
+type GraphEdgeLayout = { from: string; to: string };
+type BranchGraphLayout = {
+  nodes: GraphNodeLayout[];
+  edges: GraphEdgeLayout[];
+  branches: Array<{ id: string; label: string; center: number; removable: boolean }>;
+  width: number;
+  height: number;
+};
+
+const GRAPH_NODE_WIDTH = 142;
+const GRAPH_NODE_HEIGHT = 72;
+const GRAPH_COLUMN_GAP = 36;
+const GRAPH_ROW_GAP = 116;
+const GRAPH_TOP_PADDING = 64;
+const GRAPH_BOTTOM_PADDING = 76;
+
+const REPRESENTATION_STAGES: StageDefinition[] = [
+  { key: "parser", label: "Parser", section: "representation", catalogKey: "parser", description: "Extracts source content into structured document blocks." },
+  { key: "knowledge_builder", label: "Knowledge builder", section: "representation", catalogKey: "knowledge_builder", description: "Builds canonical knowledge units from parsed content." },
+  { key: "chunker", label: "Chunker", section: "representation", catalogKey: "chunker", description: "Splits knowledge units into retrievable chunks." },
+  { key: "embedding", label: "Embedding", section: "representation", catalogKey: "embedding", description: "Maps chunks into the vector representation used by retrieval." },
+  { key: "vector_backend", label: "Vector backend", section: "representation", catalogKey: "vector_backend", description: "Stores and searches the generated vector index." },
+];
+export const QUERY_STAGES: StageDefinition[] = [
+  { key: "retriever", label: "Retriever", section: "query", catalogKey: "retriever", description: "Selects evidence relevant to a user question." },
+  { key: "reranker", label: "Reranker", section: "query", catalogKey: "reranker", description: "Refines the ordering of retrieved evidence." },
+  { key: "assessors", label: "Assessors", section: "query", catalogKey: "assessor", description: "Evaluates evidence and answer properties." },
+  { key: "decision_policy", label: "Decision policy", section: "query", catalogKey: "decision_policy", description: "Decides whether the grounded answer can be returned." },
+  { key: "reasoner", label: "Reasoner", section: "query", catalogKey: "reasoner", description: "Generates a grounded interpretation from evidence." },
+  { key: "renderer", label: "Renderer", section: "query", catalogKey: "renderer", description: "Renders the validated answer for the client." },
+];
+
+/** Edit complete RAG pipelines through a fixed lifecycle graph and catalog-backed inspector. */
+export function PipelineEditor({ onNotFound }: { onNotFound?: (message: string) => void }) {
+  const { pipelineId } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const isNew = !pipelineId;
+  const sourceId = pipelineId ?? searchParams.get("source") ?? undefined;
+  const requestedKind = parsePipelineKind(searchParams.get("kind"));
+  const pipelines = usePipelines(false, requestedKind);
+  const defaultId = pipelines.data?.find((pipeline) => pipeline.is_default)?.id;
+  const source = usePipeline(
+    sourceId ?? (searchParams.get("mode") === "default" ? defaultId : undefined),
+  );
+  const catalog = usePipelineCatalog();
+  const models = useModelCatalog();
+  const mutations = usePipelineMutations();
+  const [draft, setDraft] = useState<PipelineConfig | null>(null);
+  const [selectedStage, setSelectedStage] = useState<StageKey>("parser");
+  const [selectedAlternativeId, setSelectedAlternativeId] = useState("primary");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [version, setVersion] = useState("1");
+  const [isDefault, setIsDefault] = useState(false);
+  const [loadedTemplate, setLoadedTemplate] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState<DraftSnapshot | null>(null);
+  const [updateImpact, setUpdateImpact] = useState<PipelineUpdateImpact | null>(null);
+  const pipelineKind: PipelineKind = source.data?.kind ?? source.data?.config?.kind ?? requestedKind ?? "query";
+  const visibleStages = stagesForKind(pipelineKind);
+
+  const template = source.data?.config
+    ? { id: source.data.id, config: source.data.config, name: source.data.name }
+    : null;
+  const templateKey =
+    template?.id ?? (searchParams.get("mode") === "blank" ? "blank" : null);
+
+  useEffect(() => {
+    if (!isNew && !template) return;
+    if (!templateKey || loadedTemplate === templateKey) return;
+    const initial = template ? cloneConfig(template.config) : emptyConfig(pipelineKind);
+    if (isNew && template) {
+      initial.name = `Copy of ${template.name}`;
+      initial.version = 1;
+      initial.is_default = false;
+    }
+    setDraft(initial);
+    setName(initial.name);
+    setDescription(initial.description);
+    setVersion(String(initial.version));
+    setIsDefault(initial.is_default);
+    setSavedSnapshot(snapshot(initial));
+    setLoadedTemplate(templateKey);
+    setSelectedStage(stagesForKind(initial.kind)[0].key);
+    setSelectedAlternativeId("primary");
+  }, [isNew, loadedTemplate, pipelineKind, template, templateKey]);
+
+  useEffect(() => {
+    if (!isNew || templateKey || loadedTemplate === "blank") return;
+    const initial = emptyConfig(pipelineKind);
+    setDraft(initial);
+    setName(initial.name);
+    setDescription(initial.description);
+    setVersion(String(initial.version));
+    setIsDefault(false);
+    setSavedSnapshot(snapshot(initial));
+    setLoadedTemplate("blank");
+    setSelectedStage(stagesForKind(initial.kind)[0].key);
+    setSelectedAlternativeId("primary");
+  }, [isNew, loadedTemplate, pipelineKind, templateKey]);
+
+  const dirty = useMemo(() => {
+    if (!draft || !savedSnapshot) return false;
+    return (
+      JSON.stringify(
+        snapshotWithMetadata(draft, name, description, version, isDefault),
+      ) !== JSON.stringify(savedSnapshot)
+    );
+  }, [description, draft, isDefault, name, savedSnapshot, version]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (
+      isNew ||
+      !(source.error instanceof ApiRequestError) ||
+      source.error.status !== 404
+    ) {
+      return;
+    }
+    onNotFound?.(source.error.message);
+    navigate("/pipelines", { replace: true });
+  }, [isNew, navigate, onNotFound, source.error]);
+
+  const issues = useMemo(
+    () => validateDraft(draft, name, version, visibleStages, catalog.data, models.data),
+    [catalog.data, draft, models.data, name, version, visibleStages],
+  );
+  const selectedDefinition =
+    visibleStages.find((stage) => stage.key === selectedStage) ?? visibleStages[0];
+  const selectedValue = draft ? readStage(draft, selectedDefinition, pipelineKind === "query" ? selectedAlternativeId : undefined) : undefined;
+  const representationChanged = Boolean(
+      draft &&
+      savedSnapshot &&
+      JSON.stringify(draft.representation ?? null) !==
+        JSON.stringify(JSON.parse(savedSnapshot.config).representation ?? null),
+  );
+  const saving =
+    mutations.create.isPending ||
+    mutations.update.isPending ||
+    mutations.impact.isPending;
+  const saveError =
+    mutations.create.error ?? mutations.update.error ?? mutations.impact.error;
+
+  if (
+    source.isLoading ||
+    catalog.isLoading ||
+    models.isLoading ||
+    (isNew && searchParams.get("mode") === "default" && pipelines.isLoading)
+  ) {
+    return (
+      <main className="pipeline-page">
+        <div className="pipeline-loading">Loading pipeline editor…</div>
+      </main>
+    );
+  }
+  if (source.error && !isNew) {
+    return (
+      <main className="pipeline-page">
+        <ErrorState error={source.error} retry={() => source.refetch()} />
+      </main>
+    );
+  }
+  if (catalog.error || models.error) {
+    return (
+      <main className="pipeline-page">
+        <ErrorState
+          error={(catalog.error ?? models.error)!}
+          retry={() => {
+            void catalog.refetch();
+            void models.refetch();
+          }}
+        />
+      </main>
+    );
+  }
+  if (!draft || !catalog.data || !models.data) {
+    return (
+      <main className="pipeline-page">
+        <ErrorState error={new Error("The pipeline editor could not initialize a configuration.")} />
+      </main>
+    );
+  }
+
+  const leave = (): void => {
+    if (!dirty || window.confirm("Discard unsaved pipeline changes?")) {
+      navigate("/pipelines");
+    }
+  };
+  const save = (): void => {
+    if (issues.length > 0) {
+      setLocalError("Complete the required stages and fields before saving.");
+      return;
+    }
+    const config: PipelineConfig = {
+      ...serializeDraft(draft, catalog.data),
+      name: name.trim(),
+      description,
+      version: Number(version),
+      is_default: isDefault,
+    };
+    setLocalError(null);
+    setUpdateImpact(null);
+    const onSuccess = (saved: Pipeline): void => {
+      const savedConfig = { ...config, version: saved.version };
+      setSavedSnapshot(
+        snapshotWithMetadata(
+          savedConfig,
+          saved.name,
+          saved.description,
+          String(saved.version),
+          saved.is_default,
+        ),
+      );
+      setDraft(savedConfig);
+      setVersion(String(saved.version));
+      navigate("/pipelines");
+    };
+    if (pipelineId) {
+      mutations.impact.mutate(
+        { pipelineId, config },
+        {
+          onSuccess: (impact) => {
+            if (impact.conversation_count === 0 && (impact.project_count ?? 0) === 0) {
+              mutations.update.mutate(
+                {
+                  pipelineId,
+                  config,
+                  expectedConfigHash: source.data?.config_hash,
+                },
+                { onSuccess },
+              );
+              return;
+            }
+            setUpdateImpact(impact);
+          },
+        },
+      );
+    } else {
+      mutations.create.mutate(config, { onSuccess });
+    }
+  };
+
+  const updateExisting = (): void => {
+    if (!pipelineId || !updateImpact) return;
+    const impact = updateImpact;
+    const config: PipelineConfig = {
+      ...serializeDraft(draft, catalog.data),
+      name: name.trim(),
+      description,
+      version: Number(version),
+      is_default: isDefault,
+    };
+    setUpdateImpact(null);
+    mutations.update.mutate(
+      {
+        pipelineId,
+        config,
+        expectedConfigHash: impact.current_config_hash,
+        migrateConversations: true,
+      },
+      {
+        onSuccess: (saved) => {
+          const savedConfig = { ...config, version: saved.version };
+          setSavedSnapshot(
+            snapshotWithMetadata(
+              savedConfig,
+              saved.name,
+              saved.description,
+              String(saved.version),
+              saved.is_default,
+            ),
+          );
+          setDraft(savedConfig);
+          setVersion(String(saved.version));
+          navigate("/pipelines");
+        },
+        onError: (error) => setLocalError(error.message),
+      },
+    );
+  };
+
+  const createCopy = (): void => {
+    if (!updateImpact) return;
+    const config: PipelineConfig = {
+      ...serializeDraft(draft, catalog.data),
+      name: `Copy of ${name.trim()}`,
+      description,
+      version: 1,
+      is_default: false,
+    };
+    setUpdateImpact(null);
+    mutations.create.mutate(
+      config,
+      {
+        onSuccess: (saved) => navigate(`/pipelines/${saved.id}/edit`),
+        onError: (error) => setLocalError(error.message),
+      },
+    );
+  };
+
+  return (
+    <main className="pipeline-page pipeline-editor-page">
+      <header className="pipeline-page-header editor-page-header">
+        <div>
+          <button className="back-link back-button" onClick={leave} type="button">
+            ← Pipelines{source.data ? ` / ${source.data.name}` : ""}
+          </button>
+          <h1>{pipelineId ? "Edit pipeline" : "Create pipeline"}</h1>
+          <p>Choose a registered stage configuration to load its defaults, then adjust parameters if needed.</p>
+        </div>
+        <div className="editor-actions">
+          {dirty && <span className="unsaved-indicator">Unsaved changes</span>}
+          <Button variant="ghost" onClick={leave}>Discard</Button>
+          <Button variant="primary" disabled={saving || issues.length > 0} onClick={save}>
+            {saving ? "Saving…" : "Save pipeline"}
+          </Button>
+        </div>
+      </header>
+
+      <section className="editor-meta">
+        <label>Name<input maxLength={255} onChange={(event) => setName(event.target.value)} value={name} /></label>
+        <label>Description<input maxLength={4000} onChange={(event) => setDescription(event.target.value)} value={description} /></label>
+        <label>Version<input min="1" onChange={(event) => setVersion(event.target.value)} type="number" value={version} /></label>
+        <label className="editor-checkbox"><input checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} type="checkbox" /> Default pipeline</label>
+        {pipelineKind === "query" && <ExecutionSettings config={draft} onChange={setDraft} />}
+      </section>
+
+      {(localError || saveError) && <p className="form-error pipeline-editor-error" role="alert">{localError ?? saveError?.message}</p>}
+      {issues.length > 0 && <div className="validation-summary" role="alert"><strong>Configuration needs attention</strong><ul>{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+
+      <div className="pipeline-editor-layout">
+        <section className="pipeline-graph" aria-label="Pipeline graph">
+          {pipelineKind !== "query" && <GraphSection label="Representation / indexing" stages={REPRESENTATION_STAGES} selected={selectedStage} config={draft} onSelect={setSelectedStage} />}
+          {pipelineKind !== "ingestion" && <AlternativesGraph
+            config={draft}
+            onAddAlternative={(alternativeId) => {
+              setDraft((current) => {
+                if (!current) return current;
+                const next = addQueryAlternative(current, alternativeId);
+                const alternatives = readQueryAlternatives(next);
+                setSelectedAlternativeId(alternatives[alternatives.length - 1]?.id ?? "primary");
+                return next;
+              });
+            }}
+            onDuplicateAlternative={(alternativeId) => setDraft((current) => current ? duplicateQueryAlternative(current, alternativeId) : current)}
+            onAddBranch={(alternativeId, stage, branchId) => setDraft((current) => current ? addQueryBranch(current, stage, branchId, alternativeId) : current)}
+            onMoveAlternative={(alternativeId, direction) => setDraft((current) => current ? moveQueryAlternative(current, alternativeId, direction) : current)}
+            onRemoveAlternative={(alternativeId) => setDraft((current) => current ? removeQueryAlternative(current, alternativeId) : current)}
+            onRemoveBranch={(alternativeId, branchId) => setDraft((current) => current ? removeQueryBranch(current, branchId, alternativeId) : current)}
+            onSelect={(stage, alternativeId) => {
+              setSelectedStage(stage);
+              setSelectedAlternativeId(alternativeId);
+            }}
+            onSelectRestart={(alternativeId, stage, pathId) => setDraft((current) => current ? updateAlternativeSource(current, alternativeId, stage, pathId) : current)}
+            selected={selectedStage}
+            selectedAlternativeId={selectedAlternativeId}
+          />}
+          {representationChanged && <p className="compatibility-warning"><strong>Representation changed.</strong> Changing parser, chunking, embedding, or vector settings may require a compatible index before this pipeline can execute.</p>}
+        </section>
+        <StageInspector
+          catalog={catalog.data}
+          definition={selectedDefinition}
+          models={models.data}
+          onChange={(value) => setDraft((current) => current ? updateStage(current, selectedDefinition, value, selectedAlternativeId) : current)}
+          onChangeAssessor={(index, value) => setDraft((current) => {
+            if (!current) return current;
+            const assessors = readAssessors(current, selectedAlternativeId);
+            if (index === 0 && assessors.length === 0) assessors.push(value);
+            else assessors[index] = value;
+            return updateAssessors(current, assessors, selectedAlternativeId);
+          })}
+          value={selectedValue}
+        />
+      </div>
+      {updateImpact && (
+        <PipelineUpdateDialog
+          impact={updateImpact}
+          pending={mutations.create.isPending || mutations.update.isPending}
+          error={saveError}
+          onClose={() => setUpdateImpact(null)}
+          onCreateCopy={createCopy}
+          onUpdateExisting={updateExisting}
+        />
+      )}
+    </main>
+  );
+}
+
+function PipelineUpdateDialog({
+  impact,
+  pending,
+  error,
+  onClose,
+  onCreateCopy,
+  onUpdateExisting,
+}: {
+  impact: PipelineUpdateImpact;
+  pending: boolean;
+  error: Error | null;
+  onClose: () => void;
+  onCreateCopy: () => void;
+  onUpdateExisting: () => void;
+}) {
+  return (
+    <Dialog title="Pipeline is in use" onClose={onClose}>
+      <div className="impact-dialog">
+        <p>
+          This pipeline is selected by {impact.conversation_count} conversation
+          {impact.conversation_count === 1 ? "" : "s"} and {impact.project_count ?? 0} project
+          {(impact.project_count ?? 0) === 1 ? "" : "s"}. Choose how to apply the draft safely.
+        </p>
+        {impact.compatibility_reason && (
+          <p className="form-error" role="alert">{impact.compatibility_reason}</p>
+        )}
+        <div className="impact-changes">
+          <strong>Changed fields</strong>
+          {impact.changes.length === 0 ? (
+            <span>No configuration fields changed.</span>
+          ) : (
+            <ul>
+              {impact.changes.map((change) => (
+                <li key={change.path}>
+                  <code>{formatChangePath(change.path)}</code>
+                  {change.representation_affecting && <small> representation-affecting</small>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <button className="impact-choice impact-choice-default" disabled={pending} onClick={onCreateCopy} type="button">
+          <strong>Create a copy (recommended)</strong>
+          <span>Keep existing conversations unchanged and save the draft as a new pipeline.</span>
+        </button>
+        <button className="impact-choice" disabled={pending || !impact.can_migrate} onClick={onUpdateExisting} type="button">
+          <strong>Update existing pipeline</strong>
+          <span>{impact.can_migrate ? "Migrate all conversations to the new version atomically." : "Unavailable until the representation/index is compatible."}</span>
+        </button>
+        {error && <p className="form-error" role="alert">{error.message}</p>}
+        <footer><Button variant="ghost" onClick={onClose}>Cancel</Button></footer>
+      </div>
+    </Dialog>
+  );
+}
+
+function formatChangePath(path: string): string {
+  return path.replaceAll(".", " → ");
+}
+
+function GraphSection({ label, stages, selected, config, onSelect }: { label: string; stages: StageDefinition[]; selected: StageKey; config: PipelineConfig; onSelect: (stage: StageKey) => void }) {
+  return (
+    <section className="graph-section">
+      <h2>{label}</h2>
+      <div className="graph-row">
+        {stages.map((stage, index) => <span className="graph-node-wrap" key={stage.key}><StageNode definition={stage} selected={selected === stage.key} configured={Boolean(readStage(config, stage))} onSelect={() => onSelect(stage.key)} />{index < stages.length - 1 && <span aria-hidden="true" className="graph-arrow">→</span>}</span>)}
+      </div>
+    </section>
+  );
+}
+
+function AlternativesGraph({
+  config,
+  selected,
+  onSelect,
+  onSelectRestart,
+  onAddBranch,
+  onRemoveBranch,
+  onAddAlternative,
+  onDuplicateAlternative,
+  onMoveAlternative,
+  onRemoveAlternative,
+  selectedAlternativeId,
+}: {
+  config: PipelineConfig;
+  selected: StageKey;
+  onSelect: (stage: StageKey, alternativeId: string) => void;
+  onSelectRestart: (alternativeId: string, stage: BranchStart, pathId: string) => void;
+  onAddBranch: (alternativeId: string, stage: BranchStart, branchId?: string) => void;
+  onRemoveBranch: (alternativeId: string, branchId: string) => void;
+  onAddAlternative: (alternativeId: string) => void;
+  onDuplicateAlternative: (alternativeId: string) => void;
+  onMoveAlternative: (alternativeId: string, direction: -1 | 1) => void;
+  onRemoveAlternative: (alternativeId: string) => void;
+  selectedAlternativeId: string;
+}) {
+  const alternatives = readQueryAlternatives(config);
+  const latestAlternative = alternatives[alternatives.length - 1];
+  const [pendingRestartAlternativeId, setPendingRestartAlternativeId] = useState<string | null>(null);
+  const alternativeRefs = useRef<Record<string, HTMLElement | null>>({});
+  useEffect(() => {
+    if (alternatives.length <= 1 || !latestAlternative) return;
+    alternativeRefs.current[latestAlternative.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [alternatives.length, latestAlternative?.id]);
+  useEffect(() => {
+    if (pendingRestartAlternativeId && !alternatives.some((alternative) => alternative.id === pendingRestartAlternativeId)) {
+      setPendingRestartAlternativeId(null);
+    }
+  }, [alternatives, pendingRestartAlternativeId]);
+  return (
+    <section className="alternatives-graph" aria-label="Query pipeline alternatives">
+      {alternatives.map((alternative, index) => (
+        <section className="alternative-section" key={alternative.id} ref={(element) => { alternativeRefs.current[alternative.id] = element; }}>
+          <header className="alternative-header">
+            <div>
+              <span className="alternative-kicker">Alternative {index + 1}</span>
+              <h2>{alternative.id === "primary" ? "Primary pipeline" : alternative.id}</h2>
+              {alternative.source && <p>Retries from {alternative.source.alternative_id} / {alternative.source.path_id} at {humanize(alternative.source.restart_stage)}.</p>}
+            </div>
+            {index > 0 && <div className="alternative-actions">
+              <button onClick={() => onDuplicateAlternative(alternative.id)} type="button">Duplicate</button>
+              <button disabled={index <= 1} onClick={() => onMoveAlternative(alternative.id, -1)} type="button">↑</button>
+              <button disabled={index === alternatives.length - 1} onClick={() => onMoveAlternative(alternative.id, 1)} type="button">↓</button>
+              <button className="alternative-delete" disabled={alternatives.some((item) => item.source?.alternative_id === alternative.id)} onClick={() => onRemoveAlternative(alternative.id)} type="button">Delete</button>
+            </div>}
+          </header>
+          {alternative.source && <div className="alternative-restart-picker">
+            <span>{pendingRestartAlternativeId === alternative.id ? "Choose the first stage to execute. Ghosted stages reuse the selected source path." : `Restart begins at ${humanize(alternative.source.restart_stage)}. Click stages to configure them.`}</span>
+            <select aria-label={`Source path for ${alternative.id}`} value={alternative.source.path_id} onChange={(event) => onSelectRestart(alternative.id, alternative.source!.restart_stage, event.target.value)}>
+              {sourcePathOptions(config, alternative).map((pathId) => <option key={pathId} value={pathId}>{pathId}</option>)}
+            </select>
+          </div>}
+          <p className="alternative-policy-note">The pipeline decision policy evaluates this candidate. If it does not accept the result, execution continues to the next alternative.</p>
+          <BranchingGraph
+            alternative={alternative}
+            alternativeId={alternative.id}
+            config={config}
+            onAddBranch={(stage, branchId) => onAddBranch(alternative.id, stage, branchId)}
+            onRemoveBranch={(branchId) => onRemoveBranch(alternative.id, branchId)}
+            onSelect={(stage) => onSelect(stage, alternative.id)}
+            onSelectRestart={pendingRestartAlternativeId === alternative.id ? (stage) => {
+              setPendingRestartAlternativeId(null);
+              onSelectRestart(alternative.id, stage, alternative.source?.path_id ?? "primary");
+              onSelect(stage === "assessor" ? "assessors" : stage, alternative.id);
+            } : undefined}
+            selected={selected}
+            selectedAlternative={selectedAlternativeId === alternative.id}
+          />
+          {latestAlternative?.id === alternative.id && <button className="add-alternative-button" onClick={() => {
+            setPendingRestartAlternativeId(nextAlternativeId(alternatives));
+            onAddAlternative(alternative.id);
+          }} type="button"><span>＋</span> Add Alternative</button>}
+        </section>
+      ))}
+    </section>
+  );
+}
+
+function BranchingGraph({
+  alternative,
+  alternativeId,
+  config,
+  selected,
+  onSelect,
+  onAddBranch,
+  onRemoveBranch,
+  onSelectRestart,
+  selectedAlternative,
+}: {
+  config: PipelineConfig;
+  alternative?: PipelineAlternative;
+  alternativeId?: string;
+  selected: StageKey;
+  onSelect: (stage: StageKey) => void;
+  onSelectRestart?: (stage: BranchStart) => void;
+  onAddBranch: (stage: BranchStart, branchId?: string) => void;
+  onRemoveBranch: (branchId: string) => void;
+  selectedAlternative: boolean;
+}) {
+  const layout = useMemo(() => buildBranchGraphLayout(config, alternative), [alternative, config]);
+  return (
+    <section className="graph-section branching-graph-section">
+      <div className="graph-section-heading">
+        <div>
+          <h2>Query processing</h2>
+          <p>Branch retrieval, reranking, or assessment while keeping shared stages centered.</p>
+        </div>
+        {layout.branches.length > 1 && <span className="graph-status">{layout.branches.length} branches</span>}
+      </div>
+      <div className="graph-canvas-scroll">
+        <div className="graph-canvas" style={{ height: layout.height, minWidth: layout.width }}>
+          <svg aria-hidden="true" className="graph-connectors" height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width}>
+            {layout.edges.map((edge) => {
+              const from = layout.nodes.find((node) => node.key === edge.from);
+              const to = layout.nodes.find((node) => node.key === edge.to);
+              if (!from || !to) return null;
+              const startX = from.x + GRAPH_NODE_WIDTH;
+              const startY = from.y + GRAPH_NODE_HEIGHT / 2;
+              const endX = to.x;
+              const endY = to.y + GRAPH_NODE_HEIGHT / 2;
+              const midpoint = startX + (endX - startX) / 2;
+              return <path className="graph-connector" d={`M ${startX} ${startY} H ${midpoint} V ${endY} H ${endX}`} key={`${edge.from}-${edge.to}`} />;
+            })}
+          </svg>
+          {layout.branches.map((branch) => (
+            <div className="graph-branch-controls" key={branch.id} style={{ top: branch.center - 24 }}>
+              <span className="graph-branch-label">{branch.label}</span>
+              {branch.removable && <button aria-label={`Delete ${branch.label}`} className="graph-delete-branch" onClick={() => onRemoveBranch(branch.id)} title={`Delete ${branch.label}`} type="button">×</button>}
+            </div>
+          ))}
+          {layout.nodes.map((node) => {
+            const configured = Boolean(readStage(config, node.definition, alternativeId));
+            const branch = node.branchId ? layout.branches.find((item) => item.id === node.branchId) : undefined;
+            const alternativeStage = Boolean(alternative?.source && !node.reused);
+            const showSharedCaption = node.shared && (layout.branches.length > 1 || Boolean(alternative?.source));
+            const caption = node.reused ? "Reused output" : alternativeStage && node.shared ? "Alternative stage" : showSharedCaption ? "Shared" : node.shared ? undefined : branch?.label;
+            const branchStart = stageToBranchStart(node.definition.key);
+            const selectRestart = Boolean(alternative?.source && branchStart && onSelectRestart);
+            return (
+              <div className={`graph-node-position ${node.shared ? "shared-node" : "branch-node"} ${node.reused ? "reused-node" : ""} ${alternativeStage ? "alternative-stage-node" : ""}`} key={node.key} style={{ left: node.x, top: node.y }}>
+                <StageNode
+                  caption={caption}
+                  configured={configured}
+                  definition={node.definition}
+                  alternativeStage={alternativeStage}
+                  reused={node.reused}
+                  selected={selectedAlternative && selected === node.definition.key}
+                  onSelect={() => selectRestart && branchStart ? onSelectRestart?.(branchStart) : onSelect(node.definition.key)}
+                />
+                {branchStart && <button aria-label={`Add branch after ${node.definition.label}`} className="graph-add-branch" onClick={() => onAddBranch(branchStart, node.branchId)} title={`Add branch at ${node.definition.label}`} type="button">+</button>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <p className="graph-help">Use <strong>+</strong> below Retriever, Reranker, or Assessors to split the flow. Shared stages are reused automatically.</p>
+    </section>
+  );
+}
+
+function StageNode({ definition, selected, configured, caption, reused, alternativeStage, onSelect }: { definition: StageDefinition; selected: boolean; configured: boolean; caption?: string; reused?: boolean; alternativeStage?: boolean; onSelect: () => void }) {
+  return <button className={`graph-node ${selected ? "selected" : ""} ${configured ? "configured" : "missing"} ${reused ? "reused" : ""} ${alternativeStage ? "alternative-stage" : ""}`} onClick={onSelect} type="button"><span>{definition.label}</span>{caption ? <small className="graph-node-caption">{caption}</small> : !configured && <small>Configure</small>}</button>;
+}
+
+function readQueryAlternatives(config: PipelineConfig): PipelineAlternative[] {
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  if (Array.isArray(execution.alternatives) && execution.alternatives.length > 0) {
+    return execution.alternatives.map((alternative, index) => normalizeAlternative(alternative, index));
+  }
+  return [{
+    id: "primary",
+    source: null,
+    branches: [],
+    stage_overrides: {},
+  }];
+}
+
+function normalizeAlternative(value: unknown, index: number): PipelineAlternative {
+  const alternative = isRecord(value) ? value : {};
+  const branches = Array.isArray(alternative.branches)
+    ? alternative.branches.filter(isRecord).map((branch, branchIndex) => normalizeBranch(branch, branchIndex))
+    : [];
+  const source: PipelineAlternative["source"] = isRecord(alternative.source) && typeof alternative.source.alternative_id === "string" && typeof alternative.source.path_id === "string"
+    ? {
+      alternative_id: alternative.source.alternative_id,
+      path_id: alternative.source.path_id,
+      restart_stage: (alternative.source.restart_stage === "reranker" || alternative.source.restart_stage === "assessor" ? alternative.source.restart_stage : "retriever") as BranchStart,
+    }
+    : null;
+  return {
+    id: typeof alternative.id === "string" && alternative.id.trim() ? alternative.id : `alternative-${index + 1}`,
+    source,
+    branches,
+    stage_overrides: isRecord(alternative.stage_overrides) ? alternative.stage_overrides : {},
+  };
+}
+
+function sourcePathOptions(config: PipelineConfig, alternative: PipelineAlternative): string[] {
+  if (!alternative.source) return ["primary"];
+  const parent = readQueryAlternatives(config).find((item) => item.id === alternative.source?.alternative_id);
+  const paths = parent?.branches?.map((branch) => branch.id) ?? [];
+  return paths.length > 0 ? [...new Set([...paths, alternative.source.path_id])] : ["primary"];
+}
+
+function writeQueryAlternatives(config: PipelineConfig, alternatives: PipelineAlternative[]): PipelineConfig {
+  const execution = canonicalExecution(config);
+  return {
+    ...config,
+    query: {
+      ...(config.query ?? {}),
+      execution: {
+        ...execution,
+        alternatives,
+        max_attempts: Math.max(typeof execution.max_attempts === "number" ? execution.max_attempts : 1, alternatives.length),
+      },
+    },
+  };
+}
+
+/** Add a new ordered alternative whose restart stage is selected in the editor. */
+export function addQueryAlternative(config: PipelineConfig, parentId?: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const parent = alternatives.find((alternative) => alternative.id === parentId) ?? alternatives[alternatives.length - 1];
+  if (!parent) return config;
+  const id = nextAlternativeId(alternatives);
+  const pathId = parent.branches && parent.branches.length > 0 ? parent.branches[0].id : "primary";
+  return writeQueryAlternatives(config, [...alternatives, {
+    id,
+    source: { alternative_id: parent.id, path_id: pathId, restart_stage: "assessor" },
+    branches: [{ id: "primary", start_at: "assessor" }],
+    stage_overrides: {},
+  }]);
+}
+
+export function updateAlternativeSource(config: PipelineConfig, alternativeId: string, restartStage: BranchStart, pathId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config).map((alternative) => {
+    if (alternative.id !== alternativeId || !alternative.source) return alternative;
+    return {
+      ...alternative,
+      source: { ...alternative.source, restart_stage: restartStage, path_id: pathId },
+      branches: (alternative.branches ?? []).map((branch) => ({ ...branch, start_at: restartStage })),
+    };
+  });
+  return writeQueryAlternatives(config, alternatives);
+}
+
+export function removeQueryAlternative(config: PipelineConfig, alternativeId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  if (alternativeId === alternatives[0]?.id || alternatives.some((alternative) => alternative.source?.alternative_id === alternativeId)) return config;
+  return writeQueryAlternatives(config, alternatives.filter((alternative) => alternative.id !== alternativeId));
+}
+
+export function duplicateQueryAlternative(config: PipelineConfig, alternativeId: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const index = alternatives.findIndex((alternative) => alternative.id === alternativeId);
+  if (index <= 0) return config;
+  const source = alternatives[index];
+  const duplicateId = nextAlternativeId(alternatives);
+  const duplicate: PipelineAlternative = {
+    ...source,
+    id: duplicateId,
+    source: source.source ? { ...source.source } : null,
+    branches: source.branches?.map((branch) => ({ ...branch })),
+    stage_overrides: source.stage_overrides ? { ...source.stage_overrides } : {},
+  };
+  return writeQueryAlternatives(config, [...alternatives.slice(0, index + 1), duplicate, ...alternatives.slice(index + 1)]);
+}
+
+export function moveQueryAlternative(config: PipelineConfig, alternativeId: string, direction: -1 | 1): PipelineConfig {
+  const alternatives = readQueryAlternatives(config);
+  const index = alternatives.findIndex((alternative) => alternative.id === alternativeId);
+  const nextIndex = index + direction;
+  if (index <= 0 || nextIndex <= 0 || nextIndex >= alternatives.length) return config;
+  const reordered = [...alternatives];
+  [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+  return isAlternativeOrderingValid(reordered) ? writeQueryAlternatives(config, reordered) : config;
+}
+
+function isAlternativeOrderingValid(alternatives: PipelineAlternative[]): boolean {
+  return alternatives.every((alternative, index) => {
+    if (!alternative.source) return index === 0;
+    const sourceIndex = alternatives.findIndex((item) => item.id === alternative.source?.alternative_id);
+    return sourceIndex >= 0 && sourceIndex < index;
+  });
+}
+
+function nextAlternativeId(alternatives: PipelineAlternative[]): string {
+  const used = new Set(alternatives.map((alternative) => alternative.id));
+  let index = alternatives.length + 1;
+  while (used.has(`alternative-${index}`)) index += 1;
+  return `alternative-${index}`;
+}
+
+/** Build a centered, column-based DAG layout for query branches. */
+export function buildBranchGraphLayout(config: PipelineConfig, alternative?: PipelineAlternative): BranchGraphLayout {
+  const selectedAlternative = alternative ?? readQueryAlternatives(config)[0];
+  const branching = Boolean(selectedAlternative?.branches?.length);
+  const branches = queryBranches(selectedAlternative);
+  const rowCenters = branches.map((_, index) => GRAPH_TOP_PADDING + GRAPH_NODE_HEIGHT / 2 + index * GRAPH_ROW_GAP);
+  const stageColumns = QUERY_STAGES.map((stage, index) => ({ stage, index }));
+  const nodeMap = new Map<string, GraphNodeLayout>();
+  const edgeMap = new Map<string, GraphEdgeLayout>();
+  const columnStep = GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP;
+  const xFor = (index: number): number => 22 + index * columnStep;
+  const stageIndex = (stage: StageKey): number => QUERY_STAGES.findIndex((item) => item.key === stage);
+  const reusedBefore = (stage: StageDefinition): boolean => Boolean(
+    alternative?.source && stageIndex(stage.key) < stageIndex(branchStartToStage(alternative.source.restart_stage)),
+  );
+  const sharedY = (index: number): number => {
+    const descendants = branches.flatMap((branch, branchIndex) => {
+      const startIndex = branching ? stageIndex(branchStartToStage(branch.start_at)) : 0;
+      return index < startIndex ? [rowCenters[branchIndex]] : [];
+    });
+    return average(descendants.length > 0 ? descendants : rowCenters);
+  };
+  const nodeKeyFor = (stage: StageDefinition, branch: QueryBranch): { key: string; shared: boolean } => {
+    if (!branching || stage.section !== "query" || stage.key === "decision_policy" || stage.key === "reasoner" || stage.key === "renderer") {
+      return { key: `shared-${stage.key}`, shared: true };
+    }
+    const startIndex = stageIndex(branchStartToStage(branch.start_at));
+    const currentIndex = stageIndex(stage.key);
+    return currentIndex < startIndex
+      ? { key: `shared-${stage.key}`, shared: true }
+      : { key: `${branch.id}-${stage.key}`, shared: false };
+  };
+  const ensureNode = (stage: StageDefinition, branch: QueryBranch): GraphNodeLayout => {
+    const identity = nodeKeyFor(stage, branch);
+    const existing = nodeMap.get(identity.key);
+    if (existing) return existing;
+    const node: GraphNodeLayout = {
+      key: identity.key,
+      definition: stage,
+      x: xFor(stageColumns.find((item) => item.stage.key === stage.key)?.index ?? 0),
+      y: (identity.shared ? sharedY(stageIndex(stage.key)) : rowCenters[branches.findIndex((item) => item.id === branch.id)]) - GRAPH_NODE_HEIGHT / 2,
+      shared: identity.shared,
+      reused: reusedBefore(stage),
+      branchId: identity.shared ? undefined : branch.id,
+    };
+    nodeMap.set(node.key, node);
+    return node;
+  };
+  const connect = (from: GraphNodeLayout, to: GraphNodeLayout): void => {
+    if (from.key === to.key) return;
+    const key = `${from.key}-${to.key}`;
+    if (!edgeMap.has(key)) edgeMap.set(key, { from: from.key, to: to.key });
+  };
+
+  for (const branch of branches) {
+    let previous: GraphNodeLayout | undefined;
+    for (const { stage } of stageColumns) {
+      const current = ensureNode(stage, branch);
+      if (previous) connect(previous, current);
+      previous = current;
+    }
+  }
+
+  const width = xFor(QUERY_STAGES.length - 1) + GRAPH_NODE_WIDTH + 22;
+  const height = GRAPH_TOP_PADDING + Math.max(1, branches.length - 1) * GRAPH_ROW_GAP + GRAPH_NODE_HEIGHT + GRAPH_BOTTOM_PADDING;
+  return {
+    nodes: [...nodeMap.values()],
+    edges: [...edgeMap.values()],
+    branches: branches.map((branch, index) => ({
+      id: branch.id,
+      label: branch.id === "pipeline" ? "Pipeline" : branch.id,
+      center: rowCenters[index],
+      removable: branching,
+    })),
+    width,
+    height,
+  };
+}
+
+function queryBranches(alternative: PipelineAlternative | undefined): QueryBranch[] {
+  const branches = (alternative?.branches ?? []).map((branch, index) => normalizeBranch(branch as Record<string, unknown>, index));
+  return branches.length > 0 ? branches : [{ id: "primary", start_at: "retriever" }];
+}
+
+function normalizeBranch(branch: Record<string, unknown>, index: number): QueryBranch {
+  const startAt = branch.start_at === "reranker" || branch.start_at === "assessor" ? branch.start_at : "retriever";
+  return {
+    id: typeof branch.id === "string" && branch.id.trim() ? branch.id : `branch-${index + 1}`,
+    start_at: startAt,
+    ...(typeof branch.retriever === "string" ? { retriever: branch.retriever } : {}),
+    ...(typeof branch.reranker === "string" ? { reranker: branch.reranker } : {}),
+    ...(Array.isArray(branch.assessors) ? { assessors: branch.assessors.filter((item): item is string => typeof item === "string") } : {}),
+  };
+}
+
+function branchStartToStage(start: BranchStart): StageKey {
+  return start === "assessor" ? "assessors" : start;
+}
+
+function stageToBranchStart(stage: StageKey): BranchStart | undefined {
+  if (stage === "assessors") return "assessor";
+  return stage === "retriever" || stage === "reranker" ? stage : undefined;
+}
+
+function average(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+/** Add a branch at a supported stage while retaining the existing config shape. */
+export function addQueryBranch(config: PipelineConfig, startAt: BranchStart, afterBranchId?: string, alternativeId?: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+  const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? alternatives[0]?.id));
+  if (!target) return config;
+  const existing = target.branches ?? [];
+  const normalizedExisting = existing.map((branch) => normalizeBranch(branch as Record<string, unknown>, 0));
+  const branchId = nextBranchId(existing.length < 2 ? [...normalizedExisting, { id: "branch-1", start_at: "retriever" }] : normalizedExisting);
+  const newBranch = { id: branchId, start_at: startAt };
+  const insertionIndex = afterBranchId ? Math.max(0, existing.findIndex((branch) => branch.id === afterBranchId) + 1) : existing.length;
+  target.branches = existing.length < 2
+    ? [{ ...(existing[0] ?? { id: "branch-1" }), start_at: startAt }, newBranch]
+    : [...existing.slice(0, insertionIndex), newBranch, ...existing.slice(insertionIndex)];
+  return writeQueryAlternatives(config, alternatives);
+}
+
+/** Remove a branch from the selected alternative. */
+export function removeQueryBranch(config: PipelineConfig, branchId: string, alternativeId?: string): PipelineConfig {
+  const alternatives = readQueryAlternatives(config).map((alternative) => ({ ...alternative, branches: [...(alternative.branches ?? [])] }));
+  const target = alternatives.find((alternative) => alternative.id === (alternativeId ?? alternatives[0]?.id));
+  if (!target) return config;
+  target.branches = (target.branches ?? []).filter((branch) => branch.id !== branchId);
+  return writeQueryAlternatives(config, alternatives);
+}
+
+function nextBranchId(branches: QueryBranch[]): string {
+  const used = new Set(branches.map((branch) => branch.id));
+  let index = branches.length + 1;
+  while (used.has(`branch-${index}`)) index += 1;
+  return `branch-${index}`;
+}
+
+function StageInspector({ catalog, definition, models, value, onChange, onChangeAssessor }: { catalog: PipelineCatalog; definition: StageDefinition; models: ModelCatalog; value: Record<string, unknown> | undefined; onChange: (value: Record<string, unknown>) => void; onChangeAssessor: (index: number, value: Record<string, unknown>) => void }) {
+  const stage = catalog.stages[definition.catalogKey];
+  const configurationIds = catalog.configuration_ids?.components?.[definition.catalogKey] ?? [];
+  const configurationDefaults = catalog.configuration_defaults?.components?.[definition.catalogKey] ?? {};
+  const assessorValues = definition.key === "assessors" ? readAssessorValue(value) : [];
+  const retrieverCapabilities = isRecord(catalog.compatibility.retriever_capabilities)
+    ? catalog.compatibility.retriever_capabilities
+    : undefined;
+  const selectedRetriever = typeof value?.id === "string" ? value.id : undefined;
+  const requirements = definition.key === "retriever" && selectedRetriever && retrieverCapabilities
+    ? retrieverCapabilities[selectedRetriever]
+    : undefined;
+  const requirementNames = Array.isArray(requirements)
+    ? requirements.filter((item): item is string => typeof item === "string")
+    : [];
+  return (
+    <aside className="pipeline-inspector">
+      <div className="inspector-heading"><span>{definition.section === "representation" ? "Representation / indexing" : "Query processing"}</span><h2>{definition.label}</h2><p>{definition.description}</p></div>
+      {!stage ? <p className="form-error">This stage is not available in the backend catalog.</p> : definition.key === "assessors" ? (
+        <div className="assessor-editor">{(assessorValues.length > 0 ? assessorValues : [{}]).map((assessor, index) => <div className="assessor-item" key={index}><div className="assessor-item-heading"><strong>Assessor {index + 1}</strong></div><SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={assessor} models={models} stageKey={definition.key} onChange={(next) => onChangeAssessor(index, next)} /></div>)}</div>
+      ) : (
+        <SchemaFields configurationDefaults={configurationDefaults} configurationIds={configurationIds} stage={stage} value={value ?? {}} models={models} stageKey={definition.key} onChange={onChange} />
+      )}
+      {definition.key === "embedding" && <p className="inspector-warning">Embedding changes alter the representation identity and may require a new compatible index.</p>}
+      {requirementNames.length > 0 && <p className="inspector-warning">This retriever requires: {requirementNames.join(", ")}. The project index must provide these capabilities.</p>}
+      <p className="inspector-catalog-note">Options and parameter constraints are provided by the backend catalog.</p>
+    </aside>
+  );
+}
+
+function SchemaFields({ stage, value, models, stageKey, configurationIds, configurationDefaults, onChange }: { stage: CatalogStage; value: Record<string, unknown>; models: ModelCatalog; stageKey: StageKey; configurationIds?: string[]; configurationDefaults?: Record<string, Record<string, unknown>>; onChange: (value: Record<string, unknown>) => void }) {
+  const properties = stage.schema.properties ?? {};
+  const required = new Set(stage.schema.required ?? []);
+  return <div className="schema-fields">{Object.entries(properties).filter(([field]) => field !== "type" && field !== "implementation").map(([field, fieldSchema]) => <SchemaField key={field} field={field} schema={fieldSchema} required={required.has(field)} value={value[field]} modelOptions={field === "model_ref" ? (stageKey === "embedding" ? Object.keys(models.embedding) : stageKey === "reasoner" ? Object.keys(models.reasoning) : undefined) : undefined} configurationIds={field === "id" || (field === "component_id" && stageKey === "embedding") ? configurationIds : undefined} onChange={(next) => { const isConfigurationSelector = field === "id" || (field === "component_id" && stageKey === "embedding"); const selectedDefaults = isConfigurationSelector && typeof next === "string" ? configurationDefaults?.[next] : undefined; const updated = selectedDefaults ? { ...selectedDefaults } : { ...value }; if (isConfigurationSelector && next === "") delete updated[field]; else if (!selectedDefaults && next !== undefined && !(isConfigurationSelector && next === "")) updated[field] = next; onChange(updated); }} />)}</div>;
+}
+
+function SchemaField({ field, schema, required, value, modelOptions, configurationIds, onChange }: { field: string; schema: JsonSchema; required: boolean; value: unknown; modelOptions?: string[]; configurationIds?: string[]; onChange: (value: unknown) => void }) {
+  const resolved = resolveSchema(schema);
+  const options = configurationIds?.length ? configurationIds : modelOptions ?? resolved.enum?.filter((item): item is string => typeof item === "string");
+  const actualValue = value ?? resolved.default ?? (resolved.const !== undefined ? resolved.const : "");
+  const optional = !required && (schema.anyOf?.some((item) => item.type === "null") ?? false);
+  const selectOptions = resolved.const !== undefined ? [String(resolved.const)] : options;
+  const hasConfigurationOptions = Boolean(configurationIds?.length);
+  const currentValue = String(actualValue);
+  const currentValueUnavailable = hasConfigurationOptions && currentValue && !selectOptions?.includes(currentValue);
+  return <label className="schema-field"><span>{humanize(field)}{required && <em>Required</em>}</span>{schema.description && <small>{schema.description}</small>}{selectOptions && selectOptions.length > 0 ? <select aria-label={field === "id" || field === "component_id" ? `Choose a ${humanize(field)} for this stage` : undefined} disabled={resolved.const !== undefined} onChange={(event) => onChange(event.target.value)} value={currentValue}>{hasConfigurationOptions && currentValueUnavailable && <option value={currentValue}>{currentValue} (current)</option>}{hasConfigurationOptions && <option disabled={required} value="">Choose a registered stage configuration…</option>}{!required && !hasConfigurationOptions && <option value="">Not set</option>}{selectOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select> : resolved.type === "boolean" ? <input checked={Boolean(actualValue)} onChange={(event) => onChange(event.target.checked)} type="checkbox" /> : resolved.type === "integer" || resolved.type === "number" ? <input max={resolved.maximum} min={resolved.minimum} onChange={(event) => onChange(event.target.value === "" ? (optional ? null : 0) : Number(event.target.value))} type="number" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} /> : <input maxLength={resolved.maxLength} minLength={resolved.minLength} onChange={(event) => onChange(event.target.value || (optional ? null : event.target.value))} type="text" value={actualValue === null || actualValue === undefined ? "" : String(actualValue)} />}{resolved.minimum !== undefined || resolved.maximum !== undefined ? <small className="schema-constraint">{resolved.minimum !== undefined && `Min ${resolved.minimum}`} {resolved.maximum !== undefined && `Max ${resolved.maximum}`}</small> : null}</label>;
+}
+
+function resolveSchema(schema: JsonSchema): JsonSchema {
+  return schema.anyOf?.find((item) => item.type !== "null") ?? schema;
+}
+
+function readStage(config: PipelineConfig, definition: StageDefinition, alternativeId?: string): Record<string, unknown> | undefined {
+  if (alternativeId && alternativeId !== "primary") {
+    const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
+    const override = alternative?.stage_overrides?.[definition.key];
+    if (isRecord(override)) return override;
+  }
+  const section = config[definition.section];
+  if (!section) return undefined;
+  const value = section[definition.key];
+  if (definition.key === "assessors") return readAssessorValue(value)[0];
+  return isRecord(value) ? value : undefined;
+}
+
+function readAssessors(config: PipelineConfig, alternativeId?: string): Record<string, unknown>[] {
+  if (alternativeId && alternativeId !== "primary") {
+    const alternative = readQueryAlternatives(config).find((item) => item.id === alternativeId);
+    const override = alternative?.stage_overrides?.assessors;
+    if (Array.isArray(override)) return override.filter(isRecord);
+  }
+  return readAssessorValue(config.query?.assessors);
+}
+
+function readAssessorValue(value: unknown): Record<string, unknown>[] {
+  if (isRecord(value)) return [value];
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord);
+}
+
+function updateStage(config: PipelineConfig, definition: StageDefinition, value: Record<string, unknown>, alternativeId?: string): PipelineConfig {
+  if (alternativeId && alternativeId !== "primary" && definition.key !== "decision_policy" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
+      ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), [definition.key]: value } }
+      : alternative);
+    return writeQueryAlternatives(config, alternatives);
+  }
+  const next = cloneConfig(config);
+  if (definition.key === "assessors") next.query = { ...(next.query ?? {}), assessors: [value] };
+  else next[definition.section] = { ...(next[definition.section] ?? {}), [definition.key]: value };
+  return next;
+}
+
+function updateAssessors(config: PipelineConfig, values: Record<string, unknown>[], alternativeId?: string): PipelineConfig {
+  if (alternativeId && alternativeId !== "primary" && readQueryAlternatives(config).some((alternative) => alternative.id === alternativeId)) {
+    const alternatives = readQueryAlternatives(config).map((alternative) => alternative.id === alternativeId
+      ? { ...alternative, stage_overrides: { ...(alternative.stage_overrides ?? {}), assessors: values } }
+      : alternative);
+    return writeQueryAlternatives(config, alternatives);
+  }
+  const next = cloneConfig(config);
+  next.query = { ...(next.query ?? {}), assessors: values };
+  return next;
+}
+
+export function serializeDraft(config: PipelineConfig, catalog: PipelineCatalog): PipelineConfig {
+  const next = cloneConfig(config);
+  if (next.representation) {
+    const representation = { ...next.representation };
+    for (const definition of REPRESENTATION_STAGES) {
+      if (Object.prototype.hasOwnProperty.call(representation, definition.key)) {
+        representation[definition.key] = compactStageValue(
+          representation[definition.key],
+          definition,
+          catalog,
+        ) as never;
+      }
+    }
+    next.representation = representation;
+  }
+  if (next.query) {
+    const query = { ...next.query };
+    for (const definition of QUERY_STAGES) {
+      if (!Object.prototype.hasOwnProperty.call(query, definition.key)) continue;
+      query[definition.key] = definition.key === "assessors"
+        ? compactStageValues(query[definition.key], definition, catalog)
+        : compactStageValue(query[definition.key], definition, catalog);
+    }
+    const execution = isRecord(query.execution) ? { ...query.execution } : undefined;
+    if (execution && Array.isArray(execution.alternatives)) {
+      execution.alternatives = execution.alternatives.map((alternative) => {
+        if (!isRecord(alternative) || !isRecord(alternative.stage_overrides)) return alternative;
+        const overrides = { ...alternative.stage_overrides };
+        for (const definition of QUERY_STAGES) {
+          if (!Object.prototype.hasOwnProperty.call(overrides, definition.key)) continue;
+          overrides[definition.key] = definition.key === "assessors"
+            ? compactStageValues(overrides[definition.key], definition, catalog)
+            : compactStageValue(overrides[definition.key], definition, catalog);
+        }
+        return { ...alternative, stage_overrides: overrides };
+      });
+      query.execution = execution;
+    }
+    next.query = query;
+  }
+  return next;
+}
+
+function compactStageValues(value: unknown, definition: StageDefinition, catalog: PipelineCatalog): unknown {
+  return Array.isArray(value)
+    ? value.map((item) => compactStageValue(item, definition, catalog))
+    : value;
+}
+
+function compactStageValue(value: unknown, definition: StageDefinition, catalog: PipelineCatalog): unknown {
+  if (!isRecord(value)) return value;
+  const idField = definition.key === "embedding" ? "component_id" : "id";
+  const id = value[idField];
+  const defaults = typeof id === "string"
+    ? catalog.configuration_defaults?.components?.[definition.catalogKey]?.[id]
+    : undefined;
+  return defaults && JSON.stringify(value) === JSON.stringify(defaults)
+    ? { [idField]: id }
+    : value;
+}
+
+function validateDraft(config: PipelineConfig | null, name: string, version: string, stages: StageDefinition[], catalog?: PipelineCatalog, models?: ModelCatalog): string[] {
+  if (!config || !catalog || !models) return ["Pipeline configuration is still loading."];
+  const issues: string[] = [];
+  if (!name.trim()) issues.push("Pipeline name is required.");
+  if (!/^\d+$/.test(version) || Number(version) < 1) issues.push("Version must be a positive integer.");
+  if (config.kind === "query") {
+    const alternatives = readQueryAlternatives(config);
+    if (alternatives.length === 0) issues.push("At least one query alternative is required.");
+    const alternativeIds = alternatives.map((alternative) => alternative.id);
+    if (new Set(alternativeIds).size !== alternativeIds.length) issues.push("Alternative IDs must be unique.");
+    for (const alternative of alternatives) {
+      const branchIds = (alternative.branches ?? []).map((branch) => branch.id);
+      if (new Set(branchIds).size !== branchIds.length) issues.push(`Branch IDs must be unique in ${alternative.id}.`);
+    }
+  }
+  for (const definition of stages) {
+    const value = readStage(config, definition);
+    if (!value) issues.push(`${definition.label} must be configured.`);
+    const stage = catalog.stages[definition.catalogKey];
+    if (value && stage) {
+      for (const field of stage.schema.required ?? []) {
+        if (value[field] === undefined || value[field] === null || value[field] === "") {
+          issues.push(`${definition.label} requires ${humanize(field)}.`);
+        }
+      }
+      const idField = definition.key === "embedding" ? "component_id" : "id";
+      const selectedId = value[idField];
+      const configurationIds = catalog.configuration_ids?.components?.[definition.catalogKey] ?? [];
+      if (typeof selectedId === "string" && configurationIds.length > 0 && !configurationIds.includes(selectedId)) issues.push(`${definition.label} uses an unsupported stage configuration.`);
+      if (definition.key === "embedding" && typeof value.model_ref === "string" && !models.embedding[value.model_ref]) issues.push("Embedding model reference is unavailable.");
+      if (definition.key === "reasoner" && typeof value.model_ref === "string" && !models.reasoning[value.model_ref]) issues.push("Reasoning model reference is unavailable.");
+    }
+  }
+  return [...new Set(issues)];
+}
+
+function emptyConfig(kind: PipelineKind): PipelineConfig {
+  return {
+    schema_version: 1,
+    kind,
+    name: "new_pipeline",
+    version: 1,
+    description: "",
+    is_default: false,
+    ...(kind !== "query" ? { representation: {} } : {}),
+    ...(kind !== "ingestion" ? {
+      query: {
+        execution: {
+          alternatives: [{ id: "primary", source: null, branches: [], stage_overrides: {} }],
+          max_attempts: 3,
+        },
+      },
+    } : {}),
+  };
+}
+
+function parsePipelineKind(value: string | null): PipelineKind | undefined {
+  return value === "ingestion" || value === "query" ? value : undefined;
+}
+
+function stagesForKind(kind: PipelineKind): StageDefinition[] {
+  if (kind === "ingestion") return REPRESENTATION_STAGES;
+  if (kind === "query") return QUERY_STAGES;
+  return QUERY_STAGES;
+}
+
+function cloneConfig(config: PipelineConfig): PipelineConfig {
+  return orderPipelineStages(JSON.parse(JSON.stringify(config)) as PipelineConfig);
+}
+
+/**
+ * Preserve the canonical query-stage order when a configuration is cloned or serialized.
+ * Unknown query settings remain available after the registered stages.
+ */
+export function orderPipelineStages(config: PipelineConfig): PipelineConfig {
+  if (!config.query) return config;
+  const orderedQuery: Record<string, unknown> = {};
+  for (const stage of QUERY_STAGES) {
+    if (Object.prototype.hasOwnProperty.call(config.query, stage.key)) {
+      orderedQuery[stage.key] = config.query[stage.key];
+    }
+  }
+  for (const [key, value] of Object.entries(config.query)) {
+    if (!Object.prototype.hasOwnProperty.call(orderedQuery, key)) {
+      orderedQuery[key] = value;
+    }
+  }
+  return { ...config, query: orderedQuery };
+}
+
+function snapshot(config: PipelineConfig): DraftSnapshot {
+  return snapshotWithMetadata(config, config.name, config.description, String(config.version), config.is_default);
+}
+
+function snapshotWithMetadata(config: PipelineConfig, name: string, description: string, version: string, isDefault: boolean): DraftSnapshot {
+  return { config: JSON.stringify(config), name, description, version, isDefault };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function humanize(value: string): string {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ExecutionSettings({ config, onChange }: { config: PipelineConfig; onChange: (config: PipelineConfig) => void }) {
+  const execution = isRecord(config.query?.execution) ? config.query.execution : {};
+  return (
+    <div className="execution-settings">
+      <label>Maximum attempts<input min="1" max="100" type="number" value={typeof execution.max_attempts === "number" ? execution.max_attempts : 3} onChange={(event) => onChange(updateExecutionValue(config, "max_attempts", Math.max(1, Number(event.target.value) || 1)))} /></label>
+      <label>Final failure<select value={execution.final_failure_policy === "reject" || execution.final_failure_policy === "abstain" ? execution.final_failure_policy : "best_result"} onChange={(event) => onChange(updateExecutionValue(config, "final_failure_policy", event.target.value))}><option value="best_result">Return best result</option><option value="reject">Reject answer</option><option value="abstain">Abstain</option></select></label>
+      <label>Evidence merge<select value={execution.evidence_merge === "union" || execution.evidence_merge === "rrf" ? execution.evidence_merge : "replace"} onChange={(event) => onChange(updateExecutionValue(config, "evidence_merge", event.target.value))}><option value="replace">Selected path only</option><option value="union">Union path evidence</option><option value="rrf">Reciprocal-rank fusion</option></select></label>
+    </div>
+  );
+}
+
+function updateExecutionValue(config: PipelineConfig, key: string, value: unknown): PipelineConfig {
+  const execution = canonicalExecution(config);
+  execution[key] = value;
+  return { ...config, query: { ...(config.query ?? {}), execution } };
+}
+
+function canonicalExecution(config: PipelineConfig): Record<string, unknown> {
+  const source = isRecord(config.query?.execution) ? config.query.execution as Record<string, unknown> : {};
+  const execution: Record<string, unknown> = {};
+  for (const key of ["evidence_merge", "max_stage_calls", "alternatives", "max_attempts", "final_failure_policy"]) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) execution[key] = source[key];
+  }
+  return execution;
+}

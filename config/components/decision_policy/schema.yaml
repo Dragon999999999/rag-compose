@@ -1,0 +1,33 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Decision policy component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: decision_policy}
+      implementation:
+        enum:
+          - basic_grounding
+          - always_accept
+          - threshold
+          - top_k
+          - token_budget
+          - consensus
+          - fallback_retrieval
+          - adaptive_retrieval
+          - select_branches
+          - merge_branches
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          threshold: {type: number}
+          assessment_dimension: {type: string, minLength: 1}
+          top_k: {type: integer, minimum: 1}
+          token_budget: {type: integer, minimum: 1}
+          min_agreement: {type: number, minimum: 0, maximum: 1}
+          parameter_overrides: {type: object}
+          branch_ids:
+            type: array
+            items: {type: string, minLength: 1}

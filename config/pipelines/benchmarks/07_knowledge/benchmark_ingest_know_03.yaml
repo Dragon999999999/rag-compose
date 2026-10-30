@@ -1,0 +1,11 @@
+schema_version: 2
+kind: ingestion
+name: benchmark_ingest_know_03
+version: 1
+description: Generated RAG benchmark ingestion pipeline.
+representation:
+  parser: parser_pymupdf
+  knowledge_builder: knowledge_metadata_rules
+  chunker: chunker_recursive_tokens
+  embedding: embedding_local_bge_m3
+  vector_backend: vector_backend_qdrant

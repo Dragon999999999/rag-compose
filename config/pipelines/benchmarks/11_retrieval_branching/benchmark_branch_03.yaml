@@ -1,0 +1,39 @@
+schema_version: 2
+kind: query
+name: benchmark_branch_03
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_evidence_sufficiency
+  decision_policy: decision_merge_branches
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 1
+    max_stage_calls: 100
+    evidence_merge: union
+    final_failure_policy: best_result
+    alternatives:
+    - id: primary
+      branches:
+      - id: dense
+        start_at: retriever
+        retriever: vector_similarity
+        assessors:
+        - evidence_sufficiency
+      - id: bm25
+        start_at: retriever
+        retriever: bm25
+        assessors:
+        - evidence_sufficiency
+      - id: hybrid
+        start_at: retriever
+        retriever: hybrid_rrf
+        assessors:
+        - evidence_sufficiency

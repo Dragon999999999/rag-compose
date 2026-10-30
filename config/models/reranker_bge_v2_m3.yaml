@@ -1,0 +1,19 @@
+id: reranker_bge_v2_m3
+stage: reranker
+location: local
+backend: sentence_transformers
+name: BAAI/bge-reranker-v2-m3
+source:
+  type: huggingface
+  repository: BAAI/bge-reranker-v2-m3
+storage:
+  relative_path: reranker/bge_reranker_v2_m3
+runtime:
+  type: in_process
+  device: cuda
+  idle_timeout_seconds: 600
+  memory_limit: 4g
+parameters:
+  reranker_type: cross_encoder
+  batch_size: 2
+  max_length: 512

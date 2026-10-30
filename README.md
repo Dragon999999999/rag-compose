@@ -1,93 +1,200 @@
-# ErikMayr_LLMOutputValidation
+# LLM Grounding Project
 
+The project provides configurable scientific-document grounding with separate
+ingestion and query pipelines. Ingestion parses documents into canonical
+evidence and optional indexes; query pipelines retrieve, rerank, assess, and
+render grounded answers. A FastAPI adapter and a React frontend expose the same
+application services to browser clients and evaluation tools.
 
+## Run
 
-## Getting started
+Requires Python 3.13+ and `uv`.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.tuwien.ac.at/energyit_projects/student/pr/erikmayr_llmoutputvalidation.git
-git branch -M main
-git push -uf origin main
+```bash
+uv sync --locked
+export AQUEDUCT_API_KEY_FILE=/path/to/aqueduct-key.txt
+uv run python -m llm_grounding project add-document PROJECT_ID path/to/paper.pdf
 ```
 
-## Integrate with your tools
+Alternatively, set `AQUEDUCT_API_KEY`; a nonempty value takes precedence over the
+UTF-8 key file. Both are stripped of surrounding whitespace. `.env.example`
+documents the variables, and the application loads the repository `.env` without
+overriding values already present in the environment.
 
-* [Set up project integrations](https://gitlab.tuwien.ac.at/energyit_projects/student/pr/erikmayr_llmoutputvalidation/-/settings/integrations)
+The canonical pipeline definitions are under [`config/pipelines`](config/pipelines).
+Change model and component settings in those pipeline files when needed:
 
-## Collaborate with your team
+```bash
+uv run python -m llm_grounding \
+  pipeline validate config/pipelines/query_basic_v1.yaml
+```
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+The installed `llm-grounding` command exposes the same CLI. Default YAML is bundled
+in the wheel, so installed usage does not depend on the working directory.
 
-## Test and Deploy
+The canonical reusable configuration definitions are under [`config/`](config/),
+with standalone models in [`config/models/`](config/models/) and components in
+[`config/components/`](config/components/). See
+[`docs/architecture.md`](docs/architecture.md) for the resolution rules.
 
-Use the built-in continuous integration in GitLab.
+## Persistent development setup
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+The persistent application keeps PostgreSQL as canonical structured state, MinIO
+as canonical PDF storage, and a configured vector backend as a rebuildable index.
+The default ingestion pipeline uses Qdrant; pgvector and FAISS are also supported
+by the vector-backend registry. Start the local services and apply the canonical
+schema before using project or chat commands:
 
-***
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose ps
+uv sync --locked --extra embeddings
+uv run alembic upgrade head
+```
 
-# Editing this README
+The first command that uses a local model may download its configured weights.
+Local models are stored below `MODEL_STORAGE_ROOT` (default
+`~/.cache/llm-grounding/models`); the configured runtime may be in-process or a
+managed Docker inference container. Query-time model use reuses the local weights
+and does not require Hub authentication once they are available. Install the
+`embeddings` extra when using in-process Sentence Transformers models.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Then create a project, ingest a PDF, and ask a project-scoped question:
 
-## Suggestions for a good README
+```bash
+uv run python -m llm_grounding project create "Quantum Key Distribution"
+uv run python -m llm_grounding project add-document PROJECT_ID paper.pdf
+uv run python -m llm_grounding chat create PROJECT_ID "Protocol comparison"
+uv run python -m llm_grounding chat ask CHAT_ID "What are the main differences?"
+uv run python -m llm_grounding project delete PROJECT_ID
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+For grounding investigations, add `--grounding-diagnostics summary` to a chat
+query to log retrieved IDs, assessments, and the policy decision to stderr. Use
+`--grounding-diagnostics verbose` only for local debugging: it additionally logs
+retrieved text, conversation history, and the raw structured LLM response.
 
-## Name
-Choose a self-explaining name for your project.
+MinIO creates `MINIO_BUCKET` lazily and idempotently when a document is first added.
+Stop services with `docker compose down`. `docker compose down -v` also deletes all
+local PostgreSQL, Qdrant, and MinIO data and is intentionally destructive.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Architecture
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```text
+src/llm_grounding/
+├── domain/             # Sources, evidence, claims, outputs, and run records
+├── parsing/            # Structured PDF blocks with provenance
+├── knowledge/          # In-memory canonical evidence
+├── retrieval/          # Dense, lexical, sparse, hybrid, and multivector retrieval
+├── reasoning/          # Grounded prompt and typed answer generation
+├── assessment/         # Grounding assessments
+├── decision/           # Grounding decisions
+├── rendering/          # Grounded answer rendering
+├── orchestration/      # Split-pipeline query execution
+├── infrastructure/     # Typed YAML and Aqueduct adapter/credentials
+└── application/        # Service and CLI
+config/pipelines/             # Ingestion, query, test, and benchmark compositions
+benchmarks/rag_benchmark_manifest.yaml
+tests/unit/
+tests/integration/
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+The normal execution path is:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```text
+parse → build knowledge → retrieve → rerank → reason → assess → decide → render
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+The service returns a `RagRun` with the `Answer`, retrieved evidence, candidate
+output, assessments, decision, timing, and stage trace. A component failure raises
+`RunFailedError`, whose `.run` retains partial results. The CLI uses concise error
+messages and nonzero exits. Library clients can inspect the chained cause.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+See [`docs/architecture.md`](docs/architecture.md) for the configuration contract,
+runtime resolution rules, persistence boundaries, and extension points.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### Configurable retrieval and reranking
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Query pipelines can preserve or truncate retrieval order, use dense, PostgreSQL
+FTS, BM25, learned sparse, ColBERT MaxSim, full-context, or hybrid retrieval, and
+then apply an identity, top-k, local cross-encoder, or generative reranker. Local
+cross-encoder settings are kept in a reusable component definition:
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```yaml
+id: reranker_cross_encoder
+type: reranker
+implementation: cross_encoder
+config:
+  model_id: cross_encoder_minilm
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cpu
+  batch_size: 16
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Install the optional dependency with `uv sync --locked --extra reranking`. The
+cross-encoder is loaded lazily and cached in `~/.cache/rag-eval/models`, or in
+`RAG_EVAL_MODEL_CACHE_DIR` when set. No API key or model server is needed for an
+in-process cross-encoder.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Persistent project corpora and the ingestion/query workflow are documented in
+[`docs/persistent_corpus.md`](docs/persistent_corpus.md).
+The complete CLI command reference is in [`docs/cli.md`](docs/cli.md).
 
-## License
-For open source projects, say how it is licensed.
+## Development checks
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```bash
+uv run ruff format .
+uv run ruff check .
+uv run mypy src
+uv run pytest
+```
+
+## Browser frontend
+
+The browser application is a separate React/TypeScript/Vite workspace. It uses the
+FastAPI adapter as another application interface; it never receives database,
+Qdrant, MinIO, embedding, or Aqueduct credentials. With the persistent services
+prepared as above, start the API and frontend in separate terminals:
+
+```bash
+uv run llm-grounding-api
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+`VITE_API_BASE_URL` is the only frontend environment setting and is intentionally
+non-secret. The API defaults to `http://127.0.0.1:8002`; set
+`VITE_API_BASE_URL=http://127.0.0.1:8002/api` for the local frontend. Change
+`LLM_GROUNDING_CORS_ORIGINS` when serving the Vite app from a different origin.
+The Evidence pane receives canonical, validated claim citations and source metadata
+from the API, and PDF binaries are streamed through the API rather than MinIO.
+
+Tests generate small PDFs locally and substitute either the generation client,
+PydanticAI's test model, or an in-memory HTTP transport. They block external socket
+connections and do not need Aqueduct credentials. The HTTP tests exercise the
+actual adapter/provider/SDK stack, including schema serialization and client
+closure, without contacting a service.
+
+Follow [`AGENTS.md`](AGENTS.md) for repository conventions. `uv.lock` records the
+resolved dependencies. Record the Git commit alongside experimental results;
+run metadata includes the package version, input digest, effective architecture
+configuration, and prompt/schema identity.
+
+## Limitations
+
+Query results are grounded only in indexed evidence; insufficient evidence is
+returned explicitly. Cross-encoder and generative reranker scores reorder
+candidates but do not establish claim entailment or answer correctness. The
+current PDF parser uses position-based reading order and does not perform OCR.
+Models are nondeterministic and remote aliases may change over time.
+
+The project includes a native `/eval/v1` adapter for reproducible retrieval and
+grounded-answer evaluation. Its canonical observations are defined in
+`src/llm_grounding/observability` and can be persisted and recovered by request
+identity. The checked-in [`rag_eval_protocol_schema.json`](rag_eval_protocol_schema.json)
+captures the public observation models for tooling. See
+[`docs/eval_protocol.md`](docs/eval_protocol.md) for the HTTP contract.

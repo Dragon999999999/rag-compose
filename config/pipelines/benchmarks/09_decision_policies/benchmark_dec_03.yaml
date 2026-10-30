@@ -1,0 +1,16 @@
+schema_version: 2
+kind: query
+name: benchmark_dec_03
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_relevance
+  decision_policy: decision_threshold
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10

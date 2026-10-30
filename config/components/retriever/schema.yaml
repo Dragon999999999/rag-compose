@@ -1,0 +1,111 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Retriever component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {enum: [dense, sparse, hybrid, multivector, full_context]}
+      implementation: {enum: [vector_similarity, postgres_fts, bm25, bge_m3_sparse, colbert_v2, hybrid_rrf, hybrid_weighted, postgres_all_chunks]}
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          top_k:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            x-override-scopes: [pipeline, chat, request]
+          context_chars:
+            type: integer
+            minimum: 1
+            maximum: 200000
+            default: 12000
+            x-override-scopes: [pipeline, chat, request]
+          context_budget_tokens:
+            type: integer
+            minimum: 1
+            maximum: 1000000
+            default: 16000
+            x-override-scopes: [pipeline, chat, request]
+          summary_per_facet:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 3
+            x-override-scopes: [pipeline, chat, request]
+          dense_top_k:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            x-override-scopes: [pipeline, chat, request]
+          sparse_top_k:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            x-override-scopes: [pipeline, chat, request]
+          rrf_k:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 60
+            x-override-scopes: [pipeline, chat, request]
+          dense_weight:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 100
+            default: 1.0
+            x-override-scopes: [pipeline, chat, request]
+          sparse_weight:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 100
+            default: 1.0
+            x-override-scopes: [pipeline, chat, request]
+          bm25_k1:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 10
+            default: 1.2
+            x-override-scopes: [pipeline, chat, request]
+          bm25_b:
+            type: number
+            minimum: 0
+            maximum: 1
+            default: 0.75
+            x-override-scopes: [pipeline, chat, request]
+          candidate_top_k:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+            x-override-scopes: [pipeline, chat, request]
+          score_normalization:
+            enum: [min_max, none]
+            default: min_max
+            x-override-scopes: [pipeline, chat, request]
+          query_embedder:
+            type: [string, 'null']
+            default: null
+            x-override-scopes: [pipeline, chat]
+        x-override-scopes: []
+      requirements:
+        type: object
+        additionalProperties: false
+        properties:
+          required:
+            type: array
+            uniqueItems: true
+            items:
+              enum:
+                - persisted_chunks
+                - postgres_fts
+                - dense_vector_index
+                - compatible_query_embedder
+                - sparse_vector_index
+                - multivector_index
+                - sparse_query_embedder
+                - late_interaction_model

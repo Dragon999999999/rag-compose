@@ -1,0 +1,4033 @@
+{
+  "$defs": {
+    "ArchitectureConfiguration": {
+      "additionalProperties": false,
+      "description": "Effective architecture identity without credentials.",
+      "properties": {
+        "config_hash": {
+          "title": "Config Hash",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "config_hash"
+      ],
+      "title": "ArchitectureConfiguration",
+      "type": "object"
+    },
+    "AssessmentModel": {
+      "additionalProperties": false,
+      "description": "Canonical evaluation of a generated candidate.",
+      "properties": {
+        "assessment_id": {
+          "title": "Assessment Id",
+          "type": "string"
+        },
+        "assessor": {
+          "title": "Assessor",
+          "type": "string"
+        },
+        "dimension": {
+          "title": "Dimension",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        }
+      },
+      "required": [
+        "assessment_id",
+        "assessor",
+        "dimension"
+      ],
+      "title": "AssessmentModel",
+      "type": "object"
+    },
+    "CitationModel": {
+      "additionalProperties": false,
+      "description": "Resolved or unresolved provenance for a claim citation.",
+      "properties": {
+        "chunk_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunk Id"
+        },
+        "citation_id": {
+          "title": "Citation Id",
+          "type": "string"
+        },
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Id"
+        },
+        "end_char": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Char"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "resolved": {
+          "default": false,
+          "title": "Resolved",
+          "type": "boolean"
+        },
+        "source_evidence_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Evidence Id"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Text"
+        },
+        "start_char": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Char"
+        }
+      },
+      "required": [
+        "citation_id",
+        "claim_id"
+      ],
+      "title": "CitationModel",
+      "type": "object"
+    },
+    "ClaimModel": {
+      "additionalProperties": false,
+      "description": "One canonical answer claim and the citations assigned to it.",
+      "properties": {
+        "answer_span": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer Span"
+        },
+        "citations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "source_answer_span": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Answer Span"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "text"
+      ],
+      "title": "ClaimModel",
+      "type": "object"
+    },
+    "Confidence": {
+      "additionalProperties": false,
+      "description": "Optional confidence with explicit interpretation and origin.",
+      "properties": {
+        "interpretation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interpretation"
+        },
+        "origin": {
+          "$ref": "#/$defs/ConfidenceOrigin",
+          "default": "unavailable"
+        },
+        "range": {
+          "default": "[0,1]",
+          "title": "Range",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "Confidence",
+      "type": "object"
+    },
+    "ConfidenceOrigin": {
+      "description": "Identify a confidence source without implying unsupported calibration.",
+      "enum": [
+        "model",
+        "calibration_model",
+        "unavailable"
+      ],
+      "title": "ConfidenceOrigin",
+      "type": "string"
+    },
+    "ConversationState": {
+      "additionalProperties": false,
+      "description": "State needed to reproduce a multi-turn evaluation turn.",
+      "properties": {
+        "context_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Summary"
+        },
+        "included_history_turn_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Included History Turn Ids",
+          "type": "array"
+        },
+        "memory_state_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory State Id"
+        },
+        "prior_turn_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Prior Turn Ids",
+          "type": "array"
+        }
+      },
+      "title": "ConversationState",
+      "type": "object"
+    },
+    "CorpusConfiguration": {
+      "additionalProperties": false,
+      "description": "Corpus identity associated with the observation.",
+      "properties": {
+        "corpus_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Corpus Id"
+        },
+        "hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hash"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "title": "CorpusConfiguration",
+      "type": "object"
+    },
+    "DecisionModel": {
+      "additionalProperties": false,
+      "description": "Policy action taken after assessment.",
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "assessment_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assessment Ids",
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "DecisionModel",
+      "type": "object"
+    },
+    "EffectiveConfiguration": {
+      "additionalProperties": false,
+      "description": "All effective, reproducibility-relevant runtime configuration.",
+      "properties": {
+        "architecture": {
+          "$ref": "#/$defs/ArchitectureConfiguration"
+        },
+        "corpus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CorpusConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "embedding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmbeddingConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ingestion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IngestionConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retrieval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetrievalConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "architecture"
+      ],
+      "title": "EffectiveConfiguration",
+      "type": "object"
+    },
+    "EmbeddingConfiguration": {
+      "additionalProperties": false,
+      "description": "Effective embedding-space identity.",
+      "properties": {
+        "dimension": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimension"
+        },
+        "embedding_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding Hash"
+        },
+        "endpoint_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint Hash"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "normalization": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalization"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "title": "EmbeddingConfiguration",
+      "type": "object"
+    },
+    "EmbeddingDiagnostics": {
+      "additionalProperties": false,
+      "description": "Query or document embedding identity and measured diagnostics.",
+      "properties": {
+        "configuration_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configuration Hash"
+        },
+        "dimension": {
+          "title": "Dimension",
+          "type": "integer"
+        },
+        "distance_metric": {
+          "default": "cosine",
+          "title": "Distance Metric",
+          "type": "string"
+        },
+        "embedding_id": {
+          "title": "Embedding Id",
+          "type": "string"
+        },
+        "invocation_count": {
+          "default": 1,
+          "minimum": 0,
+          "title": "Invocation Count",
+          "type": "integer"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Version"
+        },
+        "normalization": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalization"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Type"
+        },
+        "vector": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector"
+        },
+        "vector_norm": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector Norm"
+        }
+      },
+      "required": [
+        "embedding_id",
+        "model_id",
+        "dimension"
+      ],
+      "title": "EmbeddingDiagnostics",
+      "type": "object"
+    },
+    "EmbeddingRecord": {
+      "additionalProperties": false,
+      "description": "Optional evaluation artifact for one sampled document or query vector.",
+      "properties": {
+        "embedding_id": {
+          "title": "Embedding Id",
+          "type": "string"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Version"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Type"
+        },
+        "vector": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector"
+        },
+        "vector_norm": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector Norm"
+        }
+      },
+      "required": [
+        "embedding_id",
+        "model_id"
+      ],
+      "title": "EmbeddingRecord",
+      "type": "object"
+    },
+    "EvalConfigOverrides": {
+      "additionalProperties": false,
+      "description": "Per-request settings supported by the current query pipeline.",
+      "properties": {
+        "chunker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunker"
+        },
+        "context_chars": {
+          "anyOf": [
+            {
+              "maximum": 200000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Chars"
+        },
+        "embedder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedder"
+        },
+        "embedding": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Name"
+        },
+        "parser": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parser"
+        },
+        "prompt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Id"
+        },
+        "rerank_top_k": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Top K"
+        },
+        "reranker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker"
+        },
+        "reranker_batch_size": {
+          "anyOf": [
+            {
+              "maximum": 512,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker Batch Size"
+        },
+        "reranker_device": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker Device"
+        },
+        "reranker_model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker Model Name"
+        },
+        "retrieval_top_k": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieval Top K"
+        },
+        "summary_per_facet": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Per Facet"
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top K"
+        },
+        "vector_retriever": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector Retriever"
+        }
+      },
+      "title": "EvalConfigOverrides",
+      "type": "object"
+    },
+    "EvalCorpusRequest": {
+      "additionalProperties": false,
+      "description": "Create or replace an isolated evaluation corpus inventory.",
+      "properties": {
+        "chunks": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Chunks",
+          "type": "array"
+        },
+        "corpus_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Corpus Id"
+        },
+        "documents": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "parent_corpus_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Corpus Id"
+        },
+        "perturbation_metadata": {
+          "additionalProperties": true,
+          "title": "Perturbation Metadata",
+          "type": "object"
+        },
+        "version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "title": "EvalCorpusRequest",
+      "type": "object"
+    },
+    "EvalEmbeddingRequest": {
+      "description": "Request a bounded set of evaluation-only vectors.",
+      "properties": {
+        "chunk_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Chunk Ids",
+          "type": "array"
+        },
+        "include_vectors": {
+          "default": false,
+          "title": "Include Vectors",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "chunk_ids"
+      ],
+      "title": "EvalEmbeddingRequest",
+      "type": "object"
+    },
+    "EvalError": {
+      "description": "Stable structured error envelope for evaluation clients.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        },
+        "error": {
+          "const": "eval_error",
+          "default": "eval_error",
+          "title": "Error",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "EvalError",
+      "type": "object"
+    },
+    "EvalHealthDependency": {
+      "description": "Report one dependency state without exposing connection details.",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "status": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "unhealthy"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "EvalHealthDependency",
+      "type": "object"
+    },
+    "EvalHealthDetails": {
+      "description": "Expose dependency-level diagnostics for the target health check.",
+      "properties": {
+        "dependencies": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EvalHealthDependency"
+          },
+          "title": "Dependencies",
+          "type": "object"
+        }
+      },
+      "required": [
+        "dependencies"
+      ],
+      "title": "EvalHealthDetails",
+      "type": "object"
+    },
+    "EvalHealthResponse": {
+      "description": "Canonical Target Protocol v1 health response.",
+      "properties": {
+        "details": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvalHealthDetails"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "READY",
+            "DEGRADED",
+            "NOT_READY"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/EvalHealthTarget"
+        }
+      },
+      "required": [
+        "status",
+        "target"
+      ],
+      "title": "EvalHealthResponse",
+      "type": "object"
+    },
+    "EvalHealthTarget": {
+      "description": "Identify the Target Protocol implementation being checked.",
+      "properties": {
+        "implementation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Implementation"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "EvalHealthTarget",
+      "type": "object"
+    },
+    "EvalInventoryUpload": {
+      "description": "Upload isolated document or canonical chunk metadata.",
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "maxItems": 100000,
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "EvalInventoryUpload",
+      "type": "object"
+    },
+    "EvalQueryRequest": {
+      "additionalProperties": false,
+      "description": "Submit one grounded query against a corpus/project.",
+      "properties": {
+        "benchmark_case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark Case Id"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "config_overrides": {
+          "additionalProperties": true,
+          "title": "Config Overrides",
+          "type": "object"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "corpus_id": {
+          "minLength": 1,
+          "title": "Corpus Id",
+          "type": "string"
+        },
+        "experiment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Experiment Id"
+        },
+        "filters": {
+          "additionalProperties": true,
+          "title": "Filters",
+          "type": "object"
+        },
+        "history": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Include",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "perturbation_metadata": {
+          "additionalProperties": true,
+          "title": "Perturbation Metadata",
+          "type": "object"
+        },
+        "query": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "turn_index": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Turn Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "query"
+      ],
+      "title": "EvalQueryRequest",
+      "type": "object"
+    },
+    "EvalQueryResponse": {
+      "description": "Return the canonical observation and protocol request identity.",
+      "properties": {
+        "observation": {
+          "$ref": "#/$defs/RagRunObservation"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation",
+        "request_id",
+        "status"
+      ],
+      "title": "EvalQueryResponse",
+      "type": "object"
+    },
+    "EvalRetrieveRequest": {
+      "additionalProperties": false,
+      "description": "Submit a retrieval-only request with the same corpus semantics.",
+      "properties": {
+        "benchmark_case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark Case Id"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "config_overrides": {
+          "additionalProperties": true,
+          "title": "Config Overrides",
+          "type": "object"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "corpus_id": {
+          "minLength": 1,
+          "title": "Corpus Id",
+          "type": "string"
+        },
+        "experiment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Experiment Id"
+        },
+        "filters": {
+          "additionalProperties": true,
+          "title": "Filters",
+          "type": "object"
+        },
+        "history": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Include",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "perturbation_metadata": {
+          "additionalProperties": true,
+          "title": "Perturbation Metadata",
+          "type": "object"
+        },
+        "query": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "turn_index": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Turn Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "query"
+      ],
+      "title": "EvalRetrieveRequest",
+      "type": "object"
+    },
+    "EvaluationCorpusReference": {
+      "additionalProperties": false,
+      "description": "Isolated corpus identity used by robustness experiments.",
+      "properties": {
+        "chunks": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Chunks",
+          "type": "array"
+        },
+        "corpus_hash": {
+          "title": "Corpus Hash",
+          "type": "string"
+        },
+        "corpus_id": {
+          "title": "Corpus Id",
+          "type": "string"
+        },
+        "documents": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "parent_corpus_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Corpus Id"
+        },
+        "perturbation_metadata": {
+          "additionalProperties": true,
+          "title": "Perturbation Metadata",
+          "type": "object"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "corpus_hash"
+      ],
+      "title": "EvaluationCorpusReference",
+      "type": "object"
+    },
+    "GenerationConfiguration": {
+      "additionalProperties": false,
+      "description": "Effective generation parameters with secret-free model identity.",
+      "properties": {
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "model_id"
+      ],
+      "title": "GenerationConfiguration",
+      "type": "object"
+    },
+    "GenerationInfo": {
+      "additionalProperties": false,
+      "description": "Generation identity required to reproduce semantic-judge inputs.",
+      "properties": {
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "prompt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Id"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        }
+      },
+      "title": "GenerationInfo",
+      "type": "object"
+    },
+    "IngestionChunkRecord": {
+      "additionalProperties": false,
+      "description": "Persisted chunk inventory entry with source mappings.",
+      "properties": {
+        "character_count": {
+          "minimum": 0,
+          "title": "Character Count",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "ordering": {
+          "title": "Ordering",
+          "type": "integer"
+        },
+        "source_evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Evidence Ids",
+          "type": "array"
+        },
+        "source_spans": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Source Spans",
+          "type": "array"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "token_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Count"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "text",
+        "character_count",
+        "ordering"
+      ],
+      "title": "IngestionChunkRecord",
+      "type": "object"
+    },
+    "IngestionConfiguration": {
+      "additionalProperties": false,
+      "description": "Effective document-ingestion settings.",
+      "properties": {
+        "chunker": {
+          "title": "Chunker",
+          "type": "string"
+        },
+        "config_hash": {
+          "title": "Config Hash",
+          "type": "string"
+        },
+        "overlap": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overlap"
+        },
+        "parser": {
+          "title": "Parser",
+          "type": "string"
+        },
+        "target_chunk_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Chunk Size"
+        }
+      },
+      "required": [
+        "parser",
+        "chunker",
+        "config_hash"
+      ],
+      "title": "IngestionConfiguration",
+      "type": "object"
+    },
+    "IngestionEvidenceRecord": {
+      "additionalProperties": false,
+      "description": "Persisted evidence unit exposed to diagnostic clients.",
+      "properties": {
+        "bounding_box": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounding Box"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "source_span": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Span"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "evidence_id"
+      ],
+      "title": "IngestionEvidenceRecord",
+      "type": "object"
+    },
+    "IngestionObservation": {
+      "additionalProperties": false,
+      "description": "Complete, replayable inventory for one document ingestion.",
+      "properties": {
+        "chunk_count": {
+          "minimum": 0,
+          "title": "Chunk Count",
+          "type": "integer"
+        },
+        "chunk_overlap": {
+          "title": "Chunk Overlap",
+          "type": "integer"
+        },
+        "chunk_size": {
+          "title": "Chunk Size",
+          "type": "integer"
+        },
+        "chunker_id": {
+          "title": "Chunker Id",
+          "type": "string"
+        },
+        "chunker_version": {
+          "title": "Chunker Version",
+          "type": "string"
+        },
+        "chunking_parameters": {
+          "additionalProperties": true,
+          "title": "Chunking Parameters",
+          "type": "object"
+        },
+        "chunks": {
+          "items": {
+            "$ref": "#/$defs/IngestionChunkRecord"
+          },
+          "title": "Chunks",
+          "type": "array"
+        },
+        "document_hash": {
+          "title": "Document Hash",
+          "type": "string"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "extracted_units": {
+          "items": {
+            "$ref": "#/$defs/IngestionEvidenceRecord"
+          },
+          "title": "Extracted Units",
+          "type": "array"
+        },
+        "ingestion_id": {
+          "title": "Ingestion Id",
+          "type": "string"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "parser_id": {
+          "title": "Parser Id",
+          "type": "string"
+        },
+        "parser_version": {
+          "title": "Parser Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "trace": {
+          "items": {
+            "$ref": "#/$defs/TraceSpan"
+          },
+          "title": "Trace",
+          "type": "array"
+        }
+      },
+      "required": [
+        "ingestion_id",
+        "document_id",
+        "document_hash",
+        "parser_id",
+        "parser_version",
+        "chunker_id",
+        "chunker_version",
+        "chunk_size",
+        "chunk_overlap",
+        "status",
+        "chunk_count"
+      ],
+      "title": "IngestionObservation",
+      "type": "object"
+    },
+    "LLMUsage": {
+      "additionalProperties": false,
+      "description": "Usage reported or estimated for one model invocation.",
+      "properties": {
+        "finish_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finish Reason"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "requests": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requests"
+        },
+        "role": {
+          "default": "target",
+          "title": "Role",
+          "type": "string"
+        },
+        "tool_calls": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Calls"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        },
+        "usage_origin": {
+          "$ref": "#/$defs/UsageOrigin",
+          "default": "unavailable"
+        }
+      },
+      "title": "LLMUsage",
+      "type": "object"
+    },
+    "ObservationAnswer": {
+      "additionalProperties": false,
+      "description": "Canonical answer text and source-backed claims.",
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/CitationModel"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/ClaimModel"
+          },
+          "title": "Claims",
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "generation_status": {
+          "default": "completed",
+          "title": "Generation Status",
+          "type": "string"
+        },
+        "insufficient_evidence": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Insufficient Evidence"
+        },
+        "status": {
+          "default": "completed",
+          "title": "Status",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "title": "ObservationAnswer",
+      "type": "object"
+    },
+    "ObservationModel": {
+      "additionalProperties": false,
+      "description": "Base configuration shared by canonical observation records.",
+      "properties": {},
+      "title": "ObservationModel",
+      "type": "object"
+    },
+    "ObservationRequest": {
+      "additionalProperties": false,
+      "description": "Input retained with an observation for reproducibility.",
+      "properties": {
+        "conversation_history": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Conversation History",
+          "type": "array"
+        },
+        "filters": {
+          "additionalProperties": true,
+          "title": "Filters",
+          "type": "object"
+        },
+        "history": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "included_history_turn_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Included History Turn Ids",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "ObservationRequest",
+      "type": "object"
+    },
+    "PromptConfiguration": {
+      "additionalProperties": false,
+      "description": "Versioned prompt identity.",
+      "properties": {
+        "prompt_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Hash"
+        },
+        "prompt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Id"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        }
+      },
+      "title": "PromptConfiguration",
+      "type": "object"
+    },
+    "ProtocolHeaders": {
+      "description": "Validated protocol metadata carried by evaluation requests.",
+      "properties": {
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "protocol": {
+          "const": "1",
+          "default": "1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        }
+      },
+      "title": "ProtocolHeaders",
+      "type": "object"
+    },
+    "RagRunObservation": {
+      "additionalProperties": false,
+      "description": "Canonical persisted representation shared by HTTP, CLI, and diagnostics.",
+      "properties": {
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObservationAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "architecture_name": {
+          "title": "Architecture Name",
+          "type": "string"
+        },
+        "architecture_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Architecture Version"
+        },
+        "assessments": {
+          "items": {
+            "$ref": "#/$defs/AssessmentModel"
+          },
+          "title": "Assessments",
+          "type": "array"
+        },
+        "benchmark_case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark Case Id"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "configuration_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configuration Hash"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "conversation_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corpus_id": {
+          "title": "Corpus Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "document_embedding_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Document Embedding Ids",
+          "type": "array"
+        },
+        "effective_configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffectiveConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "embedding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmbeddingDiagnostics"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "evaluation_corpus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvaluationCorpusReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "experiment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Experiment Id"
+        },
+        "generation": {
+          "$ref": "#/$defs/GenerationInfo"
+        },
+        "ingestion": {
+          "items": {
+            "$ref": "#/$defs/TraceSpan"
+          },
+          "title": "Ingestion",
+          "type": "array"
+        },
+        "perturbation_metadata": {
+          "additionalProperties": true,
+          "title": "Perturbation Metadata",
+          "type": "object"
+        },
+        "query_embedding_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Embedding Id"
+        },
+        "request": {
+          "$ref": "#/$defs/ObservationRequest"
+        },
+        "request_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Fingerprint"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "retrieval": {
+          "items": {
+            "$ref": "#/$defs/RetrievalStageSnapshot"
+          },
+          "title": "Retrieval",
+          "type": "array"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/StageSnapshot"
+          },
+          "title": "Stages",
+          "type": "array"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "target_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Run Id"
+        },
+        "trace": {
+          "items": {
+            "$ref": "#/$defs/TraceSpan"
+          },
+          "title": "Trace",
+          "type": "array"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        },
+        "turn_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Index"
+        },
+        "usage": {
+          "$ref": "#/$defs/RagUsage"
+        }
+      },
+      "required": [
+        "run_id",
+        "request_id",
+        "corpus_id",
+        "architecture_name",
+        "architecture_version",
+        "status",
+        "request",
+        "created_at"
+      ],
+      "title": "RagRunObservation",
+      "type": "object"
+    },
+    "RagUsage": {
+      "additionalProperties": false,
+      "description": "Aggregated target-pipeline usage for one RAG execution.",
+      "properties": {
+        "context_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Tokens"
+        },
+        "embedding_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Embedding Calls",
+          "type": "integer"
+        },
+        "llm_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Llm Calls",
+          "type": "integer"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reranker_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Reranker Calls",
+          "type": "integer"
+        },
+        "resource_usage": {
+          "items": {
+            "$ref": "#/$defs/ResourceUsage"
+          },
+          "title": "Resource Usage",
+          "type": "array"
+        },
+        "retrieval_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Retrieval Calls",
+          "type": "integer"
+        },
+        "total_input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Input Tokens"
+        },
+        "total_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Output Tokens"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        },
+        "usage_origin": {
+          "$ref": "#/$defs/UsageOrigin",
+          "default": "unavailable"
+        }
+      },
+      "title": "RagUsage",
+      "type": "object"
+    },
+    "ResourceUsage": {
+      "additionalProperties": false,
+      "description": "Process or provider-reported resource measurements with explicit scope.",
+      "properties": {
+        "component_id": {
+          "title": "Component Id",
+          "type": "string"
+        },
+        "cpu_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Time Ms"
+        },
+        "cpu_utilization_percent": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Utilization Percent"
+        },
+        "gpu_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Id"
+        },
+        "gpu_memory_peak_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Memory Peak Bytes"
+        },
+        "gpu_utilization_percent": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Utilization Percent"
+        },
+        "measurement_scope": {
+          "title": "Measurement Scope",
+          "type": "string"
+        },
+        "measurement_source": {
+          "title": "Measurement Source",
+          "type": "string"
+        },
+        "memory_average_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Average Bytes"
+        },
+        "memory_peak_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Peak Bytes"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        }
+      },
+      "required": [
+        "component_id",
+        "measurement_scope",
+        "measurement_source"
+      ],
+      "title": "ResourceUsage",
+      "type": "object"
+    },
+    "RetrievalConfiguration": {
+      "additionalProperties": false,
+      "description": "Effective retrieval parameters.",
+      "properties": {
+        "context_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Limit"
+        },
+        "filters": {
+          "additionalProperties": true,
+          "title": "Filters",
+          "type": "object"
+        },
+        "rerank_top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Top K"
+        },
+        "reranker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker"
+        },
+        "reranker_model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reranker Model Name"
+        },
+        "retrieval_top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieval Top K"
+        },
+        "similarity_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Similarity Metric"
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top K"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "RetrievalConfiguration",
+      "type": "object"
+    },
+    "RetrievalStageSnapshot": {
+      "additionalProperties": false,
+      "description": "Persisted snapshot of one retrieval stage and its ordered items.",
+      "properties": {
+        "component_config": {
+          "additionalProperties": true,
+          "title": "Component Config",
+          "type": "object"
+        },
+        "component_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component Name"
+        },
+        "context_budget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Budget"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended At"
+        },
+        "input_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Item Ids",
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/RetrievedItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "output_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Item Ids",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "parent_stage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Parent Stage Ids",
+          "type": "array"
+        },
+        "query_embedding_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Embedding Id"
+        },
+        "removed_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Removed Item Ids",
+          "type": "array"
+        },
+        "removed_items": {
+          "items": {
+            "$ref": "#/$defs/RetrievedItem"
+          },
+          "title": "Removed Items",
+          "type": "array"
+        },
+        "stage_id": {
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "stage_type": {
+          "$ref": "#/$defs/RetrievalStageType"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "status": {
+          "default": "complete",
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Span Id"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stage_id",
+        "stage_type"
+      ],
+      "title": "RetrievalStageSnapshot",
+      "type": "object"
+    },
+    "RetrievalStageType": {
+      "description": "Identify retrieval outputs that evaluation can compare.",
+      "enum": [
+        "CANDIDATE_RETRIEVAL",
+        "FINAL_CONTEXT",
+        "FUSION",
+        "RERANK",
+        "FILTER",
+        "COMPRESSION"
+      ],
+      "title": "RetrievalStageType",
+      "type": "string"
+    },
+    "RetrievedItem": {
+      "additionalProperties": false,
+      "description": "One ordered retrieval result with text, score, and provenance.",
+      "properties": {
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "rerank_score": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retrieval_id": {
+          "title": "Retrieval Id",
+          "type": "string"
+        },
+        "retrieval_score": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "score": {
+          "$ref": "#/$defs/Score"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "retrieval_id",
+        "rank"
+      ],
+      "title": "RetrievedItem",
+      "type": "object"
+    },
+    "Score": {
+      "additionalProperties": false,
+      "description": "Query-specific score attached to one retrieved item.",
+      "properties": {
+        "calibrated": {
+          "default": false,
+          "title": "Calibrated",
+          "type": "boolean"
+        },
+        "higher_is_better": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Higher Is Better"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "method_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method Id"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "Score",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Persistent source identity and optional source coordinates.",
+      "properties": {
+        "chunk_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunk Id"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Id"
+        },
+        "end_char": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Char"
+        },
+        "ingestion_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ingestion Id"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "start_char": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Char"
+        }
+      },
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "StageSnapshot": {
+      "additionalProperties": false,
+      "description": "One node in an arbitrary retrieval or generation processing DAG.",
+      "properties": {
+        "component_name": {
+          "title": "Component Name",
+          "type": "string"
+        },
+        "input_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Item Ids",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "output_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Item Ids",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "parent_stage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Parent Stage Ids",
+          "type": "array"
+        },
+        "stage_id": {
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "stage_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageType"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Stage Type"
+        },
+        "trace_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Span Id"
+        }
+      },
+      "required": [
+        "stage_id",
+        "stage_type",
+        "component_name"
+      ],
+      "title": "StageSnapshot",
+      "type": "object"
+    },
+    "StageType": {
+      "description": "Identify a broad execution stage in a RAG run.",
+      "enum": [
+        "retrieval",
+        "generation",
+        "assessment",
+        "decision",
+        "render",
+        "ingestion",
+        "rerank",
+        "fusion",
+        "filter",
+        "compression"
+      ],
+      "title": "StageType",
+      "type": "string"
+    },
+    "TraceSpan": {
+      "additionalProperties": false,
+      "description": "Wall-clock and monotonic timing for one nested execution span.",
+      "properties": {
+        "duration_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "input_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Count"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "output_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Count"
+        },
+        "parent_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Span Id"
+        },
+        "resource_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "span_id": {
+          "title": "Span Id",
+          "type": "string"
+        },
+        "stage_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "default": "running",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span_id",
+        "name",
+        "started_at"
+      ],
+      "title": "TraceSpan",
+      "type": "object"
+    },
+    "UsageOrigin": {
+      "description": "Describe how a usage value was obtained.",
+      "enum": [
+        "provider_reported",
+        "tokenizer_calculated",
+        "estimated",
+        "unavailable"
+      ],
+      "title": "UsageOrigin",
+      "type": "string"
+    }
+  },
+  "$id": "llm-grounding-eval-v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Pydantic-generated schemas from the llm-grounding repository. Endpoint contracts are included below because several routes currently serialize raw dictionaries instead of declaring FastAPI response models.",
+  "title": "llm-grounding /eval/v1 protocol schema registry",
+  "x_endpoint_contracts": {
+    "/eval/v1/capabilities": {
+      "method": "GET",
+      "response_contract": "Static dictionary returned by the capabilities handler; see x_raw_responses.capabilities. FastAPI currently exposes this as an unconstrained object because no response_model is declared."
+    },
+    "/eval/v1/config-schema": {
+      "method": "GET",
+      "response_contract": "Dictionary containing protocol_version, supported_pipeline, and JSON Schemas for EvalConfigOverrides and EffectiveConfiguration."
+    },
+    "/eval/v1/corpora": {
+      "method": "POST",
+      "request_schema": {
+        "$ref": "#/$defs/EvalCorpusRequest"
+      },
+      "response_schema": {
+        "$ref": "#/$defs/EvaluationCorpusReference"
+      }
+    },
+    "/eval/v1/corpora/{corpus_id}": {
+      "method": "GET",
+      "response_schema": {
+        "$ref": "#/$defs/EvaluationCorpusReference"
+      }
+    },
+    "/eval/v1/corpora/{corpus_id}/chunks": {
+      "GET": {
+        "method": "GET",
+        "response_contract": "Envelope with corpus_id and a chunks array of arbitrary JSON objects."
+      },
+      "POST": {
+        "method": "POST",
+        "request_schema": {
+          "$ref": "#/$defs/EvalInventoryUpload"
+        },
+        "response_contract": "Raw operation dictionary described in x_raw_responses.operation."
+      }
+    },
+    "/eval/v1/corpora/{corpus_id}/documents": {
+      "GET": {
+        "method": "GET",
+        "response_contract": "Envelope with corpus_id and a documents array of arbitrary JSON objects."
+      },
+      "POST": {
+        "method": "POST",
+        "request_schema": {
+          "$ref": "#/$defs/EvalInventoryUpload"
+        },
+        "response_contract": "Raw operation dictionary described in x_raw_responses.operation."
+      }
+    },
+    "/eval/v1/corpora/{corpus_id}/evidence": {
+      "method": "GET",
+      "response_contract": "Envelope with corpus_id and an evidence array derived from chunk evidence/source_spans."
+    },
+    "/eval/v1/embeddings": {
+      "method": "POST",
+      "request_schema": {
+        "$ref": "#/$defs/EvalEmbeddingRequest"
+      },
+      "response_contract": "Envelope with records serialized from EmbeddingRecord; this route is conditionally mounted when an embedding fetcher is available."
+    },
+    "/eval/v1/health": {
+      "method": "GET",
+      "response_schema": {
+        "$ref": "#/$defs/EvalHealthResponse"
+      }
+    },
+    "/eval/v1/observations/{rag_run_id}": {
+      "method": "GET",
+      "response_contract": "Persisted RagRunObservation serialized with mode='json' and exclude_none=True.",
+      "response_schema": {
+        "$ref": "#/$defs/RagRunObservation"
+      }
+    },
+    "/eval/v1/operations/{operation_id}": {
+      "method": "GET",
+      "response_contract": "Raw operation dictionary described in x_raw_responses.operation."
+    },
+    "/eval/v1/query": {
+      "method": "POST",
+      "request_schema": {
+        "$ref": "#/$defs/EvalQueryRequest"
+      },
+      "response_contract": "RagRunObservation.model_dump(mode='json', exclude_none=True); the route currently declares response_model=None.",
+      "response_schema": {
+        "$ref": "#/$defs/RagRunObservation"
+      }
+    },
+    "/eval/v1/requests/{request_id}": {
+      "method": "GET",
+      "response_contract": "Persisted RagRunObservation serialized with mode='json' and exclude_none=True.",
+      "response_schema": {
+        "$ref": "#/$defs/RagRunObservation"
+      }
+    },
+    "/eval/v1/retrieve": {
+      "method": "POST",
+      "request_schema": {
+        "$ref": "#/$defs/EvalRetrieveRequest"
+      },
+      "response_contract": "RagRunObservation.model_dump(mode='json', exclude_none=True); the route currently declares response_model=None.",
+      "response_schema": {
+        "$ref": "#/$defs/RagRunObservation"
+      }
+    }
+  },
+  "x_model_sources": {
+    "api_eval_embeddings": "src/llm_grounding/api/eval_embeddings.py",
+    "api_eval_schemas": "src/llm_grounding/api/eval_schemas.py",
+    "observability_embedding": "src/llm_grounding/observability/embedding.py",
+    "observability_ingestion": "src/llm_grounding/observability/ingestion.py",
+    "observability_models": "src/llm_grounding/observability/models.py"
+  },
+  "x_raw_responses": {
+    "capabilities": {
+      "capabilities": {
+        "answer": true,
+        "assessments": true,
+        "chunk_ingestion": true,
+        "citations": true,
+        "claims": true,
+        "confidence": true,
+        "context_injection": true,
+        "conversation_history": true,
+        "decision": true,
+        "document_ingestion": true,
+        "effective_configuration": true,
+        "idempotency": true,
+        "observation_hydration": true,
+        "query": true,
+        "request_recovery": true,
+        "retrieval": true,
+        "retrieval_metadata": {
+          "character_span": true,
+          "chunk_id": true,
+          "document_id": true,
+          "page": true,
+          "rank": true,
+          "score": true
+        },
+        "retrieval_stages": true,
+        "streaming": false,
+        "target_trace": true,
+        "usage": {
+          "cost": false,
+          "cpu": false,
+          "gpu": false,
+          "ram": false,
+          "tokens": true,
+          "vram": false
+        }
+      },
+      "idempotency": {
+        "retention_seconds": 604800
+      },
+      "limits": {
+        "max_chunks_per_request": 1000,
+        "max_concurrent_requests": 16,
+        "max_contexts_per_query": 100,
+        "max_document_bytes": 104857600
+      },
+      "metadata": {
+        "service": "llm-grounding"
+      },
+      "protocol_version": "1.0",
+      "target": {
+        "implementation": "llm-grounding",
+        "name": "llm-grounding",
+        "version": "3.0.0"
+      }
+    },
+    "embedding_response": {
+      "records": {
+        "$ref": "#/$defs/EmbeddingRecord"
+      }
+    },
+    "error": {
+      "code": "string",
+      "details": "object",
+      "error": "eval_error",
+      "message": "string",
+      "request_id": "string | null"
+    },
+    "operation": {
+      "corpus_hash": "string",
+      "corpus_id": "string",
+      "count": "integer",
+      "operation": "documents | chunks",
+      "operation_id": "string",
+      "status": "completed",
+      "version": "integer"
+    }
+  },
+  "x_raw_schemas": {
+    "chunk_inventory_response": {
+      "additionalProperties": false,
+      "properties": {
+        "chunks": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "corpus_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "chunks"
+      ],
+      "type": "object"
+    },
+    "document_inventory_response": {
+      "additionalProperties": false,
+      "properties": {
+        "corpus_id": {
+          "type": "string"
+        },
+        "documents": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "documents"
+      ],
+      "type": "object"
+    },
+    "embedding_response": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {
+          "items": {
+            "$ref": "#/$defs/EmbeddingRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "type": "object"
+    },
+    "evidence_inventory_response": {
+      "additionalProperties": false,
+      "properties": {
+        "corpus_id": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "corpus_id",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "operation_response": {
+      "additionalProperties": true,
+      "properties": {
+        "corpus_hash": {
+          "type": "string"
+        },
+        "corpus_id": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "operation": {
+          "enum": [
+            "documents",
+            "chunks"
+          ],
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operation_id",
+        "corpus_id",
+        "operation",
+        "status",
+        "count",
+        "version",
+        "corpus_hash"
+      ],
+      "type": "object"
+    }
+  }
+}

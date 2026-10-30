@@ -1,0 +1,23 @@
+id: embedding_colbert_v2
+stage: embedding
+location: local
+backend: sentence_transformers
+name: colbert-ir/colbertv2.0
+source:
+  type: huggingface
+  repository: colbert-ir/colbertv2.0
+storage:
+  relative_path: embedding/colbert-v2
+runtime:
+  type: in_process
+  device: cpu
+  idle_timeout_seconds: 600
+  memory_limit: 6g
+parameters:
+  representation: multivector
+  dimension: 128
+  normalize: true
+  similarity_metric: dot
+  batch_size: 1
+  token_endpoint: /v1/token_embeddings
+  trust_remote_code: true

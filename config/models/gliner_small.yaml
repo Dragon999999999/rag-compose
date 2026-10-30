@@ -1,0 +1,19 @@
+id: gliner_small
+stage: validation
+location: local
+backend: gliner
+name: urchade/gliner_small-v2.1
+source:
+  type: huggingface
+  repository: urchade/gliner_small-v2.1
+storage:
+  relative_path: validation/gliner_small
+runtime:
+  type: in_process
+  device: cuda
+  idle_timeout_seconds: 600
+  memory_limit: 2g
+parameters:
+  batch_size: 4
+  max_length: 512
+  entity_endpoint: /v1/entities

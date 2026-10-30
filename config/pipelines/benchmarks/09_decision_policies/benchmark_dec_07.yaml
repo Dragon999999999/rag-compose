@@ -1,0 +1,34 @@
+schema_version: 2
+kind: query
+name: benchmark_dec_07
+version: 1
+description: Generated RAG benchmark query pipeline.
+query:
+  retriever: retriever_dense_vector_default
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+  - assessor_relevance
+  decision_policy: decision_select_branches
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10
+  execution:
+    max_attempts: 1
+    max_stage_calls: 100
+    evidence_merge: union
+    final_failure_policy: best_result
+    alternatives:
+    - id: primary
+      branches:
+      - id: dense
+        start_at: retriever
+        retriever: vector_similarity
+        assessors:
+        - relevance
+      - id: lexical
+        start_at: retriever
+        retriever: bm25
+        assessors:
+        - relevance

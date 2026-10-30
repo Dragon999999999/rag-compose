@@ -1,0 +1,70 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Knowledge builder component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: knowledge_builder}
+      implementation: {enum: [basic, structural, metadata_rules, metadata_spacy, metadata_gliner]}
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          model_id:
+            type: string
+            minLength: 1
+            x-override-scopes: []
+          rule_patterns:
+            type: object
+            additionalProperties: {type: string}
+            x-override-scopes: [pipeline]
+          max_keywords:
+            type: integer
+            minimum: 0
+            maximum: 100
+            default: 12
+            x-override-scopes: [pipeline]
+          keyword_min_length:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 4
+            x-override-scopes: [pipeline]
+          stopwords:
+            type: array
+            items: {type: string}
+            default: []
+            x-override-scopes: [pipeline]
+          spacy_model:
+            type: string
+            minLength: 1
+            default: en_core_web_sm
+            x-override-scopes: []
+          spacy_entity_labels:
+            type: array
+            items: {type: string}
+            default: []
+            x-override-scopes: [pipeline]
+          include_linguistic_metadata:
+            type: boolean
+            default: false
+            x-override-scopes: [pipeline]
+          entity_labels:
+            type: array
+            minItems: 1
+            items: {type: string}
+            default: [person, organization, location, date, product]
+            x-override-scopes: [pipeline]
+          confidence_threshold:
+            type: number
+            minimum: 0
+            maximum: 1
+            default: 0.35
+            x-override-scopes: [pipeline]
+          batch_size:
+            type: integer
+            minimum: 1
+            maximum: 128
+            default: 4
+            x-override-scopes: [pipeline]

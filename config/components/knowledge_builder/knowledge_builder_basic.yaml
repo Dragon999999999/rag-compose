@@ -1,0 +1,5 @@
+id: knowledge_basic
+type: knowledge_builder
+implementation: basic
+description: Normalize parsed document blocks into canonical evidence.
+config: {}

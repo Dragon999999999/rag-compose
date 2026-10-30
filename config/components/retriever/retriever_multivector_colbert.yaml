@@ -1,0 +1,13 @@
+id: retriever_multivector_colbert
+type: multivector
+implementation: colbert_v2
+description: ColBERTv2 token-level MaxSim retrieval in Qdrant.
+config:
+  top_k: 10
+  candidate_top_k: 50
+  query_embedder: embedding_colbert_v2
+requirements:
+  required:
+    - persisted_chunks
+    - multivector_index
+    - late_interaction_model

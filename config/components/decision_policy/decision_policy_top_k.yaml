@@ -1,0 +1,8 @@
+id: decision_top_k
+type: decision_policy
+implementation: top_k
+description: Select the highest-scoring evidence IDs deterministically.
+input_terms: [assessment:numeric_score]
+output_terms: [decision:accept]
+config:
+  top_k: 5

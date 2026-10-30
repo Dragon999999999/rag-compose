@@ -1,0 +1,16 @@
+schema_version: 2
+kind: query
+name: query_basic_v1
+version: 1
+description: Default query pipeline for indexed project documents.
+query:
+  retriever: retriever_dense_vector_summary
+  reranker: reranker_identity
+  reasoner: reasoner_basic_grounded
+  assessors:
+    - assessor_source_reference
+  decision_policy: decision_basic_grounding
+  renderer: renderer_grounded_answer
+  chat_history:
+    mode: recent_messages
+    max_messages: 10

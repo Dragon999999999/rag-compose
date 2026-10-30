@@ -1,0 +1,688 @@
+"""Thin persistent chat use cases that consume a project corpus through Basic RAG v1."""
+
+from dataclasses import replace
+from datetime import UTC, datetime
+
+from llm_grounding.application.pipeline_compatibility import (
+    CompatibilityResult,
+    IndexCapabilities,
+    validate_query_compatibility,
+)
+from llm_grounding.application.pipeline_readiness import log_query_pipeline_ready
+from llm_grounding.application.pipeline_runtime import PipelineRuntimeResolver
+from llm_grounding.application.pipeline_service import PipelineService
+from llm_grounding.domain.answers import Answer
+from llm_grounding.domain.corpus import (
+    Chat,
+    ChunkRetrievalResult,
+    CorpusRequest,
+    Message,
+    Pipeline,
+    TaskType,
+)
+from llm_grounding.domain.evidence import RankingScore
+from llm_grounding.infrastructure.config.models import PipelineConfig
+from llm_grounding.infrastructure.config.overrides import (
+    OverrideValidationError,
+    apply_query_overrides,
+    catalog_for_query_overrides,
+)
+from llm_grounding.infrastructure.database.repositories import PostgresRepository
+from llm_grounding.ingestion.models import IngestionConfig
+from llm_grounding.observability.builder import ObservationBuilder
+from llm_grounding.observability.configuration import build_effective_configuration
+from llm_grounding.orchestration.basic_rag import BasicRagRunner
+from llm_grounding.reasoning.basic_grounded import GroundedResponsePayload
+
+DEFAULT_CHAT_NAME = "New chat"
+
+
+class PipelineSelectionError(ValueError):
+    """Report a safe, client-facing failure to select a conversation pipeline."""
+
+    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+        """Retain a stable error code and HTTP status for API adapters."""
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
+def _fallback_turn_title(message: str) -> str:
+    """Create a stable label when no structured model response is available."""
+    normalized = " ".join(message.split())
+    if len(normalized) <= 80:
+        return normalized or "Untitled conversation turn"
+    return f"{normalized[:77].rstrip()}…"
+
+
+def _turn_title(answer: Answer, message: str) -> str:
+    """Read the model-generated turn title or label a non-model fallback answer."""
+    if answer.payload:
+        payload = GroundedResponsePayload.model_validate(answer.payload)
+        if "turn_title" in answer.payload:
+            return payload.turn_title
+    return _fallback_turn_title(message)
+
+
+def _generated_chat_name(answer: Answer, run_metadata: dict[str, object]) -> str | None:
+    """Read a validated first-turn name from accepted or rejected generation."""
+    if not answer.payload:
+        value = run_metadata.get("generated_chat_name")
+        return value if isinstance(value, str) else None
+    return GroundedResponsePayload.model_validate(answer.payload).chat_name
+
+
+class ChatService:
+    """Persist project-scoped messages without treating history as evidence."""
+
+    def __init__(
+        self,
+        repository: PostgresRepository,
+        runner: BasicRagRunner | None,
+        max_history: int = 10,
+        pipeline_runtime: PipelineRuntimeResolver | None = None,
+        pipeline_service: PipelineService | None = None,
+        *,
+        observation_builder: ObservationBuilder | None = None,
+        architecture: object | None = None,
+        ingestion_config: IngestionConfig | None = None,
+    ) -> None:
+        """Inject persistence, query architecture, and bounded history policy."""
+        self._repository, self._runner, self._max_history, self._pipeline_runtime = (
+            repository,
+            runner,
+            max_history,
+            pipeline_runtime,
+        )
+        self._pipeline_service = pipeline_service
+        self._observation_builder = observation_builder or ObservationBuilder()
+        self._architecture = architecture
+        self._ingestion_config = ingestion_config
+
+    async def create_chat(
+        self,
+        project_id: str,
+        name: str,
+        pipeline_id: str | None = None,
+        *,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
+    ) -> Chat:
+        """Create a conversation with an explicit or application-default pipeline."""
+        normalized_name = name.strip()
+        if self._pipeline_service is None:
+            if pipeline_id is not None:
+                raise PipelineSelectionError(
+                    "pipeline_unavailable",
+                    "Pipeline selection is unavailable in this application.",
+                    503,
+                )
+            return await self._repository.create_chat(
+                project_id,
+                normalized_name,
+                chat_name_set=(
+                    normalized_name.casefold() != DEFAULT_CHAT_NAME.casefold()
+                ),
+            )
+        selected = await self._select_pipeline(pipeline_id)
+        indexed_representation = await self._validate_project_pipeline(
+            project_id, selected, stage_overrides=stage_overrides or {}
+        )
+        self._validate_chat_overrides(selected, stage_overrides or {})
+        log_query_pipeline_ready(selected)
+        if stage_overrides:
+            return await self._repository.create_chat(
+                project_id,
+                normalized_name,
+                chat_name_set=normalized_name.casefold()
+                != DEFAULT_CHAT_NAME.casefold(),
+                pipeline_id=selected.id,
+                pipeline_version=selected.version,
+                pipeline_config_hash=selected.config_hash,
+                pipeline_representation_hash=indexed_representation,
+                stage_overrides=stage_overrides,
+            )
+        return await self._repository.create_chat(
+            project_id,
+            normalized_name,
+            chat_name_set=normalized_name.casefold() != DEFAULT_CHAT_NAME.casefold(),
+            pipeline_id=selected.id,
+            pipeline_version=selected.version,
+            pipeline_config_hash=selected.config_hash,
+            pipeline_representation_hash=indexed_representation,
+        )
+
+    async def list_chats(self, project_id: str) -> tuple[Chat, ...]:
+        """List chats belonging to a reusable project corpus."""
+        return await self._repository.list_chats(project_id)
+
+    async def list_all_chats(self) -> tuple[Chat, ...]:
+        """List all persisted chats for CLI and administrative clients."""
+        return await self._repository.list_all_chats()
+
+    async def get_chat(self, chat_id: str) -> Chat:
+        """Inspect one chat and its persisted pipeline and override state."""
+        return await self._repository.get_chat(chat_id)
+
+    async def delete_chat(self, chat_id: str) -> None:
+        """Delete one conversation while retaining its project's corpus."""
+        await self._repository.delete_chat(chat_id)
+
+    async def rename_chat(self, chat_id: str, name: str) -> Chat:
+        """Rename one project-scoped conversation."""
+        return await self._repository.rename_chat(chat_id, name)
+
+    async def set_pipeline(self, chat_id: str, pipeline_id: str) -> Chat:
+        """Switch a conversation to a compatible active pipeline atomically.
+
+        Query-time changes are allowed because the selected representation hash
+        remains stable. Representation changes are rejected before persistence so
+        an existing conversation cannot silently query an incompatible index.
+        """
+        if self._pipeline_service is None:
+            raise PipelineSelectionError(
+                "pipeline_unavailable",
+                "Pipeline selection is unavailable in this application.",
+                503,
+            )
+        chat = await self._repository.get_chat(chat_id)
+        target = await self._select_pipeline(pipeline_id)
+        indexed_representation = await self._validate_project_pipeline(
+            chat.project_id, target
+        )
+        if target.kind != "query":
+            raise PipelineSelectionError(
+                "unsupported_pipeline",
+                "Chat conversations require a query pipeline.",
+                422,
+            )
+        try:
+            return await self._repository.set_chat_pipeline(
+                chat_id,
+                target.id,
+                pipeline_version=target.version,
+                pipeline_config_hash=target.config_hash,
+                pipeline_representation_hash=indexed_representation,
+            )
+        except KeyError as exc:
+            raise PipelineSelectionError("chat_not_found", str(exc), 404) from exc
+        except ValueError as exc:
+            raise PipelineSelectionError("pipeline_changed", str(exc), 409) from exc
+
+    async def set_stage_overrides(
+        self, chat_id: str, stage_overrides: dict[str, dict[str, object]]
+    ) -> Chat:
+        """Validate and persist chat-level overrides for future executions."""
+        chat = await self._repository.get_chat(chat_id)
+        selected = await self._pipeline_for_chat(chat)
+        self._validate_chat_overrides(selected, stage_overrides)
+        await self._validate_project_pipeline(
+            chat.project_id, selected, stage_overrides=stage_overrides
+        )
+        try:
+            return await self._repository.set_chat_stage_overrides(
+                chat_id, stage_overrides
+            )
+        except (KeyError, ValueError) as exc:
+            raise PipelineSelectionError("chat_not_found", str(exc), 404) from exc
+
+    async def set_stage_override(
+        self, chat_id: str, stage: str, parameter: str, value: object
+    ) -> Chat:
+        """Set one validated chat-level stage override."""
+        chat = await self.get_chat(chat_id)
+        overrides = {
+            name: dict(values) for name, values in chat.stage_overrides.items()
+        }
+        overrides.setdefault(stage, {})[parameter] = value
+        return await self.set_stage_overrides(chat_id, overrides)
+
+    async def remove_stage_override(
+        self, chat_id: str, stage: str, parameter: str
+    ) -> Chat:
+        """Remove one chat-level stage override, retaining other overrides."""
+        chat = await self.get_chat(chat_id)
+        overrides = {
+            name: dict(values) for name, values in chat.stage_overrides.items()
+        }
+        values = overrides.get(stage)
+        if values is not None:
+            values.pop(parameter, None)
+            if not values:
+                overrides.pop(stage, None)
+        return await self.set_stage_overrides(chat_id, overrides)
+
+    async def reset_stage_overrides(
+        self, chat_id: str, stage: str | None = None
+    ) -> Chat:
+        """Reset all overrides or the overrides belonging to one stage."""
+        chat = await self.get_chat(chat_id)
+        if stage is None:
+            overrides: dict[str, dict[str, object]] = {}
+        else:
+            overrides = {
+                name: dict(values)
+                for name, values in chat.stage_overrides.items()
+                if name != stage
+            }
+        return await self.set_stage_overrides(chat_id, overrides)
+
+    async def messages(self, chat_id: str) -> tuple[Message, ...]:
+        """Load the complete persisted conversation in chronological order."""
+        return await self._repository.recent_messages(chat_id, 10_000)
+
+    async def ask(
+        self,
+        chat_id: str,
+        message: str,
+        task_type: TaskType = TaskType.QA,
+        pipeline_id: str | None = None,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
+    ) -> Answer:
+        """Persist a question, query its corpus, then persist the answer."""
+        chat = await self._repository.get_chat(chat_id)
+        if pipeline_id is not None:
+            chat = await self.set_pipeline(chat_id, pipeline_id)
+        selected_runner = self._runner
+        selected_name = "query_basic_v1"
+        selected_version = 1
+        selected_pipeline: Pipeline | None = None
+        runtime = None
+        if self._pipeline_service is not None:
+            selected_pipeline = await self._pipeline_for_chat(chat)
+            if self._pipeline_runtime is None:
+                raise PipelineSelectionError(
+                    "runtime_unavailable",
+                    "Pipeline runtime resolution is unavailable.",
+                    503,
+                )
+            ingestion = await self._project_ingestion(chat.project_id)
+            if chat.stage_overrides or stage_overrides:
+                runtime = await self._pipeline_runtime.resolve(
+                    selected_pipeline.id,
+                    ingestion=ingestion,
+                    chat_overrides=chat.stage_overrides,
+                    request_overrides=stage_overrides or {},
+                )
+            else:
+                runtime = await self._pipeline_runtime.resolve(
+                    selected_pipeline.id, ingestion=ingestion
+                )
+            if not isinstance(runtime.runner, BasicRagRunner):
+                raise PipelineSelectionError(
+                    "unsupported_runtime",
+                    "The selected pipeline is not a project-scoped Basic RAG runtime.",
+                    422,
+                )
+            selected_runner = runtime.runner
+            selected_name = runtime.architecture.name
+            selected_version = runtime.architecture.version
+        if selected_runner is None:
+            raise PipelineSelectionError(
+                "runtime_unavailable",
+                "This project has no dense vector runtime; select a compatible "
+                "query pipeline after building a dense index.",
+                409,
+            )
+        generate_chat_name = not chat.chat_name_set
+        await self._repository.add_message(chat_id, "user", message)
+        history = await self._repository.recent_messages(chat_id, self._max_history)
+        run_id, answer, metadata = await selected_runner.run(
+            CorpusRequest(chat.project_id, message, task_type),
+            history,
+            generate_chat_name=generate_chat_name,
+        )
+        if selected_pipeline is None:
+            await self._repository.record_run(
+                run_id,
+                chat.project_id,
+                selected_name,
+                selected_version,
+                str(metadata["status"]),
+                metadata,
+            )
+        else:
+            pipeline_metadata = {
+                **metadata,
+                "pipeline_id": selected_pipeline.id,
+                "pipeline_version": selected_pipeline.version,
+                "pipeline_config_hash": selected_pipeline.config_hash,
+                "pipeline_representation_hash": (
+                    chat.pipeline_representation_hash
+                    or selected_pipeline.representation_hash
+                ),
+            }
+            effective_config = getattr(runtime, "config", None)
+            if effective_config is not None:
+                pipeline_metadata.update(
+                    {
+                        "effective_configuration_hash": effective_config.config_hash,
+                        "effective_configuration": effective_config.model_dump(
+                            mode="json", exclude={"resolved_catalog"}
+                        ),
+                        "effective_ingestion_configuration": (
+                            runtime.ingestion.model_dump(mode="json")
+                        ),
+                        "effective_index_identifier": runtime.ingestion.identity(),
+                        "override_provenance": getattr(
+                            runtime, "override_provenance", {}
+                        ),
+                    }
+                )
+            await self._repository.record_run(
+                run_id,
+                chat.project_id,
+                selected_name,
+                selected_version,
+                str(metadata["status"]),
+                pipeline_metadata,
+                pipeline_id=selected_pipeline.id,
+                pipeline_version=selected_pipeline.version,
+                pipeline_config_hash=selected_pipeline.config_hash,
+                pipeline_representation_hash=(
+                    chat.pipeline_representation_hash
+                    or selected_pipeline.representation_hash
+                ),
+            )
+        turn_title = _turn_title(answer, message)
+        assistant_message = await self._repository.add_message(
+            chat_id,
+            "assistant",
+            answer.text,
+            run_id,
+            turn_title,
+        )
+        await self._save_canonical_observation(
+            run_id=run_id,
+            chat=chat,
+            message=message,
+            task_type=task_type,
+            history=history,
+            answer=answer,
+            metadata=metadata,
+            assistant_message=assistant_message,
+            runtime=runtime,
+        )
+        if generate_chat_name and (chat_name := _generated_chat_name(answer, metadata)):
+            await self._repository.set_generated_chat_name(chat_id, chat_name)
+        retrieved = metadata.get("retrieved_chunk_ids", [])
+        retrieved_ids = retrieved if isinstance(retrieved, list) else []
+        return replace(
+            answer,
+            metadata={
+                **answer.metadata,
+                "rag_run_id": run_id,
+                "message_id": assistant_message.id,
+                "turn_title": assistant_message.turn_title,
+                "retrieved_chunk_ids": [
+                    str(chunk_id)
+                    for chunk_id in retrieved_ids
+                    if isinstance(chunk_id, str)
+                ],
+                "conversation_id": chat.id,
+                "turn_id": assistant_message.id,
+                "turn_index": len(
+                    [item for item in history if item.role == "assistant"]
+                ),
+                "included_history_turn_ids": [item.id for item in history],
+            },
+        )
+
+    async def _save_canonical_observation(
+        self,
+        *,
+        run_id: str,
+        chat: Chat,
+        message: str,
+        task_type: TaskType,
+        history: tuple[Message, ...],
+        answer: Answer,
+        metadata: dict[str, object],
+        assistant_message: Message,
+        runtime: object | None,
+    ) -> None:
+        """Persist the same canonical observation used by the evaluation API."""
+        saver = getattr(self._repository, "save_observation", None)
+        if saver is None:
+            return
+        chunks = await self._hydrate_observation_chunks(metadata)
+        architecture = getattr(runtime, "architecture", None) or self._architecture
+        ingestion = getattr(runtime, "ingestion", None) or self._ingestion_config
+        effective = None
+        if architecture is not None and ingestion is not None:
+            effective = build_effective_configuration(
+                architecture,
+                ingestion,
+                corpus_id=chat.project_id,
+                prompt_id=(
+                    str(metadata["prompt_id"])
+                    if metadata.get("prompt_id") is not None
+                    else None
+                ),
+                prompt_version=(
+                    str(metadata["prompt_version"])
+                    if metadata.get("prompt_version") is not None
+                    else None
+                ),
+            )
+        observation = self._observation_builder.from_basic_rag_metadata(
+            run_id=run_id,
+            request_id=run_id,
+            corpus_id=chat.project_id,
+            architecture_name=(
+                getattr(architecture, "name", None) or "query_basic_v1"
+            ),
+            architecture_version=getattr(architecture, "version", 1),
+            request=CorpusRequest(chat.project_id, message, task_type),
+            chunks=chunks,
+            answer=answer,
+            metadata=metadata,
+            effective_configuration=effective,
+            history=history,
+        ).model_copy(
+            update={
+                "conversation_id": chat.id,
+                "turn_id": assistant_message.id,
+                "turn_index": len(
+                    [item for item in history if item.role == "assistant"]
+                ),
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        await saver(observation)
+
+    async def _hydrate_observation_chunks(
+        self, metadata: dict[str, object]
+    ) -> tuple[ChunkRetrievalResult, ...]:
+        """Hydrate final-context chunks for canonical answer provenance."""
+        entries = metadata.get("retrieval_results", [])
+        if not isinstance(entries, list):
+            return ()
+        specs = [entry for entry in entries if isinstance(entry, dict)]
+        ids = tuple(str(entry["chunk_id"]) for entry in specs if "chunk_id" in entry)
+        chunks = await self._repository.chunks_by_ids(ids)
+        return tuple(
+            ChunkRetrievalResult(
+                chunks[chunk_id],
+                int(entry.get("rank", index)),
+                str(entry.get("retriever_id", "unknown")),
+                (
+                    float(entry["score"])
+                    if isinstance(entry.get("score"), (int, float))
+                    else None
+                ),
+                _ranking_score(entry.get("retrieval_score")),
+                _ranking_score(entry.get("rerank_score")),
+            )
+            for index, entry in enumerate(specs, 1)
+            if (chunk_id := str(entry.get("chunk_id", ""))) in chunks
+        )
+
+    async def _select_pipeline(self, pipeline_id: str | None) -> Pipeline:
+        """Resolve and normalize an explicit or default pipeline selection."""
+        assert self._pipeline_service is not None
+        try:
+            return await self._pipeline_service.select(pipeline_id, kind="query")
+        except KeyError as exc:
+            code = (
+                "pipeline_not_found"
+                if pipeline_id is not None
+                else "default_unavailable"
+            )
+            status = 404 if pipeline_id is not None else 503
+            raise PipelineSelectionError(code, str(exc), status) from exc
+        except ValueError as exc:
+            if "not query" in str(exc):
+                raise PipelineSelectionError(
+                    "unsupported_pipeline",
+                    "Chat conversations require a query pipeline.",
+                    422,
+                ) from exc
+            raise PipelineSelectionError("pipeline_inactive", str(exc), 409) from exc
+
+    async def _pipeline_for_chat(self, chat: Chat) -> Pipeline:
+        """Resolve a chat selection and reject silent changes to its snapshot."""
+        assert self._pipeline_service is not None
+        if chat.pipeline_id is None:
+            selected = await self._select_pipeline(None)
+            indexed_representation = await self._validate_project_pipeline(
+                chat.project_id, selected
+            )
+            try:
+                await self._repository.set_chat_pipeline(
+                    chat.id,
+                    selected.id,
+                    pipeline_version=selected.version,
+                    pipeline_config_hash=selected.config_hash,
+                    pipeline_representation_hash=indexed_representation,
+                )
+            except (KeyError, ValueError) as exc:
+                raise PipelineSelectionError("pipeline_changed", str(exc), 409) from exc
+            return selected
+        try:
+            selected = await self._pipeline_service.select(
+                chat.pipeline_id, kind="query"
+            )
+        except KeyError as exc:
+            raise PipelineSelectionError("pipeline_not_found", str(exc), 404) from exc
+        except ValueError as exc:
+            code = "pipeline_inactive" if "inactive" in str(exc) else "pipeline_changed"
+            raise PipelineSelectionError(code, str(exc), 409) from exc
+        if not selected.active:
+            raise PipelineSelectionError(
+                "pipeline_inactive",
+                f"The conversation's pipeline {selected.name!r} is inactive.",
+                409,
+            )
+        if chat.pipeline_config_hash is not None and (
+            selected.config_hash != chat.pipeline_config_hash
+            or selected.version != chat.pipeline_version
+            or selected.kind != "query"
+        ):
+            raise PipelineSelectionError(
+                "pipeline_configuration_changed",
+                "The conversation's pipeline configuration changed; explicitly "
+                "select a pipeline again before continuing.",
+                409,
+            )
+        await self._validate_project_pipeline(chat.project_id, selected)
+        return selected
+
+    @staticmethod
+    def _validate_chat_overrides(
+        pipeline: Pipeline,
+        stage_overrides: dict[str, dict[str, object]],
+    ) -> None:
+        """Validate persistent overrides without mutating the pipeline record."""
+        try:
+            config = PipelineConfig.model_validate(pipeline.config)
+            apply_query_overrides(config, (("chat", stage_overrides),))
+        except OverrideValidationError as exc:
+            raise PipelineSelectionError(
+                "invalid_stage_overrides", str(exc), 422
+            ) from exc
+
+    async def _project_ingestion(self, project_id: str) -> IngestionConfig | None:
+        """Resolve the effective ingestion configuration selected by a project."""
+        if self._pipeline_service is None:
+            return None
+        get_project = getattr(self._repository, "get_project", None)
+        if get_project is None:
+            return None
+        project = await get_project(project_id)
+        if project.ingestion_pipeline_id is None:
+            raise PipelineSelectionError(
+                "ingestion_unavailable",
+                "The project has no selected ingestion pipeline.",
+                409,
+            )
+        return await self._pipeline_service.resolve_ingestion(
+            project.ingestion_pipeline_id
+        )
+
+    async def _validate_project_pipeline(
+        self,
+        project_id: str,
+        pipeline: Pipeline,
+        *,
+        stage_overrides: dict[str, dict[str, object]] | None = None,
+    ) -> str:
+        """Validate a query pipeline against the project's indexed capabilities."""
+        if self._pipeline_service is None:
+            return pipeline.representation_hash
+        get_project = getattr(self._repository, "get_project", None)
+        if get_project is None:
+            # Legacy repository adapters do not expose project index metadata.
+            return pipeline.representation_hash
+        project = await get_project(project_id)
+        config = PipelineConfig.model_validate(pipeline.config)
+        override_layers = (("chat", stage_overrides or {}),)
+        effective_config, _ = apply_query_overrides(config, override_layers)
+        catalog = catalog_for_query_overrides(
+            config, self._pipeline_service.model_catalog, override_layers
+        )
+        index = IndexCapabilities.from_mapping(project.index_capabilities)
+        compatibility: CompatibilityResult = validate_query_compatibility(
+            effective_config,
+            index,
+            self._pipeline_service.registry,
+            catalog,
+        )
+        if pipeline.kind != "query":
+            raise PipelineSelectionError(
+                "unsupported_pipeline",
+                "Chat conversations require a query pipeline.",
+                422,
+            )
+        if not compatibility.compatible:
+            missing = ", ".join(sorted(compatibility.missing_capabilities))
+            suffix = f" Missing: {missing}." if missing else ""
+            raise PipelineSelectionError(
+                "incompatible_index",
+                (
+                    compatibility.reason
+                    or "The pipeline is incompatible with the project index"
+                )
+                + suffix,
+            )
+        return project.ingestion_representation_hash or pipeline.representation_hash
+
+
+def _ranking_score(value: object) -> RankingScore | None:
+    """Restore a serialized native score without changing its semantics."""
+    if not isinstance(value, dict):
+        return None
+    score = value.get("value")
+    kind = value.get("kind", value.get("type"))
+    method_id = value.get("method_id")
+    if not isinstance(score, (int, float)) or not isinstance(kind, str):
+        return None
+    if not isinstance(method_id, str):
+        return None
+    return RankingScore(
+        float(score),
+        kind,
+        method_id,
+        bool(value.get("higher_is_better", True)),
+        bool(value.get("calibrated", False)),
+    )

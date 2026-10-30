@@ -1,0 +1,10 @@
+id: reranker_jina_v2_multilingual
+type: reranker
+implementation: cross_encoder
+description: Rerank multilingual candidates with Jina Reranker v2.
+config:
+  model_id: reranker_jina_v2_multilingual
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cuda
+  batch_size: 2

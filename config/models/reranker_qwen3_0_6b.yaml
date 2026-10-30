@@ -1,0 +1,20 @@
+id: reranker_qwen3_0_6b
+stage: reranker
+location: local
+backend: sentence_transformers
+name: Qwen/Qwen3-Reranker-0.6B
+source:
+  type: huggingface
+  repository: Qwen/Qwen3-Reranker-0.6B
+storage:
+  relative_path: reranker/qwen3_0_6b
+runtime:
+  type: in_process
+  device: cuda
+  idle_timeout_seconds: 600
+  memory_limit: 4g
+parameters:
+  reranker_type: generative
+  batch_size: 1
+  max_length: 1024
+  trust_remote_code: true

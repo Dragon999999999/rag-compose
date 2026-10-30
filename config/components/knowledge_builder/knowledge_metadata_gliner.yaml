@@ -1,0 +1,9 @@
+id: knowledge_metadata_gliner
+type: knowledge_builder
+implementation: metadata_gliner
+description: Extract configurable entities with the managed local GLiNER model.
+config:
+  model_id: gliner_small
+  entity_labels: [person, organization, location, date, product]
+  confidence_threshold: 0.35
+  batch_size: 4

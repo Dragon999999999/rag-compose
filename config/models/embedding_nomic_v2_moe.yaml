@@ -1,0 +1,27 @@
+id: embedding_nomic_v2_moe
+stage: embedding
+location: local
+backend: sentence_transformers
+name: nomic-ai/nomic-embed-text-v2-moe
+source:
+  type: huggingface
+  repository: nomic-ai/nomic-embed-text-v2-moe
+storage:
+  relative_path: embedding/nomic-embed-text-v2-moe
+runtime:
+  type: docker
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+  command: ["--model-id", "/models/model", "--port", "8000"]
+  container_path: /models/model
+  port: 8000
+  readiness_path: /health
+  device: cpu
+  idle_timeout_seconds: 600
+  memory_limit: 6g
+parameters:
+  dimension: 768
+  normalize: true
+  batch_size: 4
+  query_prefix: 'search_query: '
+  document_prefix: 'search_document: '
+  trust_remote_code: true

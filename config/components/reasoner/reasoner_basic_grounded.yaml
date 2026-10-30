@@ -1,0 +1,7 @@
+id: reasoner_basic_grounded
+type: reasoner
+implementation: basic_grounded
+description: Generate grounded answers using a configured reasoning model and prompt.
+config:
+  model_id: reasoning_001
+  prompt_id: grounded_qa_v1

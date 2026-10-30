@@ -1,0 +1,10 @@
+id: reranker_cross_encoder
+type: reranker
+implementation: cross_encoder
+description: Rerank retrieved candidates with a local cross-encoder.
+config:
+  model_id: cross_encoder_minilm
+  retrieval_top_k: 20
+  rerank_top_k: 5
+  device: cpu
+  batch_size: 16

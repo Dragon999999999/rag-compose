@@ -1,0 +1,14 @@
+id: vector_backend_faiss
+type: vector_backend
+implementation: faiss
+description: Lazy, persistent in-process FAISS vector index backend.
+config:
+  index_version: '1'
+  index_type: flat
+  similarity_metric: cosine
+  hnsw_m: 16
+  hnsw_ef_construction: 100
+  hnsw_ef_search: 64
+  nlist: 100
+  nprobe: 8
+  idle_timeout_seconds: 600

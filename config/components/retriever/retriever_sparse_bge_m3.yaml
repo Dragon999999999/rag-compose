@@ -1,0 +1,12 @@
+id: retriever_sparse_bge_m3
+type: sparse
+implementation: bge_m3_sparse
+description: BGE-M3 learned sparse retrieval using the shared BGE-M3 weights.
+config:
+  top_k: 20
+  query_embedder: embedding_bge_m3
+requirements:
+  required:
+    - persisted_chunks
+    - sparse_vector_index
+    - sparse_query_embedder

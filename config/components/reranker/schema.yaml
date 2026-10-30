@@ -1,0 +1,31 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Reranker component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: reranker}
+      implementation: {enum: [identity, top_k, cross_encoder, generative]}
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          model_id: {type: string, minLength: 1, x-override-scopes: []}
+          retrieval_top_k:
+            type: [integer, 'null']
+            minimum: 1
+            maximum: 100
+            x-override-scopes: [pipeline, chat, request]
+          rerank_top_k:
+            type: [integer, 'null']
+            minimum: 1
+            maximum: 100
+            x-override-scopes: [pipeline, chat, request]
+          device: {type: string, default: cpu, x-override-scopes: [pipeline]}
+          batch_size:
+            type: integer
+            minimum: 1
+            maximum: 512
+            default: 16
+            x-override-scopes: [pipeline]

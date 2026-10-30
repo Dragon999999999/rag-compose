@@ -1,0 +1,7 @@
+id: knowledge_metadata_rules
+type: knowledge_builder
+implementation: metadata_rules
+description: Extract deterministic dates, values, identifiers, units, and keywords.
+config:
+  max_keywords: 12
+  keyword_min_length: 4

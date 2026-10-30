@@ -1,0 +1,23 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Assessor component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: assessor}
+      implementation:
+        enum: [noop, source_reference, retrieval_confidence, relevance, evidence_sufficiency, diversity]
+      config:
+        type: object
+        additionalProperties: false
+        properties:
+          threshold: {type: [number, 'null'], x-override-scopes: [request, chat]}
+          score_kind: {type: [string, 'null'], minLength: 1, x-override-scopes: [request, chat]}
+          min_threshold_count: {type: integer, minimum: 0, maximum: 10000, x-override-scopes: [request, chat]}
+          fallback_to_retrieval: {type: boolean, x-override-scopes: [request, chat]}
+          requested_aspects:
+            type: array
+            items: {type: string, minLength: 1}
+            x-override-scopes: [request, chat]
+          max_pairs: {type: integer, minimum: 1, maximum: 100000, x-override-scopes: [request, chat]}

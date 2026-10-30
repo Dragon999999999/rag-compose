@@ -1,0 +1,16 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Reasoner component
+unevaluatedProperties: false
+allOf:
+  - $ref: ../schema.yaml
+  - type: object
+    properties:
+      type: {const: reasoner}
+      implementation: {enum: [basic_grounded]}
+      config:
+        type: object
+        additionalProperties: false
+        required: [model_id]
+        properties:
+          model_id: {type: string, minLength: 1, x-override-scopes: []}
+          prompt_id: {type: string, minLength: 1, x-override-scopes: [pipeline]}

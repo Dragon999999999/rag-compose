@@ -1,0 +1,94 @@
+[project]
+name = "llm-grounding"
+version = "0.1.0"
+description = "Configurable scientific document grounding experiments"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.15,<2",
+    "openai>=2,<4",
+    "pydantic>=2.11,<3",
+    "pydantic-ai-slim[openai]>=1.0,<2",
+    "pymupdf>=1.24,<2",
+    "pyyaml>=6,<7",
+    "jinja2>=3.1,<4",
+    "qdrant-client>=1.16,<2",
+    "pgvector>=0.3,<1",
+    "faiss-cpu>=1.9,<2",
+    "minio>=7.2,<8",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "python-multipart>=0.0.20,<1",
+    "python-dotenv>=1,<2",
+    "jsonschema>=4.23,<5",
+    "docker>=7,<8",
+    "huggingface-hub>=0.26,<1",
+    "torch>=2.14,<3",
+    "transformers>=4.57,<5",
+    "einops>=0.8,<1",
+    "gliner>=0.2,<1",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=5,<6"]
+reranking = ["sentence-transformers>=5,<6"]
+
+[project.scripts]
+llm-grounding = "llm_grounding.cli.main:main"
+llm-grounding-api = "llm_grounding.api.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_grounding"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"config/models" = "llm_grounding/infrastructure/config/standalone/models"
+"config/components" = "llm_grounding/infrastructure/config/standalone/components"
+"config/pipelines" = "llm_grounding/infrastructure/config/standalone/pipelines"
+"config/defaults.yaml" = "llm_grounding/infrastructure/config/defaults.yaml"
+"prompts/registry.yaml" = "llm_grounding/infrastructure/prompts/assets/registry.yaml"
+"prompts/reasoning/grounded_qa_v1.jinja2" = "llm_grounding/infrastructure/prompts/assets/reasoning/grounded_qa_v1.jinja2"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.12",
+    "mypy>=1.17",
+    "types-PyYAML>=6",
+    "types-jsonschema>=4.23,<5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["database: isolated PostgreSQL integration tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+exclude = ["AGENTS.md"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pymupdf", "pymupdf.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["sentence_transformers"]
+ignore_missing_imports = true

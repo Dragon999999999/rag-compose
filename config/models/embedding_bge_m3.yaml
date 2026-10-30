@@ -1,0 +1,22 @@
+id: embedding_bge_m3
+stage: embedding
+location: local
+backend: sentence_transformers
+name: BAAI/bge-m3
+source:
+  type: huggingface
+  repository: BAAI/bge-m3
+storage:
+  relative_path: embedding/bge-m3
+runtime:
+  type: in_process
+  device: cpu
+  idle_timeout_seconds: 600
+  memory_limit: 6g
+parameters:
+  dimension: 1024
+  normalize: true
+  batch_size: 2
+  trust_remote_code: true
+  supported_representations: [dense, sparse]
+  sparse_endpoint: /v1/sparse_embeddings

@@ -1,0 +1,6 @@
+id: vector_backend_qdrant
+type: vector_backend
+implementation: qdrant
+description: Qdrant dense vector index backend.
+config:
+  index_version: '1'

@@ -1,0 +1,18 @@
+id: retriever_hybrid_rrf_default
+type: hybrid
+implementation: hybrid_rrf
+description: Reciprocal-rank fusion of dense and PostgreSQL FTS retrieval.
+config:
+  dense_top_k: 20
+  sparse_top_k: 20
+  top_k: 10
+  rrf_k: 60
+  dense_weight: 1.0
+  sparse_weight: 1.0
+  query_embedder: null
+requirements:
+  required:
+    - persisted_chunks
+    - postgres_fts
+    - dense_vector_index
+    - compatible_query_embedder

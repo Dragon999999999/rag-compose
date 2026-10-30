@@ -1,0 +1,5 @@
+id: parser_pymupdf
+type: parser
+implementation: pymupdf
+description: Extract positioned text blocks from PDF documents with PyMuPDF.
+config: {}
